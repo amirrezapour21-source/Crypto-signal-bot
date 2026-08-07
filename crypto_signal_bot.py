@@ -1,74 +1,82 @@
 """
 Crypto Daily Signal Telegram Bot
 ---------------------------------
-هر روز، کل مارکت (تاپ ۱۰۰ ارز بر اساس حجم معاملات از Binance) رو اسکن می‌کنه،
+هر روز، تاپ ارزها (بر اساس ارزش بازار، از CoinGecko) رو اسکن می‌کنه،
 با ترکیب RSI + MACD + Moving Average یه امتیاز به هر ارز میده،
-و بهترین سیگنال (خرید یا فروش) رو به تلگرام ارسال می‌کنه.
+و بهترین سیگنال‌ها (خرید یا فروش) رو به تلگرام ارسال می‌کنه.
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
 
 تنظیمات:
-    پایین همین فایل، مقدار TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID رو پر کن.
-
-اجرای روزانه:
-    این اسکریپت یک‌بار اجرا میشه و خارج میشه. برای اجرای خودکار روزانه از cron استفاده کن:
-        crontab -e
-        0 9 * * * /usr/bin/python3 /path/to/crypto_signal_bot.py
-    (نمونه بالا هر روز ساعت ۹ صبح اجرا میشه)
+    توکن و chat_id از متغیرهای محیطی TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID خونده میشه
+    (روی GitHub Actions از Secrets تنظیم میشه؛ برای تست دستی می‌تونی مستقیم پایین پر کنی).
 """
 
 import requests
 import pandas as pd
 import numpy as np
 import time
+import os
 
 # ============ تنظیمات ============
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"   # از @BotFather بگیر
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"        # آیدی عددی چت یا کانال
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
-BINANCE_BASE = "https://api.binance.com"
-TOP_N_COINS = 100          # تعداد ارزهایی که اسکن میشن
-KLINE_INTERVAL = "4h"      # تایم‌فریم کندل‌ها
-KLINE_LIMIT = 200          # تعداد کندل برای محاسبه اندیکاتورها
-TOP_SIGNALS_TO_SEND = 3    # چند تا سیگنال برتر روزانه ارسال بشه
+COINGECKO_BASE = "https://api.coingecko.com/api/v3"
+TOP_N_COINS = 60           # تعداد ارزهایی که اسکن میشن (بر اساس ارزش بازار)
+HISTORY_DAYS = 100         # تعداد روز تاریخچه قیمت برای محاسبه اندیکاتورها
+TOP_SIGNALS_TO_SEND = 5    # چند تا سیگنال برتر روزانه ارسال بشه
+REQUEST_DELAY = 1.6        # فاصله بین درخواست‌ها برای رعایت rate limit رایگان CoinGecko
+
+
+# ============ درخواست با retry برای rate limit ============
+def safe_get(url, params=None, retries=3):
+    for attempt in range(retries):
+        resp = requests.get(url, params=params, timeout=20)
+        if resp.status_code == 200:
+            return resp
+        if resp.status_code == 429:
+            wait = 15 * (attempt + 1)
+            print(f"Rate limit، صبر {wait} ثانیه...")
+            time.sleep(wait)
+            continue
+        return resp
+    return resp
 
 
 # ============ دریافت لیست ارزها ============
-def get_top_symbols(n=100):
-    url = f"{BINANCE_BASE}/api/v3/ticker/24hr"
-    resp = requests.get(url, timeout=15)
+def get_top_coins(n=60):
+    url = f"{COINGECKO_BASE}/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": n,
+        "page": 1,
+        "sparkline": "false",
+    }
+    resp = safe_get(url, params=params)
     resp.raise_for_status()
     data = resp.json()
-
-    usdt_pairs = [
-        d for d in data
-        if d["symbol"].endswith("USDT")
-        and not any(x in d["symbol"] for x in ["UP", "DOWN", "BULL", "BEAR"])
-    ]
-    usdt_pairs.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
-    return [d["symbol"] for d in usdt_pairs[:n]]
+    # حذف استیبل‌کوین‌ها چون سیگنال معنی‌داری ندارن
+    stablecoins = {"tether", "usd-coin", "dai", "true-usd", "first-digital-usd",
+                   "usdd", "frax", "paypal-usd", "binance-usd"}
+    return [c for c in data if c["id"] not in stablecoins]
 
 
-# ============ دریافت کندل‌ها ============
-def get_klines(symbol, interval=KLINE_INTERVAL, limit=KLINE_LIMIT):
-    url = f"{BINANCE_BASE}/api/v3/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
-    resp = requests.get(url, params=params, timeout=15)
+# ============ دریافت تاریخچه قیمت ============
+def get_price_history(coin_id, days=HISTORY_DAYS):
+    url = f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": days}
+    resp = safe_get(url, params=params)
     if resp.status_code != 200:
         return None
     data = resp.json()
-    if not data:
+    prices = data.get("prices")
+    if not prices or len(prices) < 60:
         return None
-    df = pd.DataFrame(data, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades", "taker_buy_base",
-        "taker_buy_quote", "ignore"
-    ])
-    df["close"] = df["close"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    return df
+    close = pd.Series([p[1] for p in prices])
+    return close
 
 
 # ============ اندیکاتورها ============
@@ -97,12 +105,14 @@ def compute_ma(series, period):
 
 
 # ============ منطق امتیازدهی سیگنال ============
-def analyze_symbol(symbol):
-    df = get_klines(symbol)
-    if df is None or len(df) < 60:
+def analyze_coin(coin):
+    coin_id = coin["id"]
+    symbol = coin["symbol"].upper()
+
+    close = get_price_history(coin_id)
+    if close is None:
         return None
 
-    close = df["close"]
     rsi = compute_rsi(close)
     macd_line, signal_line, hist = compute_macd(close)
     ma20 = compute_ma(close, 20)
@@ -121,7 +131,6 @@ def analyze_symbol(symbol):
     score = 0
     reasons = []
 
-    # RSI
     if last_rsi < 30:
         score += 2
         reasons.append(f"RSI اشباع فروش ({last_rsi:.1f})")
@@ -129,7 +138,6 @@ def analyze_symbol(symbol):
         score -= 2
         reasons.append(f"RSI اشباع خرید ({last_rsi:.1f})")
 
-    # MACD کراس
     if prev_hist < 0 and last_hist > 0:
         score += 2
         reasons.append("کراس صعودی MACD")
@@ -137,7 +145,6 @@ def analyze_symbol(symbol):
         score -= 2
         reasons.append("کراس نزولی MACD")
 
-    # روند میانگین متحرک
     if last_close > last_ma20 > last_ma50:
         score += 1
         reasons.append("روند صعودی (قیمت بالای MA20 و MA50)")
@@ -178,9 +185,10 @@ def format_signal_message(results):
     lines = ["<b>📊 سیگنال روزانه کریپتو</b>\n"]
     for r in results:
         emoji = "🟢" if r["direction"] == "BUY" else "🔴"
+        price_fmt = f"{r['price']:.6f}" if r["price"] < 1 else f"{r['price']:.4f}"
         lines.append(
             f"{emoji} <b>{r['symbol']}</b> — {r['direction']} (امتیاز: {r['score']})\n"
-            f"قیمت: {r['price']:.4f} | RSI: {r['rsi']:.1f}\n"
+            f"قیمت: {price_fmt}$ | RSI: {r['rsi']:.1f}\n"
             f"دلایل: {', '.join(r['reasons'])}\n"
         )
     return "\n".join(lines)
@@ -188,19 +196,19 @@ def format_signal_message(results):
 
 # ============ اجرای اصلی ============
 def main():
-    print("در حال دریافت لیست ارزها...")
-    symbols = get_top_symbols(TOP_N_COINS)
+    print("در حال دریافت لیست ارزها از CoinGecko...")
+    coins = get_top_coins(TOP_N_COINS)
+    print(f"در حال تحلیل {len(coins)} ارز...")
 
-    print(f"در حال تحلیل {len(symbols)} ارز...")
     results = []
-    for sym in symbols:
+    for coin in coins:
         try:
-            res = analyze_symbol(sym)
+            res = analyze_coin(coin)
             if res and res["direction"] != "NEUTRAL":
                 results.append(res)
         except Exception as e:
-            print(f"خطا در {sym}: {e}")
-        time.sleep(0.15)  # رعایت rate limit بایننس
+            print(f"خطا در {coin.get('id')}: {e}")
+        time.sleep(REQUEST_DELAY)
 
     results.sort(key=lambda x: abs(x["score"]), reverse=True)
     top_results = results[:TOP_SIGNALS_TO_SEND]
