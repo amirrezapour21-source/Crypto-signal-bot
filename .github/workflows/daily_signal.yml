@@ -1,0 +1,27 @@
+name: Daily Crypto Signal
+
+on:
+  schedule:
+    - cron: '30 5 * * *'   # ساعت 9:00 صبح به وقت ایران (تهران = UTC+3:30)
+  workflow_dispatch:        # امکان اجرای دستی از داخل گیت‌هاب هم فراهم می‌کنه
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pandas numpy
+
+      - name: Run signal bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python crypto_signal_bot.py
