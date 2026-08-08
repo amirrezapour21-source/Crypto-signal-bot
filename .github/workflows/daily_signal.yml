@@ -1,8 +1,6 @@
 name: Daily Crypto Signal
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
