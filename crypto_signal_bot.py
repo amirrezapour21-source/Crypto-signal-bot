@@ -440,11 +440,16 @@ def main():
 
     print(message)
 
-    if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
-        send_telegram_message(message)
-        print("ارسال شد.")
+    should_send = candidates and any(not ex.get("rejected") for ex in executions) if candidates else False
+
+    if should_send:
+        if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
+            send_telegram_message(message)
+            print("ارسال شد.")
+        else:
+            print("\n[توجه] توکن تنظیم نشده.")
     else:
-        print("\n[توجه] توکن تنظیم نشده.")
+        print("سیگنال معتبری برای ارسال به تلگرام وجود نداشت (فقط در لاگ ثبت شد).")
 
 
 if __name__ == "__main__":
