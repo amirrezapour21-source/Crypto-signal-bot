@@ -350,6 +350,40 @@ def part_a_scan(coins):
     return candidates[:2]
 
 
+# ============ انتخاب هدف معتبر (بالاتر/پایین‌تر از قیمت فعلی، نه صرفاً آخرین پیوت) ============
+def get_valid_targets(pivots, entry, direction):
+    """
+    اشکال قبلی: آخرین پیوت تأییدشده معمولاً از قبل توسط قیمت رد شده (چون
+    تشخیص پیوت با تأخیر کار می‌کنه). این تابع فقط سطوحی رو به‌عنوان هدف
+    برمی‌گردونه که هنوز جلوی قیمته (دست‌نخورده).
+    """
+    if direction == "LONG":
+        valid = sorted([p[1] for p in pivots if p[1] > entry])
+    else:
+        valid = sorted([p[1] for p in pivots if p[1] < entry], reverse=True)
+
+    if len(valid) >= 2:
+        return valid[0], valid[1]
+    if len(valid) == 1:
+        tp1 = valid[0]
+        tp2 = tp1 * 1.02 if direction == "LONG" else tp1 * 0.98
+        return tp1, tp2
+
+    # هیچ سطح دست‌نخورده‌ای جلوی قیمت نیست (روند خیلی قوی، از همه سقف/کف‌های
+    # قبلی رد شده) — به‌جای رد کردن کامل، از اندازه آخرین موج قیمتی برای
+    # پیش‌بینی هدف بعدی استفاده می‌کنیم (روش «Measured Move»)
+    if len(pivots) >= 2:
+        last_two = sorted(pivots, key=lambda p: p[0])[-2:]
+        leg_size = abs(last_two[1][1] - last_two[0][1])
+        if leg_size > 0:
+            if direction == "LONG":
+                return entry + leg_size * 0.5, entry + leg_size * 1.0
+            else:
+                return entry - leg_size * 0.5, entry - leg_size * 1.0
+
+    return None, None
+
+
 # ============ PART B: اجرای معامله — مسیر روند (Trend) ============
 def execute_trend(candidate):
     symbol = candidate["symbol"]
@@ -371,10 +405,9 @@ def execute_trend(candidate):
         entry = vp15["poc"]
         invalidation = pivot_lows[-1][1]
         sl = invalidation * 0.997
-        tp1 = pivot_highs[-1][1]
-        tp2 = pivot_highs[-2][1] if len(pivot_highs) >= 2 else tp1 * 1.02
-        if tp2 <= tp1:
-            tp2 = tp1 * 1.02
+        tp1, tp2 = get_valid_targets(pivot_highs, entry, "LONG")
+        if tp1 is None:
+            return {"symbol": symbol, "rejected": True}
         risk = entry - sl
         reward1 = tp1 - entry
         if risk <= 0 or reward1 <= 0:
@@ -386,10 +419,9 @@ def execute_trend(candidate):
         entry = vp15["poc"]
         invalidation = pivot_highs[-1][1]
         sl = invalidation * 1.003
-        tp1 = pivot_lows[-1][1]
-        tp2 = pivot_lows[-2][1] if len(pivot_lows) >= 2 else tp1 * 0.98
-        if tp2 >= tp1:
-            tp2 = tp1 * 0.98
+        tp1, tp2 = get_valid_targets(pivot_lows, entry, "SHORT")
+        if tp1 is None:
+            return {"symbol": symbol, "rejected": True}
         risk = sl - entry
         reward1 = entry - tp1
         if risk <= 0 or reward1 <= 0:
@@ -548,7 +580,7 @@ def log_signal(ex):
         "tp1": ex["tp1"],
         "tp2": ex["tp2"],
         "signal_time": datetime.now(timezone.utc).isoformat(),
-        "status": "ENTRY_PENDING",
+        "status": "ENTRY_PENDING",   # ENTRY_PENDING -> OPEN -> TP1_HIT -> TP2_HIT / SL_HIT / EXPIRED
         "entered": False,
         "entry_time": None,
         "closed_time": None,
