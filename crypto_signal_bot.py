@@ -195,17 +195,28 @@ def liquidity_sweep_detected(df, pivot_highs, pivot_lows):
     return False
 
 
-# ============ PART A: امتیازدهی کاندید ============
-def score_candidate(symbol):
-    df4h = get_ohlcv(symbol, timeframe="hour", aggregate=4, limit=150)
-    if df4h is None or len(df4h) < 60:
-        return None
+# ============ RSI (برای Mean Reversion) ============
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
 
-    structure = classify_structure(df4h)
-    vp = compute_volume_profile(df4h)
-    if vp is None:
-        return None
-    rvol = compute_rvol(df4h)
+
+# ============ Bollinger Bands (برای Mean Reversion) ============
+def compute_bollinger(df, period=20, num_std=2):
+    mid = df["close"].rolling(window=period).mean()
+    std = df["close"].rolling(window=period).std()
+    upper = mid + num_std * std
+    lower = mid - num_std * std
+    return mid, upper, lower
+
+
+# ============ PART A: امتیازدهی کاندید — استراتژی روند (Trend/Smart Money) ============
+def score_trend_candidate(symbol, df4h, structure, vp, rvol):
     zq = zone_quality_ok(df4h)
     liq = liquidity_sweep_detected(df4h, structure["pivot_highs"], structure["pivot_lows"])
 
@@ -226,13 +237,102 @@ def score_candidate(symbol):
     elif score == 3:
         confidence = "متوسط"
     else:
-        return None  # ≤2 → حذف
+        return None
 
     return {
-        "symbol": symbol, "score": score, "confidence": confidence,
+        "symbol": symbol, "strategy": "trend", "score": score, "confidence": confidence,
         "checks": checks, "trend": structure["trend"], "rvol": rvol,
         "price": current_price, "df4h": df4h, "structure": structure, "vp": vp,
     }
+
+
+# ============ PART A: امتیازدهی کاندید — استراتژی بازگشت به میانگین (Mean Reversion) ============
+def score_mean_reversion_candidate(symbol, df4h, structure, vp, rvol):
+    # فقط وقتی بازار روند مشخصی نداره (رنج/بی‌جهت) این مسیر رو بررسی می‌کنیم
+    if structure["trend"] in ("up", "down"):
+        return None
+    if len(df4h) < 45:
+        return None
+
+    lookback = df4h.iloc[-40:]
+    range_high = lookback["high"].max()
+    range_low = lookback["low"].min()
+    if range_high <= range_low:
+        return None
+
+    mid_bb, upper_bb, lower_bb = compute_bollinger(df4h)
+    last_mid = mid_bb.iloc[-1]
+    last_upper = upper_bb.iloc[-1]
+    last_lower = lower_bb.iloc[-1]
+    if any(pd.isna(x) for x in [last_mid, last_upper, last_lower]):
+        return None
+
+    rsi = compute_rsi(df4h["close"])
+    last_rsi = rsi.iloc[-1]
+    if pd.isna(last_rsi):
+        return None
+
+    last_close = df4h["close"].iloc[-1]
+    last_low = df4h["low"].iloc[-1]
+    last_high = df4h["high"].iloc[-1]
+
+    # تشخیص سوگیری جهت: نزدیک‌تر به کدوم مرز رنج/باند هست
+    dist_to_lower = last_close - range_low
+    dist_to_upper = range_high - last_close
+    direction_bias = "LONG" if dist_to_lower < dist_to_upper else "SHORT"
+
+    # تأیید واقعی بودن رنج: قیمت باید چند بار هر دو مرز رو لمس کرده باشه
+    touches_high = (lookback["high"] >= range_high * 0.99).sum()
+    touches_low = (lookback["low"] <= range_low * 1.01).sum()
+    range_confirmed = touches_high >= 2 and touches_low >= 2
+
+    if direction_bias == "LONG":
+        rsi_extreme = last_rsi < 32
+        bb_touch = last_low <= last_lower
+        reversal = last_low <= last_lower and last_close > last_lower
+    else:
+        rsi_extreme = last_rsi > 68
+        bb_touch = last_high >= last_upper
+        reversal = last_high >= last_upper and last_close < last_upper
+
+    checks = {
+        "Range Confirmed": range_confirmed,
+        "RSI Extreme": rsi_extreme,
+        "Volume Confirmation": rvol > 1.3,
+        "Bollinger Band Touch": bb_touch,
+        "Reversal Rejection": reversal,
+    }
+    score = sum(checks.values())
+
+    if score >= 4:
+        confidence = "بالا"
+    elif score == 3:
+        confidence = "متوسط"
+    else:
+        return None
+
+    return {
+        "symbol": symbol, "strategy": "mean_reversion", "score": score, "confidence": confidence,
+        "checks": checks, "direction_bias": direction_bias, "rvol": rvol,
+        "price": last_close, "df4h": df4h, "range_high": range_high, "range_low": range_low,
+        "range_mid": (range_high + range_low) / 2, "vp": vp,
+    }
+
+
+def evaluate_symbol(symbol):
+    df4h = get_ohlcv(symbol, timeframe="hour", aggregate=4, limit=150)
+    if df4h is None or len(df4h) < 60:
+        return None
+    structure = classify_structure(df4h)
+    vp = compute_volume_profile(df4h)
+    if vp is None:
+        return None
+    rvol = compute_rvol(df4h)
+
+    if structure["trend"] in ("up", "down"):
+        return score_trend_candidate(symbol, df4h, structure, vp, rvol)
+    else:
+        return score_mean_reversion_candidate(symbol, df4h, structure, vp, rvol)
 
 
 def part_a_scan(coins):
@@ -240,7 +340,7 @@ def part_a_scan(coins):
     for c in coins:
         symbol = c["symbol"].upper()
         try:
-            res = score_candidate(symbol)
+            res = evaluate_symbol(symbol)
             if res:
                 candidates.append(res)
         except Exception as e:
@@ -250,11 +350,10 @@ def part_a_scan(coins):
     return candidates[:2]
 
 
-# ============ PART B: اجرای معامله (بدون اسکرین‌شات، خودکار) ============
-def part_b_execute(candidate):
+# ============ PART B: اجرای معامله — مسیر روند (Trend) ============
+def execute_trend(candidate):
     symbol = candidate["symbol"]
     trend = candidate["trend"]
-    df4h = candidate["df4h"]
     structure = candidate["structure"]
 
     df15m = get_ohlcv(symbol, timeframe="minute", aggregate=15, limit=150)
@@ -266,7 +365,6 @@ def part_b_execute(candidate):
         return {"symbol": symbol, "rejected": True}
 
     pivot_highs, pivot_lows = structure["pivot_highs"], structure["pivot_lows"]
-    current_price = df15m["close"].iloc[-1]
 
     if trend == "up" and len(pivot_lows) >= 2 and len(pivot_highs) >= 1:
         direction = "LONG"
@@ -297,7 +395,6 @@ def part_b_execute(candidate):
         if risk <= 0 or reward1 <= 0:
             return {"symbol": symbol, "rejected": True}
         rr = reward1 / risk
-
     else:
         return {"symbol": symbol, "rejected": True}
 
@@ -306,17 +403,73 @@ def part_b_execute(candidate):
 
     if candidate["confidence"] == "بالا" and rr >= 3:
         risk_level = "پایین"
-    elif rr >= MIN_RR:
-        risk_level = "متوسط"
     else:
-        risk_level = "بالا - بدون معامله"
+        risk_level = "متوسط"
 
     return {
-        "symbol": symbol, "rejected": False, "direction": direction,
+        "symbol": symbol, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
         "checks": candidate["checks"],
     }
+
+
+# ============ PART B: اجرای معامله — مسیر بازگشت به میانگین (Mean Reversion) ============
+def execute_mean_reversion(candidate):
+    symbol = candidate["symbol"]
+    direction_bias = candidate["direction_bias"]
+    range_high, range_low, range_mid = candidate["range_high"], candidate["range_low"], candidate["range_mid"]
+
+    df15m = get_ohlcv(symbol, timeframe="minute", aggregate=15, limit=150)
+    if df15m is None or len(df15m) < 60:
+        return {"symbol": symbol, "rejected": True}
+
+    vp15 = compute_volume_profile(df15m.iloc[-40:])
+    if vp15 is None:
+        return {"symbol": symbol, "rejected": True}
+
+    entry = vp15["poc"]
+
+    if direction_bias == "LONG":
+        direction = "LONG"
+        sl = range_low * 0.99
+        tp1 = range_mid
+        tp2 = range_high
+        risk = entry - sl
+        reward1 = tp1 - entry
+    else:
+        direction = "SHORT"
+        sl = range_high * 1.01
+        tp1 = range_mid
+        tp2 = range_low
+        risk = sl - entry
+        reward1 = entry - tp1
+
+    if risk <= 0 or reward1 <= 0:
+        return {"symbol": symbol, "rejected": True}
+    rr = reward1 / risk
+
+    if rr < MIN_RR:
+        return {"symbol": symbol, "rejected": True}
+
+    if candidate["confidence"] == "بالا" and rr >= 3:
+        risk_level = "پایین"
+    else:
+        risk_level = "متوسط"
+
+    return {
+        "symbol": symbol, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
+        "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
+        "risk_level": risk_level, "confidence": candidate["confidence"],
+        "checks": candidate["checks"],
+    }
+
+
+def part_b_execute(candidate):
+    if candidate["strategy"] == "trend":
+        return execute_trend(candidate)
+    else:
+        return execute_mean_reversion(candidate)
 
 
 # ============ فرمت خروجی (فارسی، ساختاریافته) ============
@@ -331,7 +484,8 @@ def format_output(candidates, executions):
     lines = ["<b>PART A — اسکن مارکت</b>"]
     lines.append("وضعیت اسکن: انجام‌شده ✅ (منبع: CoinGecko + CryptoCompare)\n")
     for c in candidates:
-        lines.append(f"<b>{c['symbol']}</b> | اعتبار: {c['confidence']}")
+        strategy_label = "روند (Smart Money)" if c["strategy"] == "trend" else "بازگشت به میانگین (Mean Reversion)"
+        lines.append(f"<b>{c['symbol']}</b> | استراتژی: {strategy_label} | اعتبار: {c['confidence']}")
         for k, v in c["checks"].items():
             lines.append(f"  {k}: {'✓' if v else '✗'}")
         lines.append("")
@@ -342,6 +496,7 @@ def format_output(candidates, executions):
             lines.append(f"\n<b>{ex['symbol']}</b>: عدم وجود موقعیت کم‌ریسک")
             continue
         lines.append(f"\nنماد: <b>{ex['symbol']}</b>")
+        lines.append(f"استراتژی: {ex['strategy']}")
         lines.append(f"جهت: {ex['direction']}")
         lines.append(f"ورود دقیق: {fmt_price(ex['entry'])}$")
         lines.append(f"حد ضرر: {fmt_price(ex['sl'])}$")
