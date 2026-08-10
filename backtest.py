@@ -28,7 +28,7 @@ from crypto_signal_bot import (
     get_top_coins, get_ohlcv, classify_structure, compute_volume_profile,
     compute_rvol, zone_quality_ok, liquidity_sweep_detected, compute_rsi,
     compute_bollinger, score_trend_candidate, score_mean_reversion_candidate,
-    fmt_price, MIN_RR, safe_get, CRYPTOCOMPARE_BASE,
+    get_valid_targets, fmt_price, MIN_RR, safe_get, CRYPTOCOMPARE_BASE,
 )
 
 BACKTEST_COINS_N = 20      # تعداد ارزهایی که بک‌تست می‌شن (محدود به‌خاطر سقف درخواست API)
@@ -54,18 +54,16 @@ def simulate_trend_entry(window_df, structure):
     if structure["trend"] == "up" and len(pivot_lows) >= 2 and len(pivot_highs) >= 1:
         direction = "LONG"
         sl = pivot_lows[-1][1] * 0.997
-        tp1 = pivot_highs[-1][1]
-        tp2 = pivot_highs[-2][1] if len(pivot_highs) >= 2 else tp1 * 1.02
-        if tp2 <= tp1:
-            tp2 = tp1 * 1.02
+        tp1, tp2 = get_valid_targets(pivot_highs, entry, "LONG")
+        if tp1 is None:
+            return None
         risk, reward1 = entry - sl, tp1 - entry
     elif structure["trend"] == "down" and len(pivot_highs) >= 2 and len(pivot_lows) >= 1:
         direction = "SHORT"
         sl = pivot_highs[-1][1] * 1.003
-        tp1 = pivot_lows[-1][1]
-        tp2 = pivot_lows[-2][1] if len(pivot_lows) >= 2 else tp1 * 0.98
-        if tp2 >= tp1:
-            tp2 = tp1 * 0.98
+        tp1, tp2 = get_valid_targets(pivot_lows, entry, "SHORT")
+        if tp1 is None:
+            return None
         risk, reward1 = sl - entry, entry - tp1
     else:
         return None
