@@ -4,8 +4,9 @@ Signal Outcome Tracker
 این اسکریپت هر ساعت اجرا میشه، سیگنال‌های باز رو با قیمت واقعی چک می‌کنه،
 و مشخص می‌کنه که Limit Entry پر شده یا نه، و بعدش TP یا SL اول لمس شده.
 
-⚠️ محدودیت: بر پایه کندل ۱ساعته کار می‌کنه (نه قیمت لحظه‌به‌لحظه).
-اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو اول‌خورده فرض می‌کنیم.
+⚠️ محدودیت: بر پایه کندل ساعتی مصنوعی (از CoinGecko) کار می‌کنه، نه قیمت
+لحظه‌به‌لحظه. اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو
+اول‌خورده فرض می‌کنیم.
 """
 
 import requests
@@ -18,10 +19,10 @@ from datetime import datetime, timezone
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
-CRYPTOCOMPARE_BASE = "https://min-api.cryptocompare.com/data/v2"
+COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 LOG_PATH = "signals_log.json"
-ENTRY_TIMEOUT_HOURS = 72
-TRADE_TIMEOUT_HOURS = 240
+ENTRY_TIMEOUT_HOURS = 72     # اگه تا ۷۲ ساعت Limit پر نشه، سفارش لغو (Expired) میشه
+TRADE_TIMEOUT_HOURS = 240    # اگه تا ۱۰ روز بعد از ورود نه TP2 نه SL نخوره، بسته میشه (Timeout)
 
 
 def load_log():
@@ -47,27 +48,40 @@ def safe_get(url, params=None, retries=3):
         if resp.status_code == 200:
             return resp
         if resp.status_code == 429:
-            time.sleep(10 * (attempt + 1))
+            time.sleep(15 * (attempt + 1))
             continue
         return resp
     return resp
 
 
-def get_hourly_candles_since(symbol, since_dt):
+def get_hourly_candles_since(coin_id, since_dt):
     hours_ago = int((datetime.now(timezone.utc) - since_dt).total_seconds() // 3600) + 2
-    limit = min(hours_ago, 2000)
-    url = f"{CRYPTOCOMPARE_BASE}/histohour"
-    params = {"fsym": symbol, "tsym": "USD", "limit": limit}
+    days = min(90, max(2, (hours_ago // 24) + 2))
+    url = f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": days}
     resp = safe_get(url, params=params)
     if resp is None or resp.status_code != 200:
         return None
-    payload = resp.json()
-    if payload.get("Response") != "Success":
+    data = resp.json()
+    prices = data.get("prices")
+    volumes = data.get("total_volumes")
+    if not prices or not volumes:
         return None
-    df = pd.DataFrame(payload["Data"]["Data"])
+    df = pd.DataFrame({"time": [p[0] // 1000 for p in prices], "price": [p[1] for p in prices]})
+    vol_df = pd.DataFrame({"time": [v[0] // 1000 for v in volumes], "volume": [v[1] for v in volumes]})
+    df = df.merge(vol_df, on="time", how="left").sort_values("time").reset_index(drop=True)
+
+    # ساخت کندل ساعتی مصنوعی از نقاط قیمتی (معمولاً هر نقطه ~۱ ساعته)
     df["dt"] = pd.to_datetime(df["time"], unit="s", utc=True)
-    df = df[df["dt"] >= since_dt].reset_index(drop=True)
-    return df if not df.empty else None
+    df["hour_bucket"] = df["dt"].dt.floor("h")
+    grouped = df.groupby("hour_bucket").agg(
+        open=("price", "first"), high=("price", "max"),
+        low=("price", "min"), close=("price", "last"),
+        volume=("volume", "sum"),
+    ).reset_index().rename(columns={"hour_bucket": "dt"})
+
+    grouped = grouped[grouped["dt"] >= since_dt].reset_index(drop=True)
+    return grouped if not grouped.empty else None
 
 
 def send_telegram_message(text):
@@ -84,16 +98,21 @@ def hours_since(dt):
 
 def process_signal(sig):
     symbol = sig["symbol"]
+    coin_id = sig.get("coin_id", "")
     direction = sig["direction"]
     entry, sl, tp1, tp2 = sig["entry"], sig["sl"], sig["tp1"], sig["tp2"]
     signal_time = datetime.fromisoformat(sig["signal_time"])
 
-    df = get_hourly_candles_since(symbol, signal_time)
+    if not coin_id:
+        return sig, None  # سیگنال‌های قدیمی بدون coin_id قابل پیگیری نیستن
+
+    df = get_hourly_candles_since(coin_id, signal_time)
     if df is None:
         return sig, None
 
     notify = None
 
+    # --- مرحله ۱: بررسی پر شدن Limit Entry ---
     if not sig["entered"]:
         for _, row in df.iterrows():
             if row["low"] <= entry <= row["high"]:
@@ -109,6 +128,7 @@ def process_signal(sig):
                 notify = f"⌛ سفارش منقضی شد (Limit پر نشد): {symbol}"
             return sig, notify
 
+    # --- مرحله ۲: بررسی برخورد به SL / TP1 / TP2 بعد از ورود ---
     entry_time = datetime.fromisoformat(sig["entry_time"])
     df_after = df[df["dt"] >= pd.Timestamp(entry_time)]
 
