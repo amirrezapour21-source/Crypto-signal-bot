@@ -8,20 +8,46 @@ Debug Diagnostic — پیدا کردن دلیل دقیق صفر شدن سیگن�
 
 import sys
 import os
+import requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from crypto_signal_bot import (
     get_ohlcv, classify_structure, compute_volume_profile, compute_rvol,
     zone_quality_ok, liquidity_sweep_detected, get_valid_targets, MIN_RR,
+    CRYPTOCOMPARE_BASE,
 )
 
 WINDOW = 150
 
+def raw_api_test():
+    """تست مستقیم API برای دیدن پیام خطای واقعی"""
+    print("=== تست مستقیم API با limit های مختلف ===\n")
+    for limit in [150, 300, 500, 700, 2000]:
+        url = f"{CRYPTOCOMPARE_BASE}/histohour"
+        params = {"fsym": "BTC", "tsym": "USD", "limit": limit, "aggregate": 4}
+        try:
+            resp = requests.get(url, params=params, timeout=20)
+            print(f"limit={limit} → HTTP {resp.status_code}")
+            data = resp.json()
+            print(f"  Response: {data.get('Response')}")
+            if data.get("Response") != "Success":
+                print(f"  پیام خطا: {data.get('Message')}")
+            else:
+                actual_count = len(data.get("Data", {}).get("Data", []))
+                print(f"  تعداد کندل دریافتی: {actual_count}")
+        except Exception as e:
+            print(f"  خطای اتصال: {e}")
+        print()
+
+
 def main():
-    print("در حال دریافت داده BTC (۹۰ روز)...")
+    raw_api_test()
+
+    print("\n" + "=" * 50)
+    print("در حال دریافت داده BTC از طریق get_ohlcv معمولی...")
     df = get_ohlcv("BTC", timeframe="hour", aggregate=4, limit=700)
     if df is None:
-        print("❌ داده دریافت نشد! (مشکل از API)")
+        print("❌ داده دریافت نشد! (جزئیات بالا رو ببین)")
         return
     print(f"تعداد کندل دریافتی: {len(df)}\n")
 
@@ -67,7 +93,6 @@ def main():
 
             if score >= 3:
                 score_ge3 += 1
-                # حالا تست انتخاب هدف و R:R
                 pivot_highs, pivot_lows = structure["pivot_highs"], structure["pivot_lows"]
                 vp_recent = compute_volume_profile(window_df.iloc[-10:])
                 if vp_recent is not None:
