@@ -2,17 +2,21 @@
 Elite Crypto Volume Profile — Scan & Analysis Bot (Fully Automated)
 --------------------------------------------------------------------
 بر اساس پرامپت "ELITE CRYPTO VOLUME PROFILE" ساخته شده، با این تفاوت که
-به‌جای دریافت اسکرین‌شات چارت از کاربر، خودش داده کندل ۴ساعته و ۱۵دقیقه
-واقعی رو از API می‌گیره و Volume Profile / Market Structure رو محاسبه می‌کنه.
+به‌جای دریافت اسکرین‌شات چارت از کاربر، خودش داده قیمت/حجم واقعی رو از
+API می‌گیره و Volume Profile / Market Structure رو محاسبه می‌کنه.
 
 ⚠️ توجه مهم:
-این یک تقریب الگوریتمی از تحلیل Volume Profile حرفه‌ای است (بر پایه OHLCV)،
-نه جایگزین کامل نرم‌افزارهایی که به داده tick/order-book دسترسی دارند.
-دقت آن به کیفیت داده منبع وابسته است.
+این یک تقریب الگوریتمی از تحلیل Volume Profile حرفه‌ای است، نه جایگزین
+کامل نرم‌افزارهایی که به داده tick/order-book دسترسی دارند.
 
-منابع داده:
-    - لیست ارزها و رتبه‌بندی بازار: CoinGecko
-    - کندل‌های ۴H و ۱۵M (OHLCV واقعی): CryptoCompare (min-api.cryptocompare.com)
+منبع داده: CoinGecko (رایگان، بدون نیاز به کلید API)
+    - لیست ارزها و رتبه‌بندی بازار: /coins/markets
+    - سری قیمت/حجم: /coins/{id}/market_chart — چون این endpoint کندل
+      واقعی (OHLC) نمی‌ده، خودمون از روی نقاط قیمت پیاپی، کندل مصنوعی
+      (Open/High/Low/Close/Volume) می‌سازیم (Resampling). این دقتش رو
+      نسبت به کندل واقعی صرافی کمی پایین‌تر می‌آره، ولی تنها گزینه رایگان
+      و پایدار موجوده (CryptoCompare/CoinDesk Data از می ۲۰۲۶ رایگان
+      نیست، Binance هم از سرورهای GitHub مسدوده).
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -33,26 +37,25 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
-CRYPTOCOMPARE_BASE = "https://min-api.cryptocompare.com/data/v2"
 
 SCAN_TOP_N_COINS = 60       # تعداد ارزهایی که در فاز اسکن بررسی میشن
-REQUEST_DELAY = 1.2         # فاصله بین درخواست‌ها
+REQUEST_DELAY = 1.5         # فاصله بین درخواست‌ها (رعایت rate limit رایگان CoinGecko)
 MIN_RR = 2.0                # حداقل نسبت ریسک به ریوارد قابل قبول
 
 
 # ============ ابزار درخواست امن ============
-def safe_get(url, params=None, retries=3):
+def safe_get(url, params=None, headers=None, retries=3):
     resp = None
     for attempt in range(retries):
         try:
-            resp = requests.get(url, params=params, timeout=20)
+            resp = requests.get(url, params=params, headers=headers, timeout=20)
         except requests.RequestException:
             time.sleep(5)
             continue
         if resp.status_code == 200:
             return resp
         if resp.status_code == 429:
-            time.sleep(10 * (attempt + 1))
+            time.sleep(15 * (attempt + 1))
             continue
         return resp
     return resp
@@ -78,24 +81,67 @@ def get_top_coins(n):
     return [c for c in data if not is_stablecoin(c)]
 
 
-# ============ دریافت کندل (CryptoCompare) ============
-def get_ohlcv(symbol, timeframe="hour", aggregate=4, limit=150):
-    """timeframe: 'hour' برای ساعتی/۴ساعته، 'minute' برای دقیقه‌ای/۱۵دقیقه"""
-    endpoint = "histohour" if timeframe == "hour" else "histominute"
-    url = f"{CRYPTOCOMPARE_BASE}/{endpoint}"
-    params = {"fsym": symbol, "tsym": "USD", "limit": limit, "aggregate": aggregate}
+# ============ دریافت سری قیمت/حجم و ساخت کندل مصنوعی (CoinGecko) ============
+def fetch_market_chart(coin_id, days):
+    url = f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": days}
     resp = safe_get(url, params=params)
     if resp is None or resp.status_code != 200:
         return None
-    payload = resp.json()
-    if payload.get("Response") != "Success":
+    data = resp.json()
+    prices = data.get("prices")
+    volumes = data.get("total_volumes")
+    if not prices or not volumes:
         return None
-    rows = payload["Data"]["Data"]
-    df = pd.DataFrame(rows)
-    if df.empty or df["close"].eq(0).all():
+    df = pd.DataFrame({"time": [p[0] // 1000 for p in prices], "price": [p[1] for p in prices]})
+    vol_df = pd.DataFrame({"time": [v[0] // 1000 for v in volumes], "volume": [v[1] for v in volumes]})
+    df = df.merge(vol_df, on="time", how="left").sort_values("time").reset_index(drop=True)
+    df["volume"] = df["volume"].fillna(0)
+    return df
+
+
+def resample_to_ohlcv(df, bucket_size):
+    """هر `bucket_size` نقطه قیمتی پیاپی رو به یک کندل OHLCV تبدیل می‌کنه"""
+    n = len(df) // bucket_size
+    if n < 1:
         return None
-    df["volume"] = df["volumeto"]
-    return df[["time", "open", "high", "low", "close", "volume"]]
+    rows = []
+    for i in range(n):
+        chunk = df.iloc[i * bucket_size:(i + 1) * bucket_size]
+        rows.append({
+            "time": chunk["time"].iloc[-1],
+            "open": chunk["price"].iloc[0],
+            "high": chunk["price"].max(),
+            "low": chunk["price"].min(),
+            "close": chunk["price"].iloc[-1],
+            "volume": chunk["volume"].sum(),
+        })
+    return pd.DataFrame(rows)
+
+
+def get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150):
+    """
+    timeframe='hour': کندل چندساعته (مثلاً ۴H) از داده ساعتی CoinGecko می‌سازه.
+    timeframe='minute': برای نقطه ورود دقیق‌تر، از داده ریزدانه‌تر ۲۴ساعت اخیر
+    (~۵ دقیقه‌ای) استفاده می‌کنه و به بازه دلخواه (مثلاً ۱۵دقیقه) می‌سازه.
+    """
+    if timeframe == "hour":
+        hours_needed = limit * aggregate
+        days = min(90, max(2, (hours_needed // 24) + 3))
+        raw = fetch_market_chart(coin_id, days)
+        if raw is None or len(raw) < aggregate * 10:
+            return None
+        candles = resample_to_ohlcv(raw, aggregate)
+    else:
+        raw = fetch_market_chart(coin_id, 1)  # ۲۴ساعت اخیر با گرانولاریتی ~۵دقیقه
+        if raw is None or len(raw) < 10:
+            return None
+        bucket = max(1, round(aggregate / 5))
+        candles = resample_to_ohlcv(raw, bucket)
+
+    if candles is None or len(candles) < 10:
+        return None
+    return candles.tail(limit).reset_index(drop=True)
 
 
 # ============ تشخیص پیوت‌ها (سوئینگ‌های تأییدشده) ============
@@ -216,7 +262,7 @@ def compute_bollinger(df, period=20, num_std=2):
 
 
 # ============ PART A: امتیازدهی کاندید — استراتژی روند (Trend/Smart Money) ============
-def score_trend_candidate(symbol, df4h, structure, vp, rvol):
+def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     zq = zone_quality_ok(df4h)
     liq = liquidity_sweep_detected(df4h, structure["pivot_highs"], structure["pivot_lows"])
 
@@ -240,14 +286,14 @@ def score_trend_candidate(symbol, df4h, structure, vp, rvol):
         return None
 
     return {
-        "symbol": symbol, "strategy": "trend", "score": score, "confidence": confidence,
+        "symbol": symbol, "coin_id": coin_id, "strategy": "trend", "score": score, "confidence": confidence,
         "checks": checks, "trend": structure["trend"], "rvol": rvol,
         "price": current_price, "df4h": df4h, "structure": structure, "vp": vp,
     }
 
 
 # ============ PART A: امتیازدهی کاندید — استراتژی بازگشت به میانگین (Mean Reversion) ============
-def score_mean_reversion_candidate(symbol, df4h, structure, vp, rvol):
+def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     # فقط وقتی بازار روند مشخصی نداره (رنج/بی‌جهت) این مسیر رو بررسی می‌کنیم
     if structure["trend"] in ("up", "down"):
         return None
@@ -312,15 +358,17 @@ def score_mean_reversion_candidate(symbol, df4h, structure, vp, rvol):
         return None
 
     return {
-        "symbol": symbol, "strategy": "mean_reversion", "score": score, "confidence": confidence,
+        "symbol": symbol, "coin_id": coin_id, "strategy": "mean_reversion", "score": score, "confidence": confidence,
         "checks": checks, "direction_bias": direction_bias, "rvol": rvol,
         "price": last_close, "df4h": df4h, "range_high": range_high, "range_low": range_low,
         "range_mid": (range_high + range_low) / 2, "vp": vp,
     }
 
 
-def evaluate_symbol(symbol):
-    df4h = get_ohlcv(symbol, timeframe="hour", aggregate=4, limit=150)
+def evaluate_symbol(coin):
+    symbol = coin["symbol"].upper()
+    coin_id = coin["id"]
+    df4h = get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150)
     if df4h is None or len(df4h) < 60:
         return None
     structure = classify_structure(df4h)
@@ -330,9 +378,9 @@ def evaluate_symbol(symbol):
     rvol = compute_rvol(df4h)
 
     if structure["trend"] in ("up", "down"):
-        return score_trend_candidate(symbol, df4h, structure, vp, rvol)
+        return score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol)
     else:
-        return score_mean_reversion_candidate(symbol, df4h, structure, vp, rvol)
+        return score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol)
 
 
 def part_a_scan(coins):
@@ -340,7 +388,7 @@ def part_a_scan(coins):
     for c in coins:
         symbol = c["symbol"].upper()
         try:
-            res = evaluate_symbol(symbol)
+            res = evaluate_symbol(c)
             if res:
                 candidates.append(res)
         except Exception as e:
@@ -387,14 +435,15 @@ def get_valid_targets(pivots, entry, direction):
 # ============ PART B: اجرای معامله — مسیر روند (Trend) ============
 def execute_trend(candidate):
     symbol = candidate["symbol"]
+    coin_id = candidate["coin_id"]
     trend = candidate["trend"]
     structure = candidate["structure"]
 
-    df15m = get_ohlcv(symbol, timeframe="minute", aggregate=15, limit=150)
-    if df15m is None or len(df15m) < 60:
+    df15m = get_ohlcv(coin_id, timeframe="minute", aggregate=15, limit=90)
+    if df15m is None or len(df15m) < 20:
         return {"symbol": symbol, "rejected": True}
 
-    vp15 = compute_volume_profile(df15m.iloc[-40:])
+    vp15 = compute_volume_profile(df15m.iloc[-20:])
     if vp15 is None:
         return {"symbol": symbol, "rejected": True}
 
@@ -439,7 +488,7 @@ def execute_trend(candidate):
         risk_level = "متوسط"
 
     return {
-        "symbol": symbol, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
+        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
         "checks": candidate["checks"],
@@ -449,14 +498,15 @@ def execute_trend(candidate):
 # ============ PART B: اجرای معامله — مسیر بازگشت به میانگین (Mean Reversion) ============
 def execute_mean_reversion(candidate):
     symbol = candidate["symbol"]
+    coin_id = candidate["coin_id"]
     direction_bias = candidate["direction_bias"]
     range_high, range_low, range_mid = candidate["range_high"], candidate["range_low"], candidate["range_mid"]
 
-    df15m = get_ohlcv(symbol, timeframe="minute", aggregate=15, limit=150)
-    if df15m is None or len(df15m) < 60:
+    df15m = get_ohlcv(coin_id, timeframe="minute", aggregate=15, limit=90)
+    if df15m is None or len(df15m) < 20:
         return {"symbol": symbol, "rejected": True}
 
-    vp15 = compute_volume_profile(df15m.iloc[-40:])
+    vp15 = compute_volume_profile(df15m.iloc[-20:])
     if vp15 is None:
         return {"symbol": symbol, "rejected": True}
 
@@ -490,7 +540,7 @@ def execute_mean_reversion(candidate):
         risk_level = "متوسط"
 
     return {
-        "symbol": symbol, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
+        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
         "checks": candidate["checks"],
@@ -514,7 +564,7 @@ def format_output(candidates, executions):
         return "فاقد ارز مستعد"
 
     lines = ["<b>PART A — اسکن مارکت</b>"]
-    lines.append("وضعیت اسکن: انجام‌شده ✅ (منبع: CoinGecko + CryptoCompare)\n")
+    lines.append("وضعیت اسکن: انجام‌شده ✅ (منبع: CoinGecko)\n")
     for c in candidates:
         strategy_label = "روند (Smart Money)" if c["strategy"] == "trend" else "بازگشت به میانگین (Mean Reversion)"
         lines.append(f"<b>{c['symbol']}</b> | استراتژی: {strategy_label} | اعتبار: {c['confidence']}")
@@ -574,13 +624,14 @@ def log_signal(ex):
     log.append({
         "id": entry_id,
         "symbol": ex["symbol"],
+        "coin_id": ex.get("coin_id", ""),
         "direction": ex["direction"],
         "entry": ex["entry"],
         "sl": ex["sl"],
         "tp1": ex["tp1"],
         "tp2": ex["tp2"],
         "signal_time": datetime.now(timezone.utc).isoformat(),
-        "status": "ENTRY_PENDING",   # ENTRY_PENDING -> OPEN -> TP1_HIT -> TP2_HIT / SL_HIT / EXPIRED
+        "status": "ENTRY_PENDING",
         "entered": False,
         "entry_time": None,
         "closed_time": None,
