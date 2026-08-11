@@ -9,13 +9,16 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 این یک تقریب الگوریتمی از تحلیل Volume Profile حرفه‌ای است، نه جایگزین
 کامل نرم‌افزارهایی که به داده tick/order-book دسترسی دارند.
 
-منبع داده: CoinGecko (رایگان، بدون نیاز به کلید API)
+منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
+منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin (برای دقیق‌تر کردن نقطه ورود در PART B)
 
-نسخه بهینه‌شده (v3 - تعادلی): بین نسخه اولیه (نرخ برد ۲۴.۱٪، خیلی سست) و
-نسخه سخت‌گیرانه (تقریباً هیچ سیگنالی تولید نمی‌کرد) یک نقطه تعادل انتخاب شده:
-  1. استراتژی روند: امتیاز لازم ۴ از ۵ (نه ۵ کامل)، RVOL=1.25، Zone Quality=0.85
+نسخه بهینه‌شده (v3 - تعادلی + اعتبارسنجی قیمت زنده):
+  1. استراتژی روند: امتیاز لازم ۴ از ۵، RVOL=1.25، Zone Quality=0.85
   2. تأیید روند در تایم‌فریم روزانه (حفظ شده)
   3. Mean Reversion: امتیاز لازم ۴ از ۵، RSI=28/72، touches=2
+  4. جدید: قبل از نهایی کردن سیگنال در PART B، قیمت لحظه‌ای واقعی از
+     KuCoin گرفته می‌شه و با قیمت تخمینی CoinGecko مقایسه می‌شه. اگه
+     اختلاف بیش از ۱٪ باشه، قیمت KuCoin (دقیق‌تر) جایگزین می‌شه.
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -40,6 +43,7 @@ COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 SCAN_TOP_N_COINS = 60       # تعداد ارزهایی که در فاز اسکن بررسی میشن
 REQUEST_DELAY = 1.5         # فاصله بین درخواست‌ها (رعایت rate limit رایگان CoinGecko)
 MIN_RR = 2.0                # حداقل نسبت ریسک به ریوارد قابل قبول
+PRICE_DEVIATION_THRESHOLD = 0.01  # اگه اختلاف CoinGecko و KuCoin بیش از ۱٪ بود، KuCoin را ملاک قرار بده
 
 
 # ============ ابزار درخواست امن ============
@@ -58,6 +62,53 @@ def safe_get(url, params=None, headers=None, retries=3):
             continue
         return resp
     return resp
+
+
+# ============ قیمت لحظه‌ای واقعی (KuCoin) — برای اعتبارسنجی دقت قیمت ============
+def get_live_price_kucoin(symbol):
+    """
+    قیمت لحظه‌ای واقعی رو از KuCoin می‌گیره تا با قیمت تخمینی CoinGecko
+    مقایسه بشه و از دقت بالاتر ورودی/خروجی اطمینان حاصل بشه.
+    اگه KuCoin این نماد رو نداشت یا خطا داد، None برمی‌گردونه (و منطق
+    قبلی بدون تغییر ادامه پیدا می‌کنه).
+    """
+    try:
+        url = "https://api.kucoin.com/api/v1/market/orderbook/level1"
+        params = {"symbol": f"{symbol}-USDT"}
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if data.get("code") != "200000":
+            return None
+        price = data.get("data", {}).get("price")
+        return float(price) if price else None
+    except Exception:
+        return None
+
+
+def validate_and_adjust_prices(symbol, entry, sl, tp1, tp2, direction):
+    """
+    قیمت لحظه‌ای واقعی رو از KuCoin می‌گیره. اگه اختلافش با entry تخمینی
+    (از CoinGecko) بیش از آستانه مجاز بود، تمام سطوح (entry/sl/tp1/tp2)
+    با همون نسبت فاصله از entry اصلی، حول قیمت واقعی جدید بازتنظیم می‌شن
+    (یعنی فاصله ریسک/ریوارد حفظ می‌شه، فقط نقطه مرجع دقیق‌تر می‌شه).
+    """
+    live_price = get_live_price_kucoin(symbol)
+    if live_price is None or entry == 0:
+        return entry, sl, tp1, tp2, False, None
+
+    deviation = abs(live_price - entry) / entry
+    if deviation <= PRICE_DEVIATION_THRESHOLD:
+        return entry, sl, tp1, tp2, False, live_price
+
+    # بازتنظیم سطوح حول قیمت واقعی (حفظ همون فاصله‌های نسبی ریسک/ریوارد)
+    shift = live_price - entry
+    new_entry = live_price
+    new_sl = sl + shift
+    new_tp1 = tp1 + shift
+    new_tp2 = tp2 + shift
+    return new_entry, new_sl, new_tp1, new_tp2, True, live_price
 
 
 # ============ دریافت لیست ارزها (CoinGecko) ============
@@ -498,6 +549,18 @@ def execute_trend(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
+    # ---- اعتبارسنجی قیمت لحظه‌ای واقعی از KuCoin ----
+    entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
+        symbol, entry, sl, tp1, tp2, direction
+    )
+    risk = abs(entry - sl)
+    reward1 = abs(tp1 - entry)
+    if risk <= 0 or reward1 <= 0:
+        return {"symbol": symbol, "rejected": True}
+    rr = reward1 / risk
+    if rr < MIN_RR:
+        return {"symbol": symbol, "rejected": True}
+
     if candidate["confidence"] == "بالا" and rr >= 3:
         risk_level = "پایین"
     else:
@@ -507,7 +570,7 @@ def execute_trend(candidate):
         "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
-        "checks": candidate["checks"],
+        "checks": candidate["checks"], "price_adjusted": adjusted, "live_price": live_price,
     }
 
 
@@ -550,6 +613,18 @@ def execute_mean_reversion(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
+    # ---- اعتبارسنجی قیمت لحظه‌ای واقعی از KuCoin ----
+    entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
+        symbol, entry, sl, tp1, tp2, direction
+    )
+    risk = abs(entry - sl)
+    reward1 = abs(tp1 - entry)
+    if risk <= 0 or reward1 <= 0:
+        return {"symbol": symbol, "rejected": True}
+    rr = reward1 / risk
+    if rr < MIN_RR:
+        return {"symbol": symbol, "rejected": True}
+
     if candidate["confidence"] == "بالا" and rr >= 3:
         risk_level = "پایین"
     else:
@@ -559,7 +634,7 @@ def execute_mean_reversion(candidate):
         "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
-        "checks": candidate["checks"],
+        "checks": candidate["checks"], "price_adjusted": adjusted, "live_price": live_price,
     }
 
 
@@ -603,6 +678,9 @@ def format_output(candidates, executions):
         lines.append(f"R:R = 1:{ex['rr']:.2f}")
         lines.append(f"سطح ریسک: {ex['risk_level']}")
         lines.append(f"اعتبار: {ex['confidence']}")
+        if ex.get("live_price"):
+            tag = "تنظیم‌شده با قیمت زنده KuCoin ✅" if ex.get("price_adjusted") else "تأییدشده با قیمت زنده KuCoin ✅"
+            lines.append(f"دقت قیمت: {tag}")
 
     lines.append(
         "\n⚠️ این سطوح بر اساس تفسیر بصری چارت است و ممکن است دقت قیمتی کامل نداشته باشد. "
