@@ -1,9 +1,10 @@
 """
 Backtest Engine — سنجش عملکرد واقعی استراتژی روی داده تاریخی
 ----------------------------------------------------------------
-این اسکریپت دقیقاً همون منطق crypto_signal_bot.py رو روی چند ماه گذشته
-اجرا می‌کنه (walk-forward، بدون نگاه به آینده) و می‌سنجه که اگه این
-سیستم اون‌موقع فعال بود، چند درصد سیگنال‌ها برنده/بازنده می‌شدن.
+این اسکریپت دقیقاً همون منطق نسخه تعادلی (v3) crypto_signal_bot.py رو
+روی چند ماه گذشته اجرا می‌کنه (walk-forward، بدون نگاه به آینده) و
+می‌سنجه که اگه این سیستم اون‌موقع فعال بود، چند درصد سیگنال‌ها
+برنده/بازنده می‌شدن.
 
 ⚠️ محدودیت‌های مهم (صادقانه):
 - منبع داده: CoinGecko (کندل مصنوعی از سری قیمت/حجم، نه OHLCV واقعی صرافی).
@@ -11,9 +12,12 @@ Backtest Engine — سنجش عملکرد واقعی استراتژی روی د�
   زده می‌شه، نه کندل ۱۵دقیقه‌ای دقیق (که برای بک‌تست چندماهه غیرعملیه).
 - کارمزد صرافی، اسلیپیج (لغزش قیمت)، و تأخیر اجرا در نظر گرفته نشده.
 - تأیید روند روزانه (daily bias) یک‌بار به‌ازای هر ارز محاسبه و کش می‌شه
-  (نه به‌ازای هر پنجره)، چون در بازه بک‌تست عملاً یکی است و صرفه‌جویی
-  زیادی در تعداد درخواست‌های API ایجاد می‌کند.
+  (نه به‌ازای هر پنجره)، برای صرفه‌جویی در تعداد درخواست‌های API.
 - نتیجه یک "تقریب معقول"ه، نه یک عدد قطعی برای تصمیم مالی.
+
+پارامترهای این نسخه (تعادلی v3):
+  - روند: امتیاز≥۴ از ۵، RVOL>1.25، Zone Quality<0.85، تأیید روزانه
+  - Mean Reversion: امتیاز≥۴ از ۵، RSI=28/72، touches≥2
 
 اجرا: از طریق GitHub Actions (workflow_dispatch دستی) یا لوکال.
 """
@@ -55,7 +59,7 @@ def get_daily_trend_cached(coin_id):
 
 
 def score_trend_candidate_bt(symbol, coin_id, df4h, structure, vp, rvol):
-    """نسخه بک‌تست از منطق امتیازدهی روند (با کش daily bias، بدون درخواست تکراری)"""
+    """نسخه بک‌تست از منطق امتیازدهی روند (تعادلی v3، با کش daily bias)"""
     zq = zone_quality_ok(df4h)
     liq = liquidity_sweep_detected(df4h, structure["pivot_highs"], structure["pivot_lows"])
     current_price = df4h["close"].iloc[-1]
@@ -67,17 +71,19 @@ def score_trend_candidate_bt(symbol, coin_id, df4h, structure, vp, rvol):
 
     checks = {
         "Volume Profile": price_near_poc,
-        "Volume/RVOL": rvol > 1.35,
+        "Volume/RVOL": rvol > 1.25,
         "Zone Quality": zq,
         "Structure Clarity": structure["trend"] in ("up", "down"),
         "Liquidity Context": liq,
     }
     score = sum(checks.values())
-    if score != 5:
+    if score < 4:
         return None
 
+    confidence = "بالا" if score == 5 else "متوسط"
+
     return {
-        "symbol": symbol, "coin_id": coin_id, "strategy": "trend", "score": score, "confidence": "بالا",
+        "symbol": symbol, "coin_id": coin_id, "strategy": "trend", "score": score, "confidence": confidence,
         "checks": checks, "trend": structure["trend"], "rvol": rvol,
         "price": current_price, "df4h": df4h, "structure": structure, "vp": vp,
     }
@@ -117,14 +123,14 @@ def score_mean_reversion_candidate_bt(symbol, coin_id, df4h, structure, vp, rvol
 
     touches_high = (lookback["high"] >= range_high * 0.99).sum()
     touches_low = (lookback["low"] <= range_low * 1.01).sum()
-    range_confirmed = touches_high >= 3 and touches_low >= 3
+    range_confirmed = touches_high >= 2 and touches_low >= 2
 
     if direction_bias == "LONG":
-        rsi_extreme = last_rsi < 25
+        rsi_extreme = last_rsi < 28
         bb_touch = last_low <= last_lower
         reversal = last_low <= last_lower and last_close > last_lower
     else:
-        rsi_extreme = last_rsi > 75
+        rsi_extreme = last_rsi > 72
         bb_touch = last_high >= last_upper
         reversal = last_high >= last_upper and last_close < last_upper
 
@@ -139,8 +145,10 @@ def score_mean_reversion_candidate_bt(symbol, coin_id, df4h, structure, vp, rvol
     if score < 4:
         return None
 
+    confidence = "بالا" if score == 5 else "متوسط"
+
     return {
-        "symbol": symbol, "coin_id": coin_id, "strategy": "mean_reversion", "score": score, "confidence": "بالا",
+        "symbol": symbol, "coin_id": coin_id, "strategy": "mean_reversion", "score": score, "confidence": confidence,
         "checks": checks, "direction_bias": direction_bias, "rvol": rvol,
         "price": last_close, "df4h": df4h, "range_high": range_high, "range_low": range_low,
         "range_mid": (range_high + range_low) / 2, "vp": vp,
