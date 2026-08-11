@@ -14,5 +14,21 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "PAXG_1786430642",
+    "symbol": "PAXG",
+    "coin_id": "pax-gold",
+    "direction": "SHORT",
+    "entry": 4406.499344980901,
+    "sl": 4462.3066665756105,
+    "tp1": 4241.360571168945,
+    "tp2": 4064.5957298867897,
+    "signal_time": "2026-08-11T06:44:02.672242+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
