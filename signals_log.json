@@ -30,5 +30,21 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ICP_1786432450",
+    "symbol": "ICP",
+    "coin_id": "internet-computer",
+    "direction": "SHORT",
+    "entry": 2.36542887400901,
+    "sl": 2.407261845481175,
+    "tp1": 2.2239296854401243,
+    "tp2": 2.0644318010969074,
+    "signal_time": "2026-08-11T07:14:10.701095+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
