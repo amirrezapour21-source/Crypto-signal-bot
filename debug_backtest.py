@@ -1,61 +1,49 @@
 """
-Debug Diagnostic — پیدا کردن دلیل دقیق صفر شدن سیگنال‌ها
+Debug Diagnostic — بررسی نهایی سلامت داده و منطق روی BTC
 ------------------------------------------------------------
-این اسکریپت فقط روی BTC اجرا میشه و برای هر پنجره ۱۵۰کندلی، دقیقاً
-می‌گه کدوم مرحله (تشخیص روند / هر کدوم از ۵ معیار / محاسبه R:R)
-باعث رد شدن شده. خروجی رو کامل بفرست تا مشکل واقعی پیدا بشه.
+این اسکریپت فقط روی BTC اجرا میشه، اول تأیید می‌کنه داده از CoinGecko
+درست میاد، بعد آمار کامل هر ۵ معیار رو نشون می‌ده.
 """
 
 import sys
 import os
-import requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from crypto_signal_bot import (
-    get_ohlcv, classify_structure, compute_volume_profile, compute_rvol,
-    zone_quality_ok, liquidity_sweep_detected, get_valid_targets, MIN_RR,
-    CRYPTOCOMPARE_BASE,
+    get_top_coins, get_ohlcv, classify_structure, compute_volume_profile,
+    compute_rvol, zone_quality_ok, liquidity_sweep_detected, get_valid_targets, MIN_RR,
 )
 
 WINDOW = 150
 
-def raw_api_test():
-    """تست مستقیم API برای دیدن پیام خطای واقعی"""
-    print("=== تست مستقیم API با limit های مختلف ===\n")
-    for limit in [150, 300, 500, 700, 2000]:
-        url = f"{CRYPTOCOMPARE_BASE}/histohour"
-        params = {"fsym": "BTC", "tsym": "USD", "limit": limit, "aggregate": 4}
-        try:
-            resp = requests.get(url, params=params, timeout=20)
-            print(f"limit={limit} → HTTP {resp.status_code}")
-            data = resp.json()
-            print(f"  Response: {data.get('Response')}")
-            if data.get("Response") != "Success":
-                print(f"  پیام خطا: {data.get('Message')}")
-            else:
-                actual_count = len(data.get("Data", {}).get("Data", []))
-                print(f"  تعداد کندل دریافتی: {actual_count}")
-        except Exception as e:
-            print(f"  خطای اتصال: {e}")
-        print()
-
 
 def main():
-    raw_api_test()
-
-    print("\n" + "=" * 50)
-    print("در حال دریافت داده BTC از طریق get_ohlcv معمولی...")
-    df = get_ohlcv("BTC", timeframe="hour", aggregate=4, limit=700)
-    if df is None:
-        print("❌ داده دریافت نشد! (جزئیات بالا رو ببین)")
+    print("در حال پیدا کردن coin_id برای BTC از CoinGecko...")
+    coins = get_top_coins(5)
+    btc = next((c for c in coins if c["symbol"].upper() == "BTC"), None)
+    if btc is None:
+        print("❌ BTC تو لیست پیدا نشد!")
         return
-    print(f"تعداد کندل دریافتی: {len(df)}\n")
+    coin_id = btc["id"]
+    print(f"coin_id پیدا شد: {coin_id}\n")
+
+    print("در حال دریافت کندل ۴ساعته (۸۵ روز)...")
+    df = get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=500)
+    if df is None:
+        print("❌ داده دریافت نشد!")
+        return
+    print(f"تعداد کندل دریافتی: {len(df)}")
+    print(f"نمونه آخرین کندل: {df.iloc[-1].to_dict()}\n")
+
+    if len(df) < WINDOW + 20:
+        print(f"⚠️ داده کافی نیست (نیاز به حداقل {WINDOW + 20}، فقط {len(df)} موجوده)")
+        return
 
     trend_count = {"up": 0, "down": 0, "choppy": 0}
     check_pass = {"Volume Profile": 0, "Volume/RVOL": 0, "Zone Quality": 0, "Liquidity Context": 0}
     check_total = 0
-    score_ge3 = 0
     score_distribution = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    score_ge3 = 0
     target_found = 0
     rr_ok = 0
 
@@ -88,7 +76,7 @@ def main():
             if liq:
                 check_pass["Liquidity Context"] += 1
 
-            score = 1 + sum([price_near_poc, rvol > 1.15, zq, liq])  # +1 برای Structure Clarity
+            score = 1 + sum([price_near_poc, rvol > 1.15, zq, liq])
             score_distribution[score] += 1
 
             if score >= 3:
@@ -113,7 +101,6 @@ def main():
                             risk, reward1 = sl - entry, entry - tp1
                             if risk > 0 and reward1 > 0 and (reward1 / risk) >= MIN_RR:
                                 rr_ok += 1
-
         i += 1
 
     print("=" * 50)
