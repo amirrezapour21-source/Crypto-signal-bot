@@ -10,13 +10,15 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 کامل نرم‌افزارهایی که به داده tick/order-book دسترسی دارند.
 
 منبع داده: CoinGecko (رایگان، بدون نیاز به کلید API)
-    - لیست ارزها و رتبه‌بندی بازار: /coins/markets
-    - سری قیمت/حجم: /coins/{id}/market_chart — چون این endpoint کندل
-      واقعی (OHLC) نمی‌ده، خودمون از روی نقاط قیمت پیاپی، کندل مصنوعی
-      (Open/High/Low/Close/Volume) می‌سازیم (Resampling). این دقتش رو
-      نسبت به کندل واقعی صرافی کمی پایین‌تر می‌آره، ولی تنها گزینه رایگان
-      و پایدار موجوده (CryptoCompare/CoinDesk Data از می ۲۰۲۶ رایگان
-      نیست، Binance هم از سرورهای GitHub مسدوده).
+
+نسخه بهینه‌شده (v2): آستانه‌های سخت‌گیرانه‌تر برای بالا بردن نرخ برد،
+بر اساس نتیجه بک‌تست نسخه قبلی (نرخ برد ۲۴.۱٪ روی ۶۸ سیگنال).
+تغییرات این نسخه:
+  1. حذف رده "متوسط" برای استراتژی روند - فقط امتیاز کامل قبول می‌شود
+  2. RVOL: آستانه از ۱.۱۵ به ۱.۳۵
+  3. Zone Quality: آستانه از ۰.۹۰ به ۰.۸۲
+  4. Mean Reversion: آستانه امتیاز از ۳ به ۴، RSI از ۳۲/۶۸ به ۲۵/۷۵، touches از ۲ به ۳
+  5. فیلتر جدید: تأیید روند در تایم‌فریم روزانه قبل از صدور سیگنال روند
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -121,7 +123,7 @@ def resample_to_ohlcv(df, bucket_size):
 
 def get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150):
     """
-    timeframe='hour': کندل چندساعته (مثلاً ۴H) از داده ساعتی CoinGecko می‌سازه.
+    timeframe='hour': کندل چندساعته (مثلاً ۴H یا ۲۴H) از داده ساعتی CoinGecko می‌سازه.
     timeframe='minute': برای نقطه ورود دقیق‌تر، از داده ریزدانه‌تر ۲۴ساعت اخیر
     (~۵ دقیقه‌ای) استفاده می‌کنه و به بازه دلخواه (مثلاً ۱۵دقیقه) می‌سازه.
     """
@@ -181,6 +183,20 @@ def classify_structure(df):
     return {"trend": trend, "pivot_highs": pivot_highs, "pivot_lows": pivot_lows}
 
 
+# ============ تأیید روند در تایم‌فریم بالاتر (روزانه) ============
+def get_daily_trend_bias(coin_id):
+    """
+    برای فیلتر کردن سیگنال‌های خلاف‌جهت روند اصلی، ساختار بازار رو روی
+    کندل روزانه (۲۴ساعته) هم می‌سنجیم. سیگنال روند فقط وقتی تأیید میشه
+    که جهت ۴H با جهت روزانه هم‌راستا باشه.
+    """
+    df_daily = get_ohlcv(coin_id, timeframe="hour", aggregate=24, limit=45)
+    if df_daily is None or len(df_daily) < 30:
+        return None
+    structure = classify_structure(df_daily)
+    return structure["trend"]
+
+
 # ============ Volume Profile (POC / HVN / LVN) ============
 def compute_volume_profile(df, bins=24):
     typical_price = (df["high"] + df["low"] + df["close"]) / 3
@@ -220,7 +236,7 @@ def zone_quality_ok(df):
     atr_long = tr.iloc[-50:].mean()
     if atr_long == 0:
         return False
-    return (atr_short / atr_long) < 0.90
+    return (atr_short / atr_long) < 0.82
 
 
 # ============ شکار نقدینگی (Liquidity Sweep) ============
@@ -269,19 +285,24 @@ def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     current_price = df4h["close"].iloc[-1]
     price_near_poc = abs(current_price - vp["poc"]) / current_price < 0.06
 
+    # فیلتر جدید: تأیید روند در تایم‌فریم روزانه (فقط اگه با ۴H هم‌جهت باشه ادامه می‌دیم)
+    daily_trend = get_daily_trend_bias(coin_id)
+    daily_confirmed = daily_trend is not None and daily_trend == structure["trend"]
+    if not daily_confirmed:
+        return None
+
     checks = {
         "Volume Profile": price_near_poc,
-        "Volume/RVOL": rvol > 1.15,
+        "Volume/RVOL": rvol > 1.35,
         "Zone Quality": zq,
         "Structure Clarity": structure["trend"] in ("up", "down"),
         "Liquidity Context": liq,
     }
     score = sum(checks.values())
 
-    if score >= 4:
+    # نسخه بهینه: فقط امتیاز کامل (۵ از ۵) قبول میشه - رده "متوسط" حذف شد
+    if score == 5:
         confidence = "بالا"
-    elif score == 3:
-        confidence = "متوسط"
     else:
         return None
 
@@ -330,14 +351,14 @@ def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     # تأیید واقعی بودن رنج: قیمت باید چند بار هر دو مرز رو لمس کرده باشه
     touches_high = (lookback["high"] >= range_high * 0.99).sum()
     touches_low = (lookback["low"] <= range_low * 1.01).sum()
-    range_confirmed = touches_high >= 2 and touches_low >= 2
+    range_confirmed = touches_high >= 3 and touches_low >= 3
 
     if direction_bias == "LONG":
-        rsi_extreme = last_rsi < 32
+        rsi_extreme = last_rsi < 25
         bb_touch = last_low <= last_lower
         reversal = last_low <= last_lower and last_close > last_lower
     else:
-        rsi_extreme = last_rsi > 68
+        rsi_extreme = last_rsi > 75
         bb_touch = last_high >= last_upper
         reversal = last_high >= last_upper and last_close < last_upper
 
@@ -350,10 +371,9 @@ def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     }
     score = sum(checks.values())
 
+    # نسخه بهینه: آستانه از ۳ به ۴ افزایش یافت - رده "متوسط" حذف شد
     if score >= 4:
         confidence = "بالا"
-    elif score == 3:
-        confidence = "متوسط"
     else:
         return None
 
@@ -482,10 +502,7 @@ def execute_trend(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    if candidate["confidence"] == "بالا" and rr >= 3:
-        risk_level = "پایین"
-    else:
-        risk_level = "متوسط"
+    risk_level = "پایین" if rr >= 3 else "متوسط"
 
     return {
         "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
@@ -534,10 +551,7 @@ def execute_mean_reversion(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    if candidate["confidence"] == "بالا" and rr >= 3:
-        risk_level = "پایین"
-    else:
-        risk_level = "متوسط"
+    risk_level = "پایین" if rr >= 3 else "متوسط"
 
     return {
         "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
