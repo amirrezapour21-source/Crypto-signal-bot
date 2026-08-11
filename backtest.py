@@ -6,10 +6,9 @@ Backtest Engine — سنجش عملکرد واقعی استراتژی روی د�
 سیستم اون‌موقع فعال بود، چند درصد سیگنال‌ها برنده/بازنده می‌شدن.
 
 ⚠️ محدودیت‌های مهم (صادقانه):
-- به‌جای کندل ۱۵دقیقه‌ای (که برای بک‌تست چندماهه حجم درخواست API
-  غیرعملی می‌شه)، نقطه ورود از روی Volume Profile همون کندل‌های
-  ۴ساعته (۱۰ کندل آخر ≈ ۴۰ ساعت) تقریب زده می‌شه. این دقت ورود رو
-  کمی پایین‌تر از نسخه زنده (که از ۱۵دقیقه استفاده می‌کنه) می‌آره.
+- منبع داده: CoinGecko (کندل مصنوعی از سری قیمت/حجم، نه OHLCV واقعی صرافی).
+- نقطه ورود از روی Volume Profile همون کندل‌های ۴ساعته (۱۰ کندل آخر) تقریب
+  زده می‌شه، نه کندل ۱۵دقیقه‌ای دقیق (که برای بک‌تست چندماهه غیرعملیه).
 - کارمزد صرافی، اسلیپیج (لغزش قیمت)، و تأخیر اجرا در نظر گرفته نشده.
 - نتیجه یک "تقریب معقول"ه، نه یک عدد قطعی برای تصمیم مالی.
 
@@ -28,19 +27,19 @@ from crypto_signal_bot import (
     get_top_coins, get_ohlcv, classify_structure, compute_volume_profile,
     compute_rvol, zone_quality_ok, liquidity_sweep_detected, compute_rsi,
     compute_bollinger, score_trend_candidate, score_mean_reversion_candidate,
-    get_valid_targets, fmt_price, MIN_RR, safe_get, CRYPTOCOMPARE_BASE,
+    get_valid_targets, fmt_price, MIN_RR,
 )
 
-BACKTEST_COINS_N = 20      # تعداد ارزهایی که بک‌تست می‌شن (محدود به‌خاطر سقف درخواست API)
-BACKTEST_DAYS = 90         # بازه زمانی بک‌تست (روز)
+BACKTEST_COINS_N = 20      # تعداد ارزهایی که بک‌تست می‌شن
+BACKTEST_DAYS = 85         # بازه زمانی بک‌تست (روز) — زیر ۹۰ روز تا گرانولاریتی ساعتی CoinGecko حفظ بشه
 WINDOW = 150                # تعداد کندل تاریخچه لازم (مطابق نسخه زنده)
 FORWARD_LOOKOUT = 60        # چند کندل ۴ساعته جلوتر رو برای TP/SL چک کنیم (~۱۰ روز)
 COOLDOWN_BARS = 6           # بعد از هر سیگنال، چند کندل صبر کنیم قبل از سیگنال بعدی همون ارز
 
 
-def get_full_history(symbol, days):
-    limit = min(int(days * 6) + WINDOW + 10, 2000)
-    df = get_ohlcv(symbol, timeframe="hour", aggregate=4, limit=limit)
+def get_full_history(coin_id, days):
+    limit = min(int(days * 6), 500)
+    df = get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=limit)
     return df
 
 
@@ -139,8 +138,8 @@ def check_outcome(df, start_idx, trade):
     return "TIMEOUT"
 
 
-def backtest_symbol(symbol):
-    df = get_full_history(symbol, BACKTEST_DAYS)
+def backtest_symbol(symbol, coin_id):
+    df = get_full_history(coin_id, BACKTEST_DAYS)
     if df is None or len(df) < WINDOW + 20:
         return []
 
@@ -158,10 +157,10 @@ def backtest_symbol(symbol):
         candidate = None
         strategy = None
         if structure["trend"] in ("up", "down"):
-            candidate = score_trend_candidate(symbol, window_df, structure, vp, rvol)
+            candidate = score_trend_candidate(symbol, coin_id, window_df, structure, vp, rvol)
             strategy = "trend"
         else:
-            candidate = score_mean_reversion_candidate(symbol, window_df, structure, vp, rvol)
+            candidate = score_mean_reversion_candidate(symbol, coin_id, window_df, structure, vp, rvol)
             strategy = "mean_reversion"
 
         if candidate is None:
@@ -195,14 +194,15 @@ def main():
 
     for c in coins:
         symbol = c["symbol"].upper()
+        coin_id = c["id"]
         print(f"در حال بک‌تست {symbol}...")
         try:
-            res = backtest_symbol(symbol)
+            res = backtest_symbol(symbol, coin_id)
             all_results.extend(res)
             print(f"  {len(res)} سیگنال پیدا شد.")
         except Exception as e:
             print(f"  خطا: {e}")
-        time.sleep(1.5)
+        time.sleep(2.0)
 
     print("\n" + "=" * 50)
     print("=== نتیجه نهایی بک‌تست ===")
