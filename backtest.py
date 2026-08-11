@@ -10,6 +10,9 @@ Backtest Engine — سنجش عملکرد واقعی استراتژی روی د�
 - نقطه ورود از روی Volume Profile همون کندل‌های ۴ساعته (۱۰ کندل آخر) تقریب
   زده می‌شه، نه کندل ۱۵دقیقه‌ای دقیق (که برای بک‌تست چندماهه غیرعملیه).
 - کارمزد صرافی، اسلیپیج (لغزش قیمت)، و تأخیر اجرا در نظر گرفته نشده.
+- تأیید روند روزانه (daily bias) یک‌بار به‌ازای هر ارز محاسبه و کش می‌شه
+  (نه به‌ازای هر پنجره)، چون در بازه بک‌تست عملاً یکی است و صرفه‌جویی
+  زیادی در تعداد درخواست‌های API ایجاد می‌کند.
 - نتیجه یک "تقریب معقول"ه، نه یک عدد قطعی برای تصمیم مالی.
 
 اجرا: از طریق GitHub Actions (workflow_dispatch دستی) یا لوکال.
@@ -26,8 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from crypto_signal_bot import (
     get_top_coins, get_ohlcv, classify_structure, compute_volume_profile,
     compute_rvol, zone_quality_ok, liquidity_sweep_detected, compute_rsi,
-    compute_bollinger, score_trend_candidate, score_mean_reversion_candidate,
-    get_valid_targets, fmt_price, MIN_RR,
+    compute_bollinger, get_valid_targets, fmt_price, MIN_RR,
 )
 
 BACKTEST_COINS_N = 20      # تعداد ارزهایی که بک‌تست می‌شن
@@ -35,6 +37,114 @@ BACKTEST_DAYS = 85         # بازه زمانی بک‌تست (روز) — زی
 WINDOW = 150                # تعداد کندل تاریخچه لازم (مطابق نسخه زنده)
 FORWARD_LOOKOUT = 60        # چند کندل ۴ساعته جلوتر رو برای TP/SL چک کنیم (~۱۰ روز)
 COOLDOWN_BARS = 6           # بعد از هر سیگنال، چند کندل صبر کنیم قبل از سیگنال بعدی همون ارز
+
+# کش تأیید روند روزانه — به‌ازای هر coin_id فقط یک‌بار در کل بک‌تست محاسبه می‌شه
+_daily_trend_cache = {}
+
+
+def get_daily_trend_cached(coin_id):
+    if coin_id in _daily_trend_cache:
+        return _daily_trend_cache[coin_id]
+    df_daily = get_ohlcv(coin_id, timeframe="hour", aggregate=24, limit=45)
+    if df_daily is None or len(df_daily) < 30:
+        _daily_trend_cache[coin_id] = None
+        return None
+    structure = classify_structure(df_daily)
+    _daily_trend_cache[coin_id] = structure["trend"]
+    return _daily_trend_cache[coin_id]
+
+
+def score_trend_candidate_bt(symbol, coin_id, df4h, structure, vp, rvol):
+    """نسخه بک‌تست از منطق امتیازدهی روند (با کش daily bias، بدون درخواست تکراری)"""
+    zq = zone_quality_ok(df4h)
+    liq = liquidity_sweep_detected(df4h, structure["pivot_highs"], structure["pivot_lows"])
+    current_price = df4h["close"].iloc[-1]
+    price_near_poc = abs(current_price - vp["poc"]) / current_price < 0.06
+
+    daily_trend = get_daily_trend_cached(coin_id)
+    if daily_trend is None or daily_trend != structure["trend"]:
+        return None
+
+    checks = {
+        "Volume Profile": price_near_poc,
+        "Volume/RVOL": rvol > 1.35,
+        "Zone Quality": zq,
+        "Structure Clarity": structure["trend"] in ("up", "down"),
+        "Liquidity Context": liq,
+    }
+    score = sum(checks.values())
+    if score != 5:
+        return None
+
+    return {
+        "symbol": symbol, "coin_id": coin_id, "strategy": "trend", "score": score, "confidence": "بالا",
+        "checks": checks, "trend": structure["trend"], "rvol": rvol,
+        "price": current_price, "df4h": df4h, "structure": structure, "vp": vp,
+    }
+
+
+def score_mean_reversion_candidate_bt(symbol, coin_id, df4h, structure, vp, rvol):
+    if structure["trend"] in ("up", "down"):
+        return None
+    if len(df4h) < 45:
+        return None
+
+    lookback = df4h.iloc[-40:]
+    range_high = lookback["high"].max()
+    range_low = lookback["low"].min()
+    if range_high <= range_low:
+        return None
+
+    mid_bb, upper_bb, lower_bb = compute_bollinger(df4h)
+    last_mid = mid_bb.iloc[-1]
+    last_upper = upper_bb.iloc[-1]
+    last_lower = lower_bb.iloc[-1]
+    if any(pd.isna(x) for x in [last_mid, last_upper, last_lower]):
+        return None
+
+    rsi = compute_rsi(df4h["close"])
+    last_rsi = rsi.iloc[-1]
+    if pd.isna(last_rsi):
+        return None
+
+    last_close = df4h["close"].iloc[-1]
+    last_low = df4h["low"].iloc[-1]
+    last_high = df4h["high"].iloc[-1]
+
+    dist_to_lower = last_close - range_low
+    dist_to_upper = range_high - last_close
+    direction_bias = "LONG" if dist_to_lower < dist_to_upper else "SHORT"
+
+    touches_high = (lookback["high"] >= range_high * 0.99).sum()
+    touches_low = (lookback["low"] <= range_low * 1.01).sum()
+    range_confirmed = touches_high >= 3 and touches_low >= 3
+
+    if direction_bias == "LONG":
+        rsi_extreme = last_rsi < 25
+        bb_touch = last_low <= last_lower
+        reversal = last_low <= last_lower and last_close > last_lower
+    else:
+        rsi_extreme = last_rsi > 75
+        bb_touch = last_high >= last_upper
+        reversal = last_high >= last_upper and last_close < last_upper
+
+    checks = {
+        "Range Confirmed": range_confirmed,
+        "RSI Extreme": rsi_extreme,
+        "Volume Confirmation": rvol > 1.3,
+        "Bollinger Band Touch": bb_touch,
+        "Reversal Rejection": reversal,
+    }
+    score = sum(checks.values())
+    if score < 4:
+        return None
+
+    return {
+        "symbol": symbol, "coin_id": coin_id, "strategy": "mean_reversion", "score": score, "confidence": "بالا",
+        "checks": checks, "direction_bias": direction_bias, "rvol": rvol,
+        "price": last_close, "df4h": df4h, "range_high": range_high, "range_low": range_low,
+        "range_mid": (range_high + range_low) / 2, "vp": vp,
+    }
 
 
 def get_full_history(coin_id, days):
@@ -103,7 +213,6 @@ def simulate_mr_entry(window_df, candidate):
 
 
 def check_outcome(df, start_idx, trade):
-    """بررسی کندل‌های جلوتر برای دیدن اینکه SL یا TP اول لمس شده"""
     direction = trade["direction"]
     entry, sl, tp1, tp2 = trade["entry"], trade["sl"], trade["tp1"], trade["tp2"]
     end_idx = min(start_idx + FORWARD_LOOKOUT, len(df))
@@ -157,10 +266,10 @@ def backtest_symbol(symbol, coin_id):
         candidate = None
         strategy = None
         if structure["trend"] in ("up", "down"):
-            candidate = score_trend_candidate(symbol, coin_id, window_df, structure, vp, rvol)
+            candidate = score_trend_candidate_bt(symbol, coin_id, window_df, structure, vp, rvol)
             strategy = "trend"
         else:
-            candidate = score_mean_reversion_candidate(symbol, coin_id, window_df, structure, vp, rvol)
+            candidate = score_mean_reversion_candidate_bt(symbol, coin_id, window_df, structure, vp, rvol)
             strategy = "mean_reversion"
 
         if candidate is None:
@@ -188,28 +297,28 @@ def backtest_symbol(symbol, coin_id):
 
 
 def main():
-    print(f"=== شروع بک‌تست ({BACKTEST_DAYS} روز، {BACKTEST_COINS_N} ارز) ===\n")
+    print(f"=== شروع بک‌تست ({BACKTEST_DAYS} روز، {BACKTEST_COINS_N} ارز) ===\n", flush=True)
     coins = get_top_coins(BACKTEST_COINS_N)
     all_results = []
 
     for c in coins:
         symbol = c["symbol"].upper()
         coin_id = c["id"]
-        print(f"در حال بک‌تست {symbol}...")
+        print(f"در حال بک‌تست {symbol}...", flush=True)
         try:
             res = backtest_symbol(symbol, coin_id)
             all_results.extend(res)
-            print(f"  {len(res)} سیگنال پیدا شد.")
+            print(f"  {len(res)} سیگنال پیدا شد.", flush=True)
         except Exception as e:
-            print(f"  خطا: {e}")
+            print(f"  خطا: {e}", flush=True)
         time.sleep(2.0)
 
-    print("\n" + "=" * 50)
-    print("=== نتیجه نهایی بک‌تست ===")
-    print("=" * 50)
+    print("\n" + "=" * 50, flush=True)
+    print("=== نتیجه نهایی بک‌تست ===", flush=True)
+    print("=" * 50, flush=True)
 
     if not all_results:
-        print("هیچ سیگنالی در کل بازه زمانی تولید نشد.")
+        print("هیچ سیگنالی در کل بازه زمانی تولید نشد.", flush=True)
         return
 
     total = len(all_results)
@@ -221,12 +330,12 @@ def main():
     decided = len(wins) + len(losses)
     win_rate = (len(wins) / decided * 100) if decided > 0 else 0
 
-    print(f"\nکل سیگنال‌های تولیدشده: {total}")
-    print(f"وارد نشده (Limit پر نشد): {len(not_entered)}")
-    print(f"برنده (TP1 یا TP2): {len(wins)}")
-    print(f"بازنده (SL): {len(losses)}")
-    print(f"بدون نتیجه قطعی (Timeout): {len(timeout)}")
-    print(f"\n>>> نرخ برد (فقط معاملات با نتیجه قطعی): {win_rate:.1f}% <<<\n")
+    print(f"\nکل سیگنال‌های تولیدشده: {total}", flush=True)
+    print(f"وارد نشده (Limit پر نشد): {len(not_entered)}", flush=True)
+    print(f"برنده (TP1 یا TP2): {len(wins)}", flush=True)
+    print(f"بازنده (SL): {len(losses)}", flush=True)
+    print(f"بدون نتیجه قطعی (Timeout): {len(timeout)}", flush=True)
+    print(f"\n>>> نرخ برد (فقط معاملات با نتیجه قطعی): {win_rate:.1f}% <<<\n", flush=True)
 
     for strat in ("trend", "mean_reversion"):
         strat_results = [r for r in all_results if r["strategy"] == strat]
@@ -235,10 +344,10 @@ def main():
         strat_decided = len(strat_wins) + len(strat_losses)
         strat_wr = (len(strat_wins) / strat_decided * 100) if strat_decided > 0 else 0
         label = "روند (Smart Money)" if strat == "trend" else "بازگشت به میانگین"
-        print(f"[{label}] تعداد: {len(strat_results)} | نرخ برد: {strat_wr:.1f}% ({len(strat_wins)}برد/{len(strat_losses)}باخت)")
+        print(f"[{label}] تعداد: {len(strat_results)} | نرخ برد: {strat_wr:.1f}% ({len(strat_wins)}برد/{len(strat_losses)}باخت)", flush=True)
 
     avg_rr = np.mean([r["rr_planned"] for r in all_results])
-    print(f"\nمیانگین R:R برنامه‌ریزی‌شده: 1:{avg_rr:.2f}")
+    print(f"\nمیانگین R:R برنامه‌ریزی‌شده: 1:{avg_rr:.2f}", flush=True)
 
 
 if __name__ == "__main__":
