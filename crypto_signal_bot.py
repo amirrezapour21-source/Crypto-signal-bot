@@ -11,14 +11,11 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 
 منبع داده: CoinGecko (رایگان، بدون نیاز به کلید API)
 
-نسخه بهینه‌شده (v2): آستانه‌های سخت‌گیرانه‌تر برای بالا بردن نرخ برد،
-بر اساس نتیجه بک‌تست نسخه قبلی (نرخ برد ۲۴.۱٪ روی ۶۸ سیگنال).
-تغییرات این نسخه:
-  1. حذف رده "متوسط" برای استراتژی روند - فقط امتیاز کامل قبول می‌شود
-  2. RVOL: آستانه از ۱.۱۵ به ۱.۳۵
-  3. Zone Quality: آستانه از ۰.۹۰ به ۰.۸۲
-  4. Mean Reversion: آستانه امتیاز از ۳ به ۴، RSI از ۳۲/۶۸ به ۲۵/۷۵، touches از ۲ به ۳
-  5. فیلتر جدید: تأیید روند در تایم‌فریم روزانه قبل از صدور سیگنال روند
+نسخه بهینه‌شده (v3 - تعادلی): بین نسخه اولیه (نرخ برد ۲۴.۱٪، خیلی سست) و
+نسخه سخت‌گیرانه (تقریباً هیچ سیگنالی تولید نمی‌کرد) یک نقطه تعادل انتخاب شده:
+  1. استراتژی روند: امتیاز لازم ۴ از ۵ (نه ۵ کامل)، RVOL=1.25، Zone Quality=0.85
+  2. تأیید روند در تایم‌فریم روزانه (حفظ شده)
+  3. Mean Reversion: امتیاز لازم ۴ از ۵، RSI=28/72، touches=2
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -236,7 +233,7 @@ def zone_quality_ok(df):
     atr_long = tr.iloc[-50:].mean()
     if atr_long == 0:
         return False
-    return (atr_short / atr_long) < 0.82
+    return (atr_short / atr_long) < 0.85
 
 
 # ============ شکار نقدینگی (Liquidity Sweep) ============
@@ -285,7 +282,7 @@ def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     current_price = df4h["close"].iloc[-1]
     price_near_poc = abs(current_price - vp["poc"]) / current_price < 0.06
 
-    # فیلتر جدید: تأیید روند در تایم‌فریم روزانه (فقط اگه با ۴H هم‌جهت باشه ادامه می‌دیم)
+    # فیلتر: تأیید روند در تایم‌فریم روزانه (فقط اگه با ۴H هم‌جهت باشه ادامه می‌دیم)
     daily_trend = get_daily_trend_bias(coin_id)
     daily_confirmed = daily_trend is not None and daily_trend == structure["trend"]
     if not daily_confirmed:
@@ -293,16 +290,16 @@ def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
 
     checks = {
         "Volume Profile": price_near_poc,
-        "Volume/RVOL": rvol > 1.35,
+        "Volume/RVOL": rvol > 1.25,
         "Zone Quality": zq,
         "Structure Clarity": structure["trend"] in ("up", "down"),
         "Liquidity Context": liq,
     }
     score = sum(checks.values())
 
-    # نسخه بهینه: فقط امتیاز کامل (۵ از ۵) قبول میشه - رده "متوسط" حذف شد
-    if score == 5:
-        confidence = "بالا"
+    # نسخه تعادلی: امتیاز ۴ از ۵ کافیه (نه لزوماً ۵ کامل)
+    if score >= 4:
+        confidence = "بالا" if score == 5 else "متوسط"
     else:
         return None
 
@@ -351,14 +348,14 @@ def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     # تأیید واقعی بودن رنج: قیمت باید چند بار هر دو مرز رو لمس کرده باشه
     touches_high = (lookback["high"] >= range_high * 0.99).sum()
     touches_low = (lookback["low"] <= range_low * 1.01).sum()
-    range_confirmed = touches_high >= 3 and touches_low >= 3
+    range_confirmed = touches_high >= 2 and touches_low >= 2
 
     if direction_bias == "LONG":
-        rsi_extreme = last_rsi < 25
+        rsi_extreme = last_rsi < 28
         bb_touch = last_low <= last_lower
         reversal = last_low <= last_lower and last_close > last_lower
     else:
-        rsi_extreme = last_rsi > 75
+        rsi_extreme = last_rsi > 72
         bb_touch = last_high >= last_upper
         reversal = last_high >= last_upper and last_close < last_upper
 
@@ -371,9 +368,8 @@ def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     }
     score = sum(checks.values())
 
-    # نسخه بهینه: آستانه از ۳ به ۴ افزایش یافت - رده "متوسط" حذف شد
     if score >= 4:
-        confidence = "بالا"
+        confidence = "بالا" if score == 5 else "متوسط"
     else:
         return None
 
@@ -502,7 +498,10 @@ def execute_trend(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    risk_level = "پایین" if rr >= 3 else "متوسط"
+    if candidate["confidence"] == "بالا" and rr >= 3:
+        risk_level = "پایین"
+    else:
+        risk_level = "متوسط"
 
     return {
         "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
@@ -551,7 +550,10 @@ def execute_mean_reversion(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    risk_level = "پایین" if rr >= 3 else "متوسط"
+    if candidate["confidence"] == "بالا" and rr >= 3:
+        risk_level = "پایین"
+    else:
+        risk_level = "متوسط"
 
     return {
         "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
