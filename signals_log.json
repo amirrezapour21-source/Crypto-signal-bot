@@ -110,5 +110,21 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "LINK_1786510236",
+    "symbol": "LINK",
+    "coin_id": "chainlink",
+    "direction": "SHORT",
+    "entry": 8.763970307667122,
+    "sl": 8.86731178828223,
+    "tp1": 8.432954464078685,
+    "tp2": 8.086392306095757,
+    "signal_time": "2026-08-12T04:50:36.961239+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
