@@ -7,6 +7,10 @@ Signal Outcome Tracker
 ⚠️ محدودیت: بر پایه کندل ساعتی مصنوعی (از CoinGecko) کار می‌کنه، نه قیمت
 لحظه‌به‌لحظه. اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو
 اول‌خورده فرض می‌کنیم.
+
+نسخه به‌روزشده: پیام‌های نوتیفیکیشن حالا قیمت ورود (entry) رو هم نشون
+می‌دن، تا وقتی چند سیگنال هم‌زمان روی یک نماد باز است، بشه فهمید نتیجه
+مربوط به کدام سیگنال است.
 """
 
 import requests
@@ -35,6 +39,10 @@ def load_log():
 def save_log(data):
     with open(LOG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def fmt_price(p):
+    return f"{p:.6f}" if p < 1 else f"{p:.4f}"
 
 
 def safe_get(url, params=None, retries=3):
@@ -119,13 +127,13 @@ def process_signal(sig):
                 sig["entered"] = True
                 sig["status"] = "OPEN"
                 sig["entry_time"] = row["dt"].isoformat()
-                notify = f"✅ ورود انجام شد: {symbol} در قیمت {entry}"
+                notify = f"✅ ورود انجام شد: {symbol} در قیمت {fmt_price(entry)}"
                 break
         if not sig["entered"]:
             if hours_since(signal_time) > ENTRY_TIMEOUT_HOURS:
                 sig["status"] = "EXPIRED"
                 sig["closed_time"] = datetime.now(timezone.utc).isoformat()
-                notify = f"⌛ سفارش منقضی شد (Limit پر نشد): {symbol}"
+                notify = f"⌛ سفارش منقضی شد (Limit پر نشد): {symbol} — ورودی: {fmt_price(entry)}$"
             return sig, notify
 
     # --- مرحله ۲: بررسی برخورد به SL / TP1 / TP2 بعد از ورود ---
@@ -150,25 +158,25 @@ def process_signal(sig):
                 sig["status"] = "SL_HIT"
                 sig["result"] = "LOSS"
                 sig["closed_time"] = row["dt"].isoformat()
-                notify = f"🔴 حد ضرر خورد: {symbol} ({direction}) — نتیجه: ضرر"
+                notify = f"🔴 حد ضرر خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — نتیجه: ضرر"
                 break
             if tp1_hit:
                 sig["status"] = "TP1_HIT"
                 sig["result"] = "WIN (TP1)"
                 tp1_done = True
-                notify = f"🟢 هدف اول خورد: {symbol} ({direction}) — نتیجه: سود جزئی"
+                notify = f"🟢 هدف اول خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — نتیجه: سود جزئی"
         if tp1_done and tp2_hit:
             sig["status"] = "TP2_HIT"
             sig["result"] = "WIN (TP2 - Full)"
             sig["closed_time"] = row["dt"].isoformat()
-            notify = f"🟢🟢 هدف دوم خورد: {symbol} ({direction}) — نتیجه: سود کامل"
+            notify = f"🟢🟢 هدف دوم خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — نتیجه: سود کامل"
             break
 
     if sig["status"] not in ("SL_HIT", "TP2_HIT") and hours_since(entry_time) > TRADE_TIMEOUT_HOURS:
         sig["status"] = "TIMEOUT"
         sig["result"] = sig.get("result") or "OPEN_TIMEOUT"
         sig["closed_time"] = datetime.now(timezone.utc).isoformat()
-        notify = f"⏱️ معامله {symbol} پس از ۱۰ روز بدون نتیجه قطعی بسته شد."
+        notify = f"⏱️ معامله {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — پس از ۱۰ روز بدون نتیجه قطعی بسته شد."
 
     return sig, notify
 
