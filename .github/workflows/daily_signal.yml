@@ -1,6 +1,8 @@
 name: Daily Crypto Signal
 
 on:
+  schedule:
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -34,7 +36,8 @@ jobs:
           if [ -f signals_log.json ]; then
             git add signals_log.json
             git diff --cached --quiet || git commit -m "update signal log"
+            git pull --rebase --autostash origin main
             git push
           else
-            echo "امروز سیگنالی ثبت نشد، فایلی برای Commit وجود ندارد."
+            echo "فایلی برای Commit وجود ندارد، امروز سیگنالی ثبت نشد"
           fi
