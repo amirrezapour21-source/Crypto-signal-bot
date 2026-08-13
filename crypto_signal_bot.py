@@ -5,20 +5,11 @@ Elite Crypto Volume Profile — Scan & Analysis Bot (Fully Automated)
 به‌جای دریافت اسکرین‌شات چارت از کاربر، خودش داده قیمت/حجم واقعی رو از
 API می‌گیره و Volume Profile / Market Structure رو محاسبه می‌کنه.
 
-⚠️ توجه مهم:
-این یک تقریب الگوریتمی از تحلیل Volume Profile حرفه‌ای است، نه جایگزین
-کامل نرم‌افزارهایی که به داده tick/order-book دسترسی دارند.
-
 منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
-منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin (برای دقیق‌تر کردن نقطه ورود در PART B)
+منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin
 
-نسخه بهینه‌شده (v3 - تعادلی + اعتبارسنجی قیمت زنده):
-  1. استراتژی روند: امتیاز لازم ۴ از ۵، RVOL=1.25، Zone Quality=0.85
-  2. تأیید روند در تایم‌فریم روزانه (حفظ شده)
-  3. Mean Reversion: امتیاز لازم ۴ از ۵، RSI=28/72، touches=2
-  4. جدید: قبل از نهایی کردن سیگنال در PART B، قیمت لحظه‌ای واقعی از
-     KuCoin گرفته می‌شه و با قیمت تخمینی CoinGecko مقایسه می‌شه. اگه
-     اختلاف بیش از ۱٪ باشه، قیمت KuCoin (دقیق‌تر) جایگزین می‌شه.
+نسخه v5 - فرمت خروجی ساده و تمیز برای اسکرین‌شات (یک سیگنال در یک پیام کوتاه)
++ فیلتر ضد تکرار (Deduplication)
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -40,10 +31,11 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
-SCAN_TOP_N_COINS = 60       # تعداد ارزهایی که در فاز اسکن بررسی میشن
-REQUEST_DELAY = 1.5         # فاصله بین درخواست‌ها (رعایت rate limit رایگان CoinGecko)
-MIN_RR = 2.0                # حداقل نسبت ریسک به ریوارد قابل قبول
-PRICE_DEVIATION_THRESHOLD = 0.01  # اگه اختلاف CoinGecko و KuCoin بیش از ۱٪ بود، KuCoin را ملاک قرار بده
+SCAN_TOP_N_COINS = 60
+REQUEST_DELAY = 1.5
+MIN_RR = 2.0
+PRICE_DEVIATION_THRESHOLD = 0.01
+DEDUP_HOURS = 24
 
 
 # ============ ابزار درخواست امن ============
@@ -64,14 +56,8 @@ def safe_get(url, params=None, headers=None, retries=3):
     return resp
 
 
-# ============ قیمت لحظه‌ای واقعی (KuCoin) — برای اعتبارسنجی دقت قیمت ============
+# ============ قیمت لحظه‌ای واقعی (KuCoin) ============
 def get_live_price_kucoin(symbol):
-    """
-    قیمت لحظه‌ای واقعی رو از KuCoin می‌گیره تا با قیمت تخمینی CoinGecko
-    مقایسه بشه و از دقت بالاتر ورودی/خروجی اطمینان حاصل بشه.
-    اگه KuCoin این نماد رو نداشت یا خطا داد، None برمی‌گردونه (و منطق
-    قبلی بدون تغییر ادامه پیدا می‌کنه).
-    """
     try:
         url = "https://api.kucoin.com/api/v1/market/orderbook/level1"
         params = {"symbol": f"{symbol}-USDT"}
@@ -88,12 +74,6 @@ def get_live_price_kucoin(symbol):
 
 
 def validate_and_adjust_prices(symbol, entry, sl, tp1, tp2, direction):
-    """
-    قیمت لحظه‌ای واقعی رو از KuCoin می‌گیره. اگه اختلافش با entry تخمینی
-    (از CoinGecko) بیش از آستانه مجاز بود، تمام سطوح (entry/sl/tp1/tp2)
-    با همون نسبت فاصله از entry اصلی، حول قیمت واقعی جدید بازتنظیم می‌شن
-    (یعنی فاصله ریسک/ریوارد حفظ می‌شه، فقط نقطه مرجع دقیق‌تر می‌شه).
-    """
     live_price = get_live_price_kucoin(symbol)
     if live_price is None or entry == 0:
         return entry, sl, tp1, tp2, False, None
@@ -102,13 +82,30 @@ def validate_and_adjust_prices(symbol, entry, sl, tp1, tp2, direction):
     if deviation <= PRICE_DEVIATION_THRESHOLD:
         return entry, sl, tp1, tp2, False, live_price
 
-    # بازتنظیم سطوح حول قیمت واقعی (حفظ همون فاصله‌های نسبی ریسک/ریوارد)
     shift = live_price - entry
     new_entry = live_price
     new_sl = sl + shift
     new_tp1 = tp1 + shift
     new_tp2 = tp2 + shift
     return new_entry, new_sl, new_tp1, new_tp2, True, live_price
+
+
+# ============ فیلتر ضد تکرار سیگنال ============
+def has_recent_duplicate(symbol, direction):
+    log = load_log()
+    now = datetime.now(timezone.utc)
+    open_statuses = ("ENTRY_PENDING", "OPEN", "TP1_HIT")
+    for s in log:
+        if s.get("symbol") == symbol and s.get("direction") == direction:
+            if s.get("status") in open_statuses:
+                try:
+                    sig_time = datetime.fromisoformat(s["signal_time"])
+                except Exception:
+                    continue
+                hours_passed = (now - sig_time).total_seconds() / 3600
+                if hours_passed < DEDUP_HOURS:
+                    return True
+    return False
 
 
 # ============ دریافت لیست ارزها (CoinGecko) ============
@@ -151,7 +148,6 @@ def fetch_market_chart(coin_id, days):
 
 
 def resample_to_ohlcv(df, bucket_size):
-    """هر `bucket_size` نقطه قیمتی پیاپی رو به یک کندل OHLCV تبدیل می‌کنه"""
     n = len(df) // bucket_size
     if n < 1:
         return None
@@ -170,11 +166,6 @@ def resample_to_ohlcv(df, bucket_size):
 
 
 def get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150):
-    """
-    timeframe='hour': کندل چندساعته (مثلاً ۴H یا ۲۴H) از داده ساعتی CoinGecko می‌سازه.
-    timeframe='minute': برای نقطه ورود دقیق‌تر، از داده ریزدانه‌تر ۲۴ساعت اخیر
-    (~۵ دقیقه‌ای) استفاده می‌کنه و به بازه دلخواه (مثلاً ۱۵دقیقه) می‌سازه.
-    """
     if timeframe == "hour":
         hours_needed = limit * aggregate
         days = min(90, max(2, (hours_needed // 24) + 3))
@@ -183,7 +174,7 @@ def get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150):
             return None
         candles = resample_to_ohlcv(raw, aggregate)
     else:
-        raw = fetch_market_chart(coin_id, 1)  # ۲۴ساعت اخیر با گرانولاریتی ~۵دقیقه
+        raw = fetch_market_chart(coin_id, 1)
         if raw is None or len(raw) < 10:
             return None
         bucket = max(1, round(aggregate / 5))
@@ -194,7 +185,7 @@ def get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150):
     return candles.tail(limit).reset_index(drop=True)
 
 
-# ============ تشخیص پیوت‌ها (سوئینگ‌های تأییدشده) ============
+# ============ تشخیص پیوت‌ها ============
 def find_pivots(df, left=2, right=2):
     highs, lows = df["high"].values, df["low"].values
     pivot_highs, pivot_lows = [], []
@@ -208,7 +199,7 @@ def find_pivots(df, left=2, right=2):
     return pivot_highs, pivot_lows
 
 
-# ============ تشخیص ساختار بازار (HH/HL/LH/LL) ============
+# ============ تشخیص ساختار بازار ============
 def classify_structure(df):
     pivot_highs, pivot_lows = find_pivots(df)
     if len(pivot_highs) < 2 or len(pivot_lows) < 2:
@@ -233,11 +224,6 @@ def classify_structure(df):
 
 # ============ تأیید روند در تایم‌فریم بالاتر (روزانه) ============
 def get_daily_trend_bias(coin_id):
-    """
-    برای فیلتر کردن سیگنال‌های خلاف‌جهت روند اصلی، ساختار بازار رو روی
-    کندل روزانه (۲۴ساعته) هم می‌سنجیم. سیگنال روند فقط وقتی تأیید میشه
-    که جهت ۴H با جهت روزانه هم‌راستا باشه.
-    """
     df_daily = get_ohlcv(coin_id, timeframe="hour", aggregate=24, limit=45)
     if df_daily is None or len(df_daily) < 30:
         return None
@@ -245,7 +231,7 @@ def get_daily_trend_bias(coin_id):
     return structure["trend"]
 
 
-# ============ Volume Profile (POC / HVN / LVN) ============
+# ============ Volume Profile ============
 def compute_volume_profile(df, bins=24):
     typical_price = (df["high"] + df["low"] + df["close"]) / 3
     lo, hi = df["low"].min(), df["high"].max()
@@ -275,7 +261,7 @@ def compute_rvol(df, lookback=20):
     return recent / avg
 
 
-# ============ کیفیت زون (انقباض نوسان = تشکیل زون) ============
+# ============ کیفیت زون ============
 def zone_quality_ok(df):
     tr = (df["high"] - df["low"]).abs()
     if len(tr) < 50:
@@ -287,7 +273,7 @@ def zone_quality_ok(df):
     return (atr_short / atr_long) < 0.85
 
 
-# ============ شکار نقدینگی (Liquidity Sweep) ============
+# ============ شکار نقدینگی ============
 def liquidity_sweep_detected(df, pivot_highs, pivot_lows):
     if len(df) < 10:
         return False
@@ -305,7 +291,7 @@ def liquidity_sweep_detected(df, pivot_highs, pivot_lows):
     return False
 
 
-# ============ RSI (برای Mean Reversion) ============
+# ============ RSI ============
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -316,7 +302,7 @@ def compute_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 
-# ============ Bollinger Bands (برای Mean Reversion) ============
+# ============ Bollinger Bands ============
 def compute_bollinger(df, period=20, num_std=2):
     mid = df["close"].rolling(window=period).mean()
     std = df["close"].rolling(window=period).std()
@@ -325,7 +311,7 @@ def compute_bollinger(df, period=20, num_std=2):
     return mid, upper, lower
 
 
-# ============ PART A: امتیازدهی کاندید — استراتژی روند (Trend/Smart Money) ============
+# ============ PART A: امتیازدهی — روند ============
 def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     zq = zone_quality_ok(df4h)
     liq = liquidity_sweep_detected(df4h, structure["pivot_highs"], structure["pivot_lows"])
@@ -333,7 +319,6 @@ def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     current_price = df4h["close"].iloc[-1]
     price_near_poc = abs(current_price - vp["poc"]) / current_price < 0.06
 
-    # فیلتر: تأیید روند در تایم‌فریم روزانه (فقط اگه با ۴H هم‌جهت باشه ادامه می‌دیم)
     daily_trend = get_daily_trend_bias(coin_id)
     daily_confirmed = daily_trend is not None and daily_trend == structure["trend"]
     if not daily_confirmed:
@@ -348,7 +333,6 @@ def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     }
     score = sum(checks.values())
 
-    # نسخه تعادلی: امتیاز ۴ از ۵ کافیه (نه لزوماً ۵ کامل)
     if score >= 4:
         confidence = "بالا" if score == 5 else "متوسط"
     else:
@@ -361,9 +345,8 @@ def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     }
 
 
-# ============ PART A: امتیازدهی کاندید — استراتژی بازگشت به میانگین (Mean Reversion) ============
+# ============ PART A: امتیازدهی — Mean Reversion ============
 def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
-    # فقط وقتی بازار روند مشخصی نداره (رنج/بی‌جهت) این مسیر رو بررسی می‌کنیم
     if structure["trend"] in ("up", "down"):
         return None
     if len(df4h) < 45:
@@ -391,12 +374,10 @@ def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
     last_low = df4h["low"].iloc[-1]
     last_high = df4h["high"].iloc[-1]
 
-    # تشخیص سوگیری جهت: نزدیک‌تر به کدوم مرز رنج/باند هست
     dist_to_lower = last_close - range_low
     dist_to_upper = range_high - last_close
     direction_bias = "LONG" if dist_to_lower < dist_to_upper else "SHORT"
 
-    # تأیید واقعی بودن رنج: قیمت باید چند بار هر دو مرز رو لمس کرده باشه
     touches_high = (lookback["high"] >= range_high * 0.99).sum()
     touches_low = (lookback["low"] <= range_low * 1.01).sum()
     range_confirmed = touches_high >= 2 and touches_low >= 2
@@ -465,13 +446,8 @@ def part_a_scan(coins):
     return candidates[:2]
 
 
-# ============ انتخاب هدف معتبر (بالاتر/پایین‌تر از قیمت فعلی، نه صرفاً آخرین پیوت) ============
+# ============ انتخاب هدف معتبر ============
 def get_valid_targets(pivots, entry, direction):
-    """
-    اشکال قبلی: آخرین پیوت تأییدشده معمولاً از قبل توسط قیمت رد شده (چون
-    تشخیص پیوت با تأخیر کار می‌کنه). این تابع فقط سطوحی رو به‌عنوان هدف
-    برمی‌گردونه که هنوز جلوی قیمته (دست‌نخورده).
-    """
     if direction == "LONG":
         valid = sorted([p[1] for p in pivots if p[1] > entry])
     else:
@@ -484,9 +460,6 @@ def get_valid_targets(pivots, entry, direction):
         tp2 = tp1 * 1.02 if direction == "LONG" else tp1 * 0.98
         return tp1, tp2
 
-    # هیچ سطح دست‌نخورده‌ای جلوی قیمت نیست (روند خیلی قوی، از همه سقف/کف‌های
-    # قبلی رد شده) — به‌جای رد کردن کامل، از اندازه آخرین موج قیمتی برای
-    # پیش‌بینی هدف بعدی استفاده می‌کنیم (روش «Measured Move»)
     if len(pivots) >= 2:
         last_two = sorted(pivots, key=lambda p: p[0])[-2:]
         leg_size = abs(last_two[1][1] - last_two[0][1])
@@ -499,7 +472,7 @@ def get_valid_targets(pivots, entry, direction):
     return None, None
 
 
-# ============ PART B: اجرای معامله — مسیر روند (Trend) ============
+# ============ PART B: اجرای معامله — روند ============
 def execute_trend(candidate):
     symbol = candidate["symbol"]
     coin_id = candidate["coin_id"]
@@ -549,7 +522,9 @@ def execute_trend(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    # ---- اعتبارسنجی قیمت لحظه‌ای واقعی از KuCoin ----
+    if has_recent_duplicate(symbol, direction):
+        return {"symbol": symbol, "rejected": True, "duplicate": True}
+
     entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
         symbol, entry, sl, tp1, tp2, direction
     )
@@ -561,20 +536,17 @@ def execute_trend(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    if candidate["confidence"] == "بالا" and rr >= 3:
-        risk_level = "پایین"
-    else:
-        risk_level = "متوسط"
+    risk_level = "LOW" if (candidate["confidence"] == "بالا" and rr >= 3) else "MEDIUM"
 
     return {
-        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "روند (Smart Money)",
+        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction,
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
-        "checks": candidate["checks"], "price_adjusted": adjusted, "live_price": live_price,
+        "price_adjusted": adjusted, "live_price": live_price,
     }
 
 
-# ============ PART B: اجرای معامله — مسیر بازگشت به میانگین (Mean Reversion) ============
+# ============ PART B: اجرای معامله — Mean Reversion ============
 def execute_mean_reversion(candidate):
     symbol = candidate["symbol"]
     coin_id = candidate["coin_id"]
@@ -613,7 +585,9 @@ def execute_mean_reversion(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    # ---- اعتبارسنجی قیمت لحظه‌ای واقعی از KuCoin ----
+    if has_recent_duplicate(symbol, direction):
+        return {"symbol": symbol, "rejected": True, "duplicate": True}
+
     entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
         symbol, entry, sl, tp1, tp2, direction
     )
@@ -625,16 +599,13 @@ def execute_mean_reversion(candidate):
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
-    if candidate["confidence"] == "بالا" and rr >= 3:
-        risk_level = "پایین"
-    else:
-        risk_level = "متوسط"
+    risk_level = "LOW" if (candidate["confidence"] == "بالا" and rr >= 3) else "MEDIUM"
 
     return {
-        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction, "strategy": "بازگشت به میانگین (Mean Reversion)",
+        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction,
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
-        "checks": candidate["checks"], "price_adjusted": adjusted, "live_price": live_price,
+        "price_adjusted": adjusted, "live_price": live_price,
     }
 
 
@@ -645,55 +616,57 @@ def part_b_execute(candidate):
         return execute_mean_reversion(candidate)
 
 
-# ============ فرمت خروجی (فارسی، ساختاریافته) ============
+# ============ فرمت خروجی — تمیز و ساده (برای اسکرین‌شات) ============
 def fmt_price(p):
     return f"{p:.6f}" if p < 1 else f"{p:.4f}"
 
 
-def format_output(candidates, executions):
-    if not candidates:
-        return "فاقد ارز مستعد"
-
-    lines = ["<b>PART A — اسکن مارکت</b>"]
-    lines.append("وضعیت اسکن: انجام‌شده ✅ (منبع: CoinGecko)\n")
-    for c in candidates:
-        strategy_label = "روند (Smart Money)" if c["strategy"] == "trend" else "بازگشت به میانگین (Mean Reversion)"
-        lines.append(f"<b>{c['symbol']}</b> | استراتژی: {strategy_label} | اعتبار: {c['confidence']}")
-        for k, v in c["checks"].items():
-            lines.append(f"  {k}: {'✓' if v else '✗'}")
-        lines.append("")
-
-    lines.append("<b>PART B — اجرای معامله</b>")
-    for ex in executions:
-        if ex["rejected"]:
-            lines.append(f"\n<b>{ex['symbol']}</b>: عدم وجود موقعیت کم‌ریسک")
-            continue
-        lines.append(f"\nنماد: <b>{ex['symbol']}</b>")
-        lines.append(f"استراتژی: {ex['strategy']}")
-        lines.append(f"جهت: {ex['direction']}")
-        lines.append(f"ورود دقیق: {fmt_price(ex['entry'])}$")
-        lines.append(f"حد ضرر: {fmt_price(ex['sl'])}$")
-        lines.append(f"هدف اول: {fmt_price(ex['tp1'])}$")
-        lines.append(f"هدف دوم: {fmt_price(ex['tp2'])}$")
-        lines.append(f"R:R = 1:{ex['rr']:.2f}")
-        lines.append(f"سطح ریسک: {ex['risk_level']}")
-        lines.append(f"اعتبار: {ex['confidence']}")
-        if ex.get("live_price"):
-            tag = "تنظیم‌شده با قیمت زنده KuCoin ✅" if ex.get("price_adjusted") else "تأییدشده با قیمت زنده KuCoin ✅"
-            lines.append(f"دقت قیمت: {tag}")
-
-    lines.append(
-        "\n⚠️ این سطوح بر اساس تفسیر بصری چارت است و ممکن است دقت قیمتی کامل نداشته باشد. "
-        "پیش از اجرا با چارت زنده تطبیق دهید."
-    )
-    lines.append(
-        "⚠️ میزان لوریج باید متناسب با سرمایه و تحمل ریسک شخصی شما تعیین شود؛ "
-        "این خروجی توصیه لوریج مشخص ارائه نمی‌دهد."
-    )
+def format_single_signal(ex):
+    direction_emoji = "🟢" if ex["direction"] == "LONG" else "🔴"
+    lines = [
+        f"📊 {ex['symbol']}/USDT — SIGNAL",
+        "",
+        f"{direction_emoji} Direction: {ex['direction']}",
+        "",
+        "📍 Entry",
+        f"{fmt_price(ex['entry'])}",
+        "",
+        "🛑 Stop Loss",
+        f"{fmt_price(ex['sl'])}",
+        "",
+        "🎯 Take Profit",
+        f"TP1 → {fmt_price(ex['tp1'])}",
+        f"TP2 → {fmt_price(ex['tp2'])}",
+        "",
+        "⚖️ Risk/Reward",
+        f"1 : {ex['rr']:.2f}",
+        "",
+        "⚠️ Risk Level",
+        f"{ex['risk_level']}",
+        "",
+        "🏦 Exchange",
+        "KuCoin" if ex.get("live_price") else "CoinGecko",
+    ]
     return "\n".join(lines)
 
 
-# ============ لاگ سیگنال‌ها (برای پیگیری خودکار TP/SL) ============
+def format_output(candidates, executions):
+    if not candidates:
+        return None
+
+    messages = []
+    for ex in executions:
+        if ex.get("rejected"):
+            continue
+        messages.append(format_single_signal(ex))
+
+    if not messages:
+        return None
+
+    return messages
+
+
+# ============ لاگ سیگنال‌ها ============
 LOG_PATH = "signals_log.json"
 
 
@@ -752,11 +725,9 @@ def main():
 
     candidates = part_a_scan(coins)
 
-    if not candidates:
-        message = "فاقد ارز مستعد"
-    else:
+    executions = []
+    if candidates:
         print("در حال اجرای تحلیل چارت خودکار (PART B)...")
-        executions = []
         for c in candidates:
             try:
                 executions.append(part_b_execute(c))
@@ -764,25 +735,24 @@ def main():
                 print(f"خطا در Part B برای {c['symbol']}: {e}")
                 executions.append({"symbol": c["symbol"], "rejected": True})
             time.sleep(REQUEST_DELAY)
-        message = format_output(candidates, executions)
 
         for ex in executions:
             if not ex.get("rejected"):
                 log_signal(ex)
 
-    print(message)
+    messages = format_output(candidates, executions)
 
-    should_send = candidates and any(not ex.get("rejected") for ex in executions) if candidates else False
-
-    if should_send:
-        if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
-            send_telegram_message(message)
-            print("ارسال شد.")
-        else:
-            print("\n[توجه] توکن تنظیم نشده.")
+    if messages:
+        for msg in messages:
+            print(msg)
+            print("-" * 30)
+            if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
+                send_telegram_message(msg)
+        print("ارسال شد.")
     else:
-        print("سیگنال معتبری برای ارسال به تلگرام وجود نداشت (فقط در لاگ ثبت شد).")
+        print("سیگنال معتبری برای ارسال به تلگرام وجود نداشت.")
 
 
 if __name__ == "__main__":
     main()
+</parameter>
