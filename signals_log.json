@@ -158,5 +158,21 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "HYPE_1786612722",
+    "symbol": "HYPE",
+    "coin_id": "hyperliquid",
+    "direction": "SHORT",
+    "entry": 57.1569721877287,
+    "sl": 57.91087361380136,
+    "tp1": 55.5791993093011,
+    "tp2": 53.82089999107612,
+    "signal_time": "2026-08-13T09:18:42.474816+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
