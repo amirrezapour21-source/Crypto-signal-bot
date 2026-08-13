@@ -137,9 +137,9 @@
     "tp1": 0.43613551043950194,
     "tp2": 0.4068497597409369,
     "signal_time": "2026-08-13T07:47:00.256408+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-08-13T12:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -169,9 +169,9 @@
     "tp1": 55.5791993093011,
     "tp2": 53.82089999107612,
     "signal_time": "2026-08-13T09:18:42.474816+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-08-13T12:00:00+00:00",
     "closed_time": null,
     "result": null
   }
