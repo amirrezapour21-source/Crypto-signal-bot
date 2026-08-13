@@ -126,5 +126,21 @@
     "entry_time": "2026-08-12T09:00:00+00:00",
     "closed_time": "2026-08-12T12:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "MNT_1786607220",
+    "symbol": "MNT",
+    "coin_id": "mantle",
+    "direction": "SHORT",
+    "entry": 0.4591678000351963,
+    "sl": 0.4700754737494476,
+    "tp1": 0.43613551043950194,
+    "tp2": 0.4068497597409369,
+    "signal_time": "2026-08-13T07:47:00.256408+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
