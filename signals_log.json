@@ -153,11 +153,11 @@
     "tp1": 55.5791993093011,
     "tp2": 53.82089999107612,
     "signal_time": "2026-08-13T08:47:06.323633+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-13T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-13T15:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "HYPE_1786612722",
@@ -169,10 +169,10 @@
     "tp1": 55.5791993093011,
     "tp2": 53.82089999107612,
     "signal_time": "2026-08-13T09:18:42.474816+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-13T12:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-13T15:00:00+00:00",
+    "result": "LOSS"
   }
 ]
