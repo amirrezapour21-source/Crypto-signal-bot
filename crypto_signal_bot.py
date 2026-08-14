@@ -8,8 +8,8 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
 منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin
 
-نسخه v5 - فرمت خروجی ساده و تمیز برای اسکرین‌شات (یک سیگنال در یک پیام کوتاه)
-+ فیلتر ضد تکرار (Deduplication)
+نسخه v6 - اضافه شدن نمایش نوع استراتژی (Trend / Mean Reversion) در پیام
+خروجی، به‌علاوه فرمت ساده v5 و فیلتر ضد تکرار.
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -543,6 +543,7 @@ def execute_trend(candidate):
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
         "price_adjusted": adjusted, "live_price": live_price,
+        "strategy_type": "Trend (Smart Money)",
     }
 
 
@@ -606,6 +607,7 @@ def execute_mean_reversion(candidate):
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
         "price_adjusted": adjusted, "live_price": live_price,
+        "strategy_type": "Mean Reversion",
     }
 
 
@@ -627,6 +629,7 @@ def format_single_signal(ex):
         f"📊 {ex['symbol']}/USDT — SIGNAL",
         "",
         f"{direction_emoji} Direction: {ex['direction']}",
+        f"📈 Strategy: {ex.get('strategy_type', '-')}",
         "",
         "📍 Entry",
         f"{fmt_price(ex['entry'])}",
@@ -693,6 +696,7 @@ def log_signal(ex):
         "symbol": ex["symbol"],
         "coin_id": ex.get("coin_id", ""),
         "direction": ex["direction"],
+        "strategy_type": ex.get("strategy_type", ""),
         "entry": ex["entry"],
         "sl": ex["sl"],
         "tp1": ex["tp1"],
@@ -755,4 +759,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
