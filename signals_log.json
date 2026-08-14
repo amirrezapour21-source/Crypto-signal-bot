@@ -174,5 +174,21 @@
     "entry_time": "2026-08-13T12:00:00+00:00",
     "closed_time": "2026-08-13T15:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "OKB_1786742417",
+    "symbol": "OKB",
+    "coin_id": "okb",
+    "direction": "SHORT",
+    "entry": 107.92857652372129,
+    "sl": 109.03285197970094,
+    "tp1": 100.44622100853513,
+    "tp2": 92.93912322528715,
+    "signal_time": "2026-08-14T21:20:17.621558+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
