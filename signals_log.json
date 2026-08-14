@@ -41,10 +41,10 @@
     "tp1": 2.2239296854401243,
     "tp2": 2.0644318010969074,
     "signal_time": "2026-08-11T07:14:10.701095+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-08-14T09:42:59.031353+00:00",
     "result": null
   },
   {
@@ -57,10 +57,10 @@
     "tp1": 2.2239296854401243,
     "tp2": 2.0644318010969074,
     "signal_time": "2026-08-11T07:44:05.238798+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-08-14T09:43:00.618410+00:00",
     "result": null
   },
   {
@@ -73,10 +73,10 @@
     "tp1": 2.2239296854401243,
     "tp2": 2.0644318010969074,
     "signal_time": "2026-08-11T08:44:01.374490+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-08-14T09:43:02.179378+00:00",
     "result": null
   },
   {
