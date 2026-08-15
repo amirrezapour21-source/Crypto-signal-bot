@@ -1,22 +1,21 @@
 """
 Signal Outcome Tracker
 ------------------------
-این اسکریپت هر ساعت اجرا میشه، سیگنال‌های باز رو با قیمت واقعی چک می‌کنه،
-و مشخص می‌کنه که Limit Entry پر شده یا نه، و بعدش TP یا SL اول لمس شده.
+این اسکریپت هر ۵ دقیقه اجرا میشه، سیگنال‌های باز رو با قیمت واقعی چک
+می‌کنه، و مشخص می‌کنه که Limit Entry پر شده یا نه، و بعدش TP یا SL اول
+لمس شده.
 
 ⚠️ محدودیت: بر پایه کندل ساعتی مصنوعی (از CoinGecko) کار می‌کنه، نه قیمت
 لحظه‌به‌لحظه. اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو
 اول‌خورده فرض می‌کنیم.
 
 نسخه اصلاح‌شده (تشخیص Gap): علاوه بر چک low<=entry<=high در هر کندل
-تنها، حالا بین کندل‌های متوالی هم چک می‌کنیم - اگه close کندل قبلی و
-کندل فعلی از دو طرف مخالف Entry باشن (یعنی قیمت "پریده" و از روی سطح
-Entry رد شده بدون این‌که داخل بازه دقیق یک کندل بیفته)، اون رو هم
-به‌عنوان ورود معتبر در نظر می‌گیریم. این باعث می‌شه سیگنال‌هایی که واقعاً
-از سطح Entry رد شدن ولی به‌خاطر گرانولاریتی کندل ساعتی تشخیص داده
-نمی‌شدن، درست شناسایی بشن.
+تنها، بین کندل‌های متوالی هم چک می‌کنیم (روش gap_cross) تا سیگنال‌هایی
+که واقعاً از سطح رد شدن ولی داخل بازه دقیق یک کندل نیفتادن هم درست
+شناسایی بشن.
 
-نسخه دیباگ‌دار: برای هر سیگنال، جزئیات کامل لاگ می‌شه.
+نسخه دیباگ‌دار + پیام‌های واضح‌تر: پیام‌های TP1/TP2 حالا برچسب واضح
+(TP1 ✅ / TP2 ✅) و عدد دقیق هدف رو هم نشون می‌دن.
 """
 
 import requests
@@ -118,13 +117,6 @@ def hours_since(dt):
 
 
 def find_entry_row(df, entry):
-    """
-    ورود رو به دو روش چک می‌کنه:
-    1) روش معمول: low<=entry<=high در یک کندل
-    2) روش Gap: اگه close کندل قبلی و کندل فعلی از دو طرف مخالف Entry
-       باشن (یعنی قیمت از روی Entry پریده)، همون کندل فعلی رو به‌عنوان
-       لحظه ورود در نظر می‌گیریم.
-    """
     prev_close = None
     for idx, row in df.iterrows():
         if row["low"] <= entry <= row["high"]:
@@ -200,20 +192,20 @@ def process_signal(sig):
                 sig["status"] = "SL_HIT"
                 sig["result"] = "LOSS"
                 sig["closed_time"] = row["dt"].isoformat()
-                notify = f"🔴 حد ضرر خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — نتیجه: ضرر"
+                notify = f"🔴 SL خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — SL: {fmt_price(sl)}$ — نتیجه: ضرر"
                 print(f"  [دیباگ] 🔴 SL خورد در کندل {row['dt']}", flush=True)
                 break
             if tp1_hit:
                 sig["status"] = "TP1_HIT"
                 sig["result"] = "WIN (TP1)"
                 tp1_done = True
-                notify = f"🟢 هدف اول خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — نتیجه: سود جزئی"
+                notify = f"🟢 TP1 ✅ خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — TP1: {fmt_price(tp1)}$ — نتیجه: سود جزئی"
                 print(f"  [دیباگ] 🟢 TP1 خورد در کندل {row['dt']}", flush=True)
         if tp1_done and tp2_hit:
             sig["status"] = "TP2_HIT"
             sig["result"] = "WIN (TP2 - Full)"
             sig["closed_time"] = row["dt"].isoformat()
-            notify = f"🟢🟢 هدف دوم خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — نتیجه: سود کامل"
+            notify = f"🟢🟢 TP2 ✅ خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — TP2: {fmt_price(tp2)}$ — نتیجه: سود کامل"
             print(f"  [دیباگ] 🟢🟢 TP2 خورد در کندل {row['dt']}", flush=True)
             break
 
