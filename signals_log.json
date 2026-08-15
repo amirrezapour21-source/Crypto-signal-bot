@@ -241,5 +241,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "AAVE_1786823413",
+    "symbol": "AAVE",
+    "coin_id": "aave",
+    "direction": "SHORT",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 87.00112934863009,
+    "sl": 87.32051565669846,
+    "tp1": 86.26500440511215,
+    "tp2": 85.15750584128075,
+    "signal_time": "2026-08-15T19:50:13.946832+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
