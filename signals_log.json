@@ -202,9 +202,9 @@
     "tp1": 0.05405278312799991,
     "tp2": 0.050905440213689354,
     "signal_time": "2026-08-15T11:20:26.215991+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-08-15T22:00:00+00:00",
     "closed_time": null,
     "result": null
   },
