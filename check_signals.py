@@ -8,9 +8,15 @@ Signal Outcome Tracker
 لحظه‌به‌لحظه. اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو
 اول‌خورده فرض می‌کنیم.
 
-نسخه دیباگ‌دار: برای هر سیگنال، جزئیات کامل (چند کندل گرفته شد، بازه
-Low/High هر کندل، آیا Entry توی بازه بود یا نه) لاگ می‌شه تا در صورت
-عدم تشخیص صحیح ورود/خروج، بشه دقیق فهمید مشکل کجاست.
+نسخه اصلاح‌شده (تشخیص Gap): علاوه بر چک low<=entry<=high در هر کندل
+تنها، حالا بین کندل‌های متوالی هم چک می‌کنیم - اگه close کندل قبلی و
+کندل فعلی از دو طرف مخالف Entry باشن (یعنی قیمت "پریده" و از روی سطح
+Entry رد شده بدون این‌که داخل بازه دقیق یک کندل بیفته)، اون رو هم
+به‌عنوان ورود معتبر در نظر می‌گیریم. این باعث می‌شه سیگنال‌هایی که واقعاً
+از سطح Entry رد شدن ولی به‌خاطر گرانولاریتی کندل ساعتی تشخیص داده
+نمی‌شدن، درست شناسایی بشن.
+
+نسخه دیباگ‌دار: برای هر سیگنال، جزئیات کامل لاگ می‌شه.
 """
 
 import requests
@@ -111,6 +117,27 @@ def hours_since(dt):
     return (datetime.now(timezone.utc) - dt).total_seconds() / 3600
 
 
+def find_entry_row(df, entry):
+    """
+    ورود رو به دو روش چک می‌کنه:
+    1) روش معمول: low<=entry<=high در یک کندل
+    2) روش Gap: اگه close کندل قبلی و کندل فعلی از دو طرف مخالف Entry
+       باشن (یعنی قیمت از روی Entry پریده)، همون کندل فعلی رو به‌عنوان
+       لحظه ورود در نظر می‌گیریم.
+    """
+    prev_close = None
+    for idx, row in df.iterrows():
+        if row["low"] <= entry <= row["high"]:
+            return row, "candle_range"
+        if prev_close is not None:
+            crossed_down = prev_close > entry and row["close"] < entry
+            crossed_up = prev_close < entry and row["close"] > entry
+            if crossed_down or crossed_up:
+                return row, "gap_cross"
+        prev_close = row["close"]
+    return None, None
+
+
 def process_signal(sig):
     symbol = sig["symbol"]
     coin_id = sig.get("coin_id", "")
@@ -136,16 +163,15 @@ def process_signal(sig):
     notify = None
 
     if not sig["entered"]:
-        for _, row in df.iterrows():
-            if row["low"] <= entry <= row["high"]:
-                sig["entered"] = True
-                sig["status"] = "OPEN"
-                sig["entry_time"] = row["dt"].isoformat()
-                notify = f"✅ ورود انجام شد: {symbol} در قیمت {fmt_price(entry)}"
-                print(f"  [دیباگ] ✅ Entry پیدا شد در کندل {row['dt']} (low={row['low']:.6f}, high={row['high']:.6f})", flush=True)
-                break
-        if not sig["entered"]:
-            print(f"  [دیباگ] هیچ کندلی شامل entry={fmt_price(entry)} نبود - هنوز پر نشده", flush=True)
+        entry_row, method = find_entry_row(df, entry)
+        if entry_row is not None:
+            sig["entered"] = True
+            sig["status"] = "OPEN"
+            sig["entry_time"] = entry_row["dt"].isoformat()
+            notify = f"✅ ورود انجام شد: {symbol} در قیمت {fmt_price(entry)}"
+            print(f"  [دیباگ] ✅ Entry پیدا شد در کندل {entry_row['dt']} (روش={method})", flush=True)
+        else:
+            print(f"  [دیباگ] هیچ کندلی شامل entry={fmt_price(entry)} نبود و پرشی هم دیده نشد - هنوز پر نشده", flush=True)
             if hours_since(signal_time) > ENTRY_TIMEOUT_HOURS:
                 sig["status"] = "EXPIRED"
                 sig["closed_time"] = datetime.now(timezone.utc).isoformat()
