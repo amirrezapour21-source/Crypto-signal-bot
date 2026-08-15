@@ -8,8 +8,10 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
 منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin
 
-نسخه v6 - اضافه شدن نمایش نوع استراتژی (Trend / Mean Reversion) در پیام
-خروجی، به‌علاوه فرمت ساده v5 و فیلتر ضد تکرار.
+نسخه v7 - اصلاح نام‌گذاری استراتژی روند از "Trend (Smart Money)" به
+"Trend + Volume Profile + Liquidity" چون منطق فعلی شامل OB/FVG/Breaker/
+Displacement واقعی نیست و اسم قبلی گمراه‌کننده بود. بدون تغییر در منطق
+تصمیم‌گیری یا آستانه‌ها (طبق تصمیم: فعلاً پارامترها دستکاری نشوند).
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -543,7 +545,7 @@ def execute_trend(candidate):
         "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "risk_level": risk_level, "confidence": candidate["confidence"],
         "price_adjusted": adjusted, "live_price": live_price,
-        "strategy_type": "Trend (Smart Money)",
+        "strategy_type": "Trend + Volume Profile + Liquidity",
     }
 
 
