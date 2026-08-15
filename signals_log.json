@@ -207,5 +207,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "GRAM_1786816211",
+    "symbol": "GRAM",
+    "coin_id": "the-open-network",
+    "direction": "SHORT",
+    "strategy_type": "Trend (Smart Money)",
+    "entry": 1.3390513220897358,
+    "sl": 1.3400997291806356,
+    "tp1": 1.3366476116461727,
+    "tp2": 1.3277820320945808,
+    "signal_time": "2026-08-15T17:50:11.086315+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
