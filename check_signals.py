@@ -9,13 +9,11 @@ Signal Outcome Tracker
 لحظه‌به‌لحظه. اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو
 اول‌خورده فرض می‌کنیم.
 
-نسخه اصلاح‌شده (تشخیص Gap): علاوه بر چک low<=entry<=high در هر کندل
-تنها، بین کندل‌های متوالی هم چک می‌کنیم (روش gap_cross) تا سیگنال‌هایی
-که واقعاً از سطح رد شدن ولی داخل بازه دقیق یک کندل نیفتادن هم درست
-شناسایی بشن.
-
-نسخه دیباگ‌دار + پیام‌های واضح‌تر: پیام‌های TP1/TP2 حالا برچسب واضح
-(TP1 ✅ / TP2 ✅) و عدد دقیق هدف رو هم نشون می‌دن.
+نسخه v2 - پیام‌های حرفه‌ای: هر پیام (Entry/TP1/TP2/SL) با فرمت ساختاریافته
+و درصد سود/ضرر واقعی محاسبه‌شده (نه متن ثابت) ارسال می‌شه.
+⚠️ توجه: منطق استراتژی و مدیریت ریسک هیچ تغییری نکرده - SL بعد از TP1
+به Breakeven منتقل نمی‌شه؛ ثابت می‌ماند تا TP2 یا SL اصلی لمس شود. این
+تصمیم عمدی است تا نتایج با بک‌تست قابل مقایسه بمانند.
 """
 
 import requests
@@ -48,6 +46,14 @@ def save_log(data):
 
 def fmt_price(p):
     return f"{p:.6f}" if p < 1 else f"{p:.4f}"
+
+
+def pct_change(entry, target, direction):
+    """درصد تغییر قیمت نسبت به entry، با در نظر گرفتن جهت معامله (سود مثبت/ضرر منفی)"""
+    if direction == "LONG":
+        return (target - entry) / entry * 100
+    else:
+        return (entry - target) / entry * 100
 
 
 def safe_get(url, params=None, retries=3):
@@ -130,6 +136,73 @@ def find_entry_row(df, entry):
     return None, None
 
 
+# ============ سازنده پیام‌های حرفه‌ای ============
+def build_entry_message(symbol, direction, entry, sl, tp1, tp2):
+    dir_emoji = "🟢" if direction == "LONG" else "🔴"
+    return (
+        f"🟢 ENTRY EXECUTED — {symbol}/USDT\n\n"
+        f"📍 Entry: {fmt_price(entry)}\n"
+        f"{dir_emoji} {direction} ACTIVE\n\n"
+        f"🎯 TP1: {fmt_price(tp1)}\n"
+        f"🎯 TP2: {fmt_price(tp2)}\n"
+        f"🛑 SL: {fmt_price(sl)}"
+    )
+
+
+def build_tp1_message(symbol, direction, entry, tp1):
+    dir_emoji = "🟢" if direction == "LONG" else "🔴"
+    profit = pct_change(entry, tp1, direction)
+    return (
+        f"🎯 TP1 HIT — {symbol}/USDT\n\n"
+        f"{dir_emoji} {direction}\n"
+        f"✅ TP1: {fmt_price(tp1)}\n"
+        f"💰 Profit so far: +{profit:.2f}%\n\n"
+        f"⏳ TP2 در حال پیگیری (SL ثابت)"
+    )
+
+
+def build_tp2_message(symbol, direction, entry, tp1, tp2, sl):
+    dir_emoji = "🟢" if direction == "LONG" else "🔴"
+    total_profit = pct_change(entry, tp2, direction)
+    risk_pct = abs(pct_change(entry, sl, direction))
+    rr_final = total_profit / risk_pct if risk_pct > 0 else 0
+    return (
+        f"🏆 TP2 HIT — {symbol}/USDT\n\n"
+        f"{dir_emoji} {direction}\n"
+        f"✅ TP1 + TP2 خورد\n"
+        f"💰 Total Profit: +{total_profit:.2f}%\n"
+        f"📊 Final R:R: 1:{rr_final:.2f}\n\n"
+        f"✅ TRADE CLOSED"
+    )
+
+
+def build_sl_message(symbol, direction, entry, sl):
+    dir_emoji = "🟢" if direction == "LONG" else "🔴"
+    loss = pct_change(entry, sl, direction)
+    return (
+        f"🛑 STOP LOSS HIT — {symbol}/USDT\n\n"
+        f"{dir_emoji} {direction}\n"
+        f"📍 Entry: {fmt_price(entry)}\n"
+        f"🛑 SL: {fmt_price(sl)} ❌\n"
+        f"📉 Loss: {loss:.2f}%\n\n"
+        f"🔴 TRADE CLOSED"
+    )
+
+
+def build_expired_message(symbol, entry):
+    return f"⌛ سفارش منقضی شد (Limit پر نشد): {symbol} — ورودی: {fmt_price(entry)}$"
+
+
+def build_timeout_message(symbol, direction, entry):
+    dir_emoji = "🟢" if direction == "LONG" else "🔴"
+    return (
+        f"⏱️ TRADE TIMEOUT — {symbol}/USDT\n\n"
+        f"{dir_emoji} {direction}\n"
+        f"📍 Entry: {fmt_price(entry)}\n\n"
+        f"پس از ۱۰ روز بدون نتیجه قطعی بسته شد."
+    )
+
+
 def process_signal(sig):
     symbol = sig["symbol"]
     coin_id = sig.get("coin_id", "")
@@ -160,14 +233,14 @@ def process_signal(sig):
             sig["entered"] = True
             sig["status"] = "OPEN"
             sig["entry_time"] = entry_row["dt"].isoformat()
-            notify = f"✅ ورود انجام شد: {symbol} در قیمت {fmt_price(entry)}"
+            notify = build_entry_message(symbol, direction, entry, sl, tp1, tp2)
             print(f"  [دیباگ] ✅ Entry پیدا شد در کندل {entry_row['dt']} (روش={method})", flush=True)
         else:
             print(f"  [دیباگ] هیچ کندلی شامل entry={fmt_price(entry)} نبود و پرشی هم دیده نشد - هنوز پر نشده", flush=True)
             if hours_since(signal_time) > ENTRY_TIMEOUT_HOURS:
                 sig["status"] = "EXPIRED"
                 sig["closed_time"] = datetime.now(timezone.utc).isoformat()
-                notify = f"⌛ سفارش منقضی شد (Limit پر نشد): {symbol} — ورودی: {fmt_price(entry)}$"
+                notify = build_expired_message(symbol, entry)
             return sig, notify
 
     entry_time = datetime.fromisoformat(sig["entry_time"])
@@ -192,20 +265,20 @@ def process_signal(sig):
                 sig["status"] = "SL_HIT"
                 sig["result"] = "LOSS"
                 sig["closed_time"] = row["dt"].isoformat()
-                notify = f"🔴 SL خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — SL: {fmt_price(sl)}$ — نتیجه: ضرر"
+                notify = build_sl_message(symbol, direction, entry, sl)
                 print(f"  [دیباگ] 🔴 SL خورد در کندل {row['dt']}", flush=True)
                 break
             if tp1_hit:
                 sig["status"] = "TP1_HIT"
                 sig["result"] = "WIN (TP1)"
                 tp1_done = True
-                notify = f"🟢 TP1 ✅ خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — TP1: {fmt_price(tp1)}$ — نتیجه: سود جزئی"
+                notify = build_tp1_message(symbol, direction, entry, tp1)
                 print(f"  [دیباگ] 🟢 TP1 خورد در کندل {row['dt']}", flush=True)
         if tp1_done and tp2_hit:
             sig["status"] = "TP2_HIT"
             sig["result"] = "WIN (TP2 - Full)"
             sig["closed_time"] = row["dt"].isoformat()
-            notify = f"🟢🟢 TP2 ✅ خورد: {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — TP2: {fmt_price(tp2)}$ — نتیجه: سود کامل"
+            notify = build_tp2_message(symbol, direction, entry, tp1, tp2, sl)
             print(f"  [دیباگ] 🟢🟢 TP2 خورد در کندل {row['dt']}", flush=True)
             break
 
@@ -216,7 +289,7 @@ def process_signal(sig):
         sig["status"] = "TIMEOUT"
         sig["result"] = sig.get("result") or "OPEN_TIMEOUT"
         sig["closed_time"] = datetime.now(timezone.utc).isoformat()
-        notify = f"⏱️ معامله {symbol} ({direction}) — ورودی: {fmt_price(entry)}$ — پس از ۱۰ روز بدون نتیجه قطعی بسته شد."
+        notify = build_timeout_message(symbol, direction, entry)
 
     return sig, notify
 
@@ -238,7 +311,7 @@ def main():
             new_sig, notify = process_signal(sig)
             updated_log[sig["id"]] = new_sig
             if notify:
-                print(f"  >>> نوتیفیکیشن: {notify}", flush=True)
+                print(f"  >>> نوتیفیکیشن ارسال شد", flush=True)
                 if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
                     send_telegram_message(notify)
         except Exception as e:
