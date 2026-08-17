@@ -219,11 +219,11 @@
     "tp1": 1.3366476116461727,
     "tp2": 1.3277820320945808,
     "signal_time": "2026-08-15T17:50:11.086315+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-08-16T04:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-08-17T07:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "BCH_1786821611",
