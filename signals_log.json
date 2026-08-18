@@ -372,10 +372,10 @@
     "tp1": 0.06996946513525432,
     "tp2": 0.07004629658097601,
     "signal_time": "2026-08-18T08:48:36.750535+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-18T10:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-18T14:00:00+00:00",
+    "result": "LOSS"
   }
 ]
