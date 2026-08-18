@@ -1,19 +1,22 @@
 """
 Signal Outcome Tracker
 ------------------------
-این اسکریپت هر ۵ دقیقه اجرا میشه، سیگنال‌های باز رو با قیمت واقعی چک
-می‌کنه، و مشخص می‌کنه که Limit Entry پر شده یا نه، و بعدش TP یا SL اول
-لمس شده.
+این اسکریپت به‌صورت دوره‌ای (best-effort، طبق مستندات GitHub Actions) اجرا
+می‌شه، سیگنال‌های باز رو با قیمت واقعی چک می‌کنه، و مشخص می‌کنه که Limit
+Entry پر شده یا نه، و بعدش TP یا SL اول لمس شده.
 
 ⚠️ محدودیت: بر پایه کندل ساعتی مصنوعی (از CoinGecko) کار می‌کنه، نه قیمت
 لحظه‌به‌لحظه. اگه SL و TP تو یه کندل هم‌زمان لمس بشن، برای احتیاط SL رو
 اول‌خورده فرض می‌کنیم.
 
-نسخه v2 - پیام‌های حرفه‌ای: هر پیام (Entry/TP1/TP2/SL) با فرمت ساختاریافته
-و درصد سود/ضرر واقعی محاسبه‌شده (نه متن ثابت) ارسال می‌شه.
-⚠️ توجه: منطق استراتژی و مدیریت ریسک هیچ تغییری نکرده - SL بعد از TP1
-به Breakeven منتقل نمی‌شه؛ ثابت می‌ماند تا TP2 یا SL اصلی لمس شود. این
-تصمیم عمدی است تا نتایج با بک‌تست قابل مقایسه بمانند.
+نسخه v3 - Scheduler Awareness: چون GitHub Actions تضمین نمی‌کنه دقیقاً
+هر ۱۵ دقیقه اجرا بشه (Best-Effort Scheduler)، این نسخه:
+1. زمان دقیق شروع اجرا (UTC) رو ثبت می‌کنه
+2. زمان آخرین اجرای موفق قبلی رو از فایل last_run.json می‌خونه
+3. فاصله واقعی از اجرای قبلی رو محاسبه و لاگ می‌کنه
+4. یک گزارش خلاصه (SCHEDULER REPORT) در پایان هر اجرا چاپ می‌کنه
+هیچ تغییری در منطق تصمیم‌گیری (Entry/SL/TP/Strategy) ایجاد نشده - این
+فقط برای شفافیت و مانیتورینگ زمان‌بندیه.
 """
 
 import requests
@@ -28,8 +31,10 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 LOG_PATH = "signals_log.json"
+LAST_RUN_PATH = "last_run.json"
 ENTRY_TIMEOUT_HOURS = 72
 TRADE_TIMEOUT_HOURS = 240
+DATA_AGE_WARNING_MINUTES = 90  # اگه داده از این قدیمی‌تر بود، هشدار بده
 
 
 def load_log():
@@ -44,16 +49,24 @@ def save_log(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def load_last_run():
+    if not os.path.exists(LAST_RUN_PATH):
+        return None
+    try:
+        with open(LAST_RUN_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return datetime.fromisoformat(data["last_successful_run"])
+    except Exception:
+        return None
+
+
+def save_last_run(dt):
+    with open(LAST_RUN_PATH, "w", encoding="utf-8") as f:
+        json.dump({"last_successful_run": dt.isoformat()}, f)
+
+
 def fmt_price(p):
     return f"{p:.6f}" if p < 1 else f"{p:.4f}"
-
-
-def pct_change(entry, target, direction):
-    """درصد تغییر قیمت نسبت به entry، با در نظر گرفتن جهت معامله (سود مثبت/ضرر منفی)"""
-    if direction == "LONG":
-        return (target - entry) / entry * 100
-    else:
-        return (entry - target) / entry * 100
 
 
 def safe_get(url, params=None, retries=3):
@@ -84,13 +97,13 @@ def get_hourly_candles_since(coin_id, since_dt):
     resp = safe_get(url, params=params)
     if resp is None or resp.status_code != 200:
         print(f"    [دیباگ] دریافت داده ناموفق برای coin_id={coin_id} (status={resp.status_code if resp else 'None'})", flush=True)
-        return None
+        return None, None
     data = resp.json()
     prices = data.get("prices")
     volumes = data.get("total_volumes")
     if not prices or not volumes:
         print(f"    [دیباگ] prices/volumes خالی برای coin_id={coin_id}", flush=True)
-        return None
+        return None, None
     df = pd.DataFrame({"time": [p[0] // 1000 for p in prices], "price": [p[1] for p in prices]})
     vol_df = pd.DataFrame({"time": [v[0] // 1000 for v in volumes], "volume": [v[1] for v in volumes]})
     df = df.merge(vol_df, on="time", how="left").sort_values("time").reset_index(drop=True)
@@ -106,8 +119,9 @@ def get_hourly_candles_since(coin_id, since_dt):
     grouped = grouped[grouped["dt"] >= since_dt].reset_index(drop=True)
     if grouped.empty:
         print(f"    [دیباگ] بعد از فیلتر زمانی (since={since_dt}) هیچ کندلی نموند", flush=True)
-        return None
-    return grouped
+        return None, None
+    latest_data_timestamp = grouped["dt"].max()
+    return grouped, latest_data_timestamp
 
 
 def send_telegram_message(text):
@@ -136,7 +150,6 @@ def find_entry_row(df, entry):
     return None, None
 
 
-# ============ سازنده پیام‌های حرفه‌ای ============
 def build_entry_message(symbol, direction, entry, sl, tp1, tp2):
     dir_emoji = "🟢" if direction == "LONG" else "🔴"
     return (
@@ -147,6 +160,13 @@ def build_entry_message(symbol, direction, entry, sl, tp1, tp2):
         f"🎯 TP2: {fmt_price(tp2)}\n"
         f"🛑 SL: {fmt_price(sl)}"
     )
+
+
+def pct_change(entry, target, direction):
+    if direction == "LONG":
+        return (target - entry) / entry * 100
+    else:
+        return (entry - target) / entry * 100
 
 
 def build_tp1_message(symbol, direction, entry, tp1):
@@ -203,7 +223,7 @@ def build_timeout_message(symbol, direction, entry):
     )
 
 
-def process_signal(sig):
+def process_signal(sig, max_data_age_minutes):
     symbol = sig["symbol"]
     coin_id = sig.get("coin_id", "")
     direction = sig["direction"]
@@ -217,13 +237,16 @@ def process_signal(sig):
         print("  [دیباگ] coin_id خالی است - غیرقابل پیگیری", flush=True)
         return sig, None
 
-    df = get_hourly_candles_since(coin_id, signal_time)
+    df, latest_data_ts = get_hourly_candles_since(coin_id, signal_time)
     if df is None:
         print("  [دیباگ] df=None - داده‌ای دریافت نشد، این سیگنال این‌بار رد می‌شود", flush=True)
         return sig, None
 
+    data_age_min = (datetime.now(timezone.utc) - latest_data_ts).total_seconds() / 60
+    max_data_age_minutes[0] = max(max_data_age_minutes[0], data_age_min)
     print(f"  [دیباگ] {len(df)} کندل دریافت شد از {df['dt'].iloc[0]} تا {df['dt'].iloc[-1]}", flush=True)
     print(f"  [دیباگ] بازه Low/High کل داده: {df['low'].min():.6f} تا {df['high'].max():.6f}", flush=True)
+    print(f"  [دیباگ] DATA_AGE: {data_age_min:.1f} دقیقه" + (" ⚠️ DATA_TOO_OLD" if data_age_min > DATA_AGE_WARNING_MINUTES else ""), flush=True)
 
     notify = None
 
@@ -295,32 +318,71 @@ def process_signal(sig):
 
 
 def main():
+    actual_start = datetime.now(timezone.utc)
+    last_run = load_last_run()
+    elapsed_str = "نامشخص (اولین اجرا)"
+    if last_run:
+        elapsed_min = (actual_start - last_run).total_seconds() / 60
+        elapsed_str = f"{elapsed_min:.1f} دقیقه"
+
+    print("=" * 40, flush=True)
+    print("SCHEDULER INFO", flush=True)
+    print("=" * 40, flush=True)
+    print(f"Actual Start (UTC): {actual_start.isoformat()}", flush=True)
+    print(f"Last Successful Run: {last_run.isoformat() if last_run else 'ندارد'}", flush=True)
+    print(f"Elapsed Since Last Run: {elapsed_str}", flush=True)
+    print("=" * 40 + "\n", flush=True)
+
     log = load_log()
     open_statuses = ("ENTRY_PENDING", "OPEN", "TP1_HIT")
     open_signals = [s for s in log if s["status"] in open_statuses]
 
+    max_data_age = [0.0]  # لیست به‌عنوان trick برای mutable closure
+
     if not open_signals:
         print("هیچ سیگنال بازی برای پیگیری وجود ندارد.", flush=True)
-        return
+        scanner_status = "SUCCESS"
+        signal_generated = "NO"
+    else:
+        print(f"در حال بررسی {len(open_signals)} سیگنال باز...", flush=True)
+        updated_log = {s["id"]: s for s in log}
+        any_notify = False
 
-    print(f"در حال بررسی {len(open_signals)} سیگنال باز...", flush=True)
-    updated_log = {s["id"]: s for s in log}
+        for sig in open_signals:
+            try:
+                new_sig, notify = process_signal(sig, max_data_age)
+                updated_log[sig["id"]] = new_sig
+                if notify:
+                    any_notify = True
+                    print(f"  >>> نوتیفیکیشن ارسال شد", flush=True)
+                    if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
+                        send_telegram_message(notify)
+            except Exception as e:
+                print(f"خطا در بررسی {sig['symbol']}: {e}", flush=True)
+            time.sleep(1.2)
 
-    for sig in open_signals:
-        try:
-            new_sig, notify = process_signal(sig)
-            updated_log[sig["id"]] = new_sig
-            if notify:
-                print(f"  >>> نوتیفیکیشن ارسال شد", flush=True)
-                if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
-                    send_telegram_message(notify)
-        except Exception as e:
-            print(f"خطا در بررسی {sig['symbol']}: {e}", flush=True)
-        time.sleep(1.2)
+        save_log(list(updated_log.values()))
+        scanner_status = "SUCCESS"
+        signal_generated = "YES" if any_notify else "NO"
+        print("\nپیگیری به‌روزرسانی و ذخیره شد.", flush=True)
 
-    save_log(list(updated_log.values()))
-    print("\nپیگیری به‌روزرسانی و ذخیره شد.", flush=True)
+    actual_finish = datetime.now(timezone.utc)
+    duration = (actual_finish - actual_start).total_seconds()
+    save_last_run(actual_finish)
+
+    print("\n" + "=" * 40, flush=True)
+    print("SCHEDULER REPORT", flush=True)
+    print("=" * 40, flush=True)
+    print(f"Actual Start:            {actual_start.strftime('%Y-%m-%d %H:%M:%S')} UTC", flush=True)
+    print(f"Actual Finish:           {actual_finish.strftime('%Y-%m-%d %H:%M:%S')} UTC", flush=True)
+    print(f"Execution Duration:      {duration:.1f} seconds", flush=True)
+    print(f"Elapsed Since Last Scan: {elapsed_str}", flush=True)
+    print(f"Max Data Age Seen:       {max_data_age[0]:.1f} minutes" + (" ⚠️ DATA_TOO_OLD" if max_data_age[0] > DATA_AGE_WARNING_MINUTES else ""), flush=True)
+    print(f"Scanner Status:          {scanner_status}", flush=True)
+    print(f"Signal Notification:     {signal_generated}", flush=True)
+    print("=" * 40, flush=True)
 
 
 if __name__ == "__main__":
     main()
+</parameter>
