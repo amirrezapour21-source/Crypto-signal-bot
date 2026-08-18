@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: daily-signal
+  cancel-in-progress: false
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
