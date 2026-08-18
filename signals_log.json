@@ -360,5 +360,22 @@
     "entry_time": "2026-08-18T08:00:00+00:00",
     "closed_time": "2026-08-18T08:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "DOGE_1787042916",
+    "symbol": "DOGE",
+    "coin_id": "dogecoin",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 0.06981317852024493,
+    "sl": 0.06975811823803875,
+    "tp1": 0.06996946513525432,
+    "tp2": 0.07004629658097601,
+    "signal_time": "2026-08-18T08:48:36.750535+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
