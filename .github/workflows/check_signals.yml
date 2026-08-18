@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: check-signals
+  cancel-in-progress: false
+
 jobs:
   check-signals:
     runs-on: ubuntu-latest
