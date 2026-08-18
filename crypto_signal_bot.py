@@ -8,10 +8,11 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
 منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin
 
-نسخه v7 - اصلاح نام‌گذاری استراتژی روند از "Trend (Smart Money)" به
-"Trend + Volume Profile + Liquidity" چون منطق فعلی شامل OB/FVG/Breaker/
-Displacement واقعی نیست و اسم قبلی گمراه‌کننده بود. بدون تغییر در منطق
-تصمیم‌گیری یا آستانه‌ها (طبق تصمیم: فعلاً پارامترها دستکاری نشوند).
+نسخه v8 - اصلاح منطق ضد تکرار سیگنال: قبلاً has_recent_duplicate فقط
+سیگنال‌های باز در ۲۴ ساعت اخیر رو چک می‌کرد که یه باگ واقعی داشت -
+سیگنال‌هایی که بیشتر از ۲۴ ساعت باز مونده بودن (مثل PAXG) دیگه محافظت
+نمی‌شدن. حالا این تابع صرف‌نظر از زمان، هر سیگنال باز برای همون
+نماد+جهت رو تشخیص می‌ده و از صدور سیگنال تکراری جلوگیری می‌کنه.
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -37,7 +38,6 @@ SCAN_TOP_N_COINS = 60
 REQUEST_DELAY = 1.5
 MIN_RR = 2.0
 PRICE_DEVIATION_THRESHOLD = 0.01
-DEDUP_HOURS = 24
 
 
 # ============ ابزار درخواست امن ============
@@ -94,19 +94,18 @@ def validate_and_adjust_prices(symbol, entry, sl, tp1, tp2, direction):
 
 # ============ فیلتر ضد تکرار سیگنال ============
 def has_recent_duplicate(symbol, direction):
+    """
+    اگه برای این نماد/جهت یه سیگنال باز (ENTRY_PENDING/OPEN/TP1_HIT) وجود
+    داشته باشه، سیگنال جدید رد می‌شه - صرف‌نظر از اینکه چقدر پیش صادر شده.
+    (قبلاً این محدودیت فقط ۲۴ ساعت بود که یه باگ واقعی داشت: سیگنال‌هایی
+    که بیشتر از ۲۴ ساعت باز مونده بودن، مثل PAXG، دیگه محافظت نمی‌شدن.)
+    """
     log = load_log()
-    now = datetime.now(timezone.utc)
     open_statuses = ("ENTRY_PENDING", "OPEN", "TP1_HIT")
     for s in log:
         if s.get("symbol") == symbol and s.get("direction") == direction:
             if s.get("status") in open_statuses:
-                try:
-                    sig_time = datetime.fromisoformat(s["signal_time"])
-                except Exception:
-                    continue
-                hours_passed = (now - sig_time).total_seconds() / 3600
-                if hours_passed < DEDUP_HOURS:
-                    return True
+                return True
     return False
 
 
