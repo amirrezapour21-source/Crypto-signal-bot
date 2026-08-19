@@ -9,11 +9,11 @@
     "tp1": 4241.360571168945,
     "tp2": 4064.5957298867897,
     "signal_time": "2026-08-11T06:14:12.765589+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-12T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-19T15:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "PAXG_1786430642",
@@ -25,11 +25,11 @@
     "tp1": 4241.360571168945,
     "tp2": 4064.5957298867897,
     "signal_time": "2026-08-11T06:44:02.672242+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-12T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-19T15:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ICP_1786432450",
