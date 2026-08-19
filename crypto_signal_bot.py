@@ -8,11 +8,12 @@ API می‌گیره و Volume Profile / Market Structure رو محاسبه می�
 منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
 منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin
 
-نسخه v8 - اصلاح منطق ضد تکرار سیگنال: قبلاً has_recent_duplicate فقط
-سیگنال‌های باز در ۲۴ ساعت اخیر رو چک می‌کرد که یه باگ واقعی داشت -
-سیگنال‌هایی که بیشتر از ۲۴ ساعت باز مونده بودن (مثل PAXG) دیگه محافظت
-نمی‌شدن. حالا این تابع صرف‌نظر از زمان، هر سیگنال باز برای همون
-نماد+جهت رو تشخیص می‌ده و از صدور سیگنال تکراری جلوگیری می‌کنه.
+نسخه v9 - رفع باگ فاصله SL بی‌نهایت کوچیک: قبلاً سیگنال‌هایی مثل DOGE
+با فاصله SL فقط ۰.۰۲۷٪ صادر می‌شدن که عملاً غیرقابل معامله بودن (کارمزد
+صرافی از این فاصله بیشتره) و R:R محاسبه‌شده کاذب و بی‌معنی بود (مثلاً
+۱:۱۰). حالا حداقل فاصله SL برابر ۰.۵٪ از Entry اجباری شده - طبق توصیه
+Master Strategy Specification (بند ۱۴). اگه فاصله SL کمتر از این باشه،
+سیگنال رد می‌شه.
 
 نصب پیش‌نیاز:
     pip install requests pandas numpy
@@ -38,6 +39,7 @@ SCAN_TOP_N_COINS = 60
 REQUEST_DELAY = 1.5
 MIN_RR = 2.0
 PRICE_DEVIATION_THRESHOLD = 0.01
+MIN_SL_DISTANCE_PCT = 0.005  # حداقل فاصله SL از Entry: ۰.۵٪ (طبق Master Spec بند ۱۴)
 
 
 # ============ ابزار درخواست امن ============
@@ -92,13 +94,24 @@ def validate_and_adjust_prices(symbol, entry, sl, tp1, tp2, direction):
     return new_entry, new_sl, new_tp1, new_tp2, True, live_price
 
 
+# ============ چک حداقل فاصله SL ============
+def sl_distance_ok(entry, sl):
+    """
+    اگه فاصله SL از Entry کمتر از MIN_SL_DISTANCE_PCT باشه، سیگنال رد
+    می‌شه. این جلوی سیگنال‌هایی مثل DOGE (فاصله ۰.۰۲۷٪) رو می‌گیره که
+    عملاً غیرقابل معامله بودن و R:R کاذب و بی‌معنی تولید می‌کردن.
+    """
+    if entry == 0:
+        return False
+    distance_pct = abs(entry - sl) / entry
+    return distance_pct >= MIN_SL_DISTANCE_PCT
+
+
 # ============ فیلتر ضد تکرار سیگنال ============
 def has_recent_duplicate(symbol, direction):
     """
     اگه برای این نماد/جهت یه سیگنال باز (ENTRY_PENDING/OPEN/TP1_HIT) وجود
     داشته باشه، سیگنال جدید رد می‌شه - صرف‌نظر از اینکه چقدر پیش صادر شده.
-    (قبلاً این محدودیت فقط ۲۴ ساعت بود که یه باگ واقعی داشت: سیگنال‌هایی
-    که بیشتر از ۲۴ ساعت باز مونده بودن، مثل PAXG، دیگه محافظت نمی‌شدن.)
     """
     log = load_log()
     open_statuses = ("ENTRY_PENDING", "OPEN", "TP1_HIT")
@@ -520,6 +533,9 @@ def execute_trend(candidate):
     else:
         return {"symbol": symbol, "rejected": True}
 
+    if not sl_distance_ok(entry, sl):
+        return {"symbol": symbol, "rejected": True}
+
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
@@ -529,6 +545,10 @@ def execute_trend(candidate):
     entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
         symbol, entry, sl, tp1, tp2, direction
     )
+
+    if not sl_distance_ok(entry, sl):
+        return {"symbol": symbol, "rejected": True}
+
     risk = abs(entry - sl)
     reward1 = abs(tp1 - entry)
     if risk <= 0 or reward1 <= 0:
@@ -584,6 +604,9 @@ def execute_mean_reversion(candidate):
         return {"symbol": symbol, "rejected": True}
     rr = reward1 / risk
 
+    if not sl_distance_ok(entry, sl):
+        return {"symbol": symbol, "rejected": True}
+
     if rr < MIN_RR:
         return {"symbol": symbol, "rejected": True}
 
@@ -593,6 +616,10 @@ def execute_mean_reversion(candidate):
     entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
         symbol, entry, sl, tp1, tp2, direction
     )
+
+    if not sl_distance_ok(entry, sl):
+        return {"symbol": symbol, "rejected": True}
+
     risk = abs(entry - sl)
     reward1 = abs(tp1 - entry)
     if risk <= 0 or reward1 <= 0:
