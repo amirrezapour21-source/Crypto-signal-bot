@@ -236,11 +236,11 @@
     "tp1": 200.03315739723166,
     "tp2": 196.03249424928703,
     "signal_time": "2026-08-15T19:20:11.021908+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-17T03:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-19T17:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "AAVE_1786823413",
@@ -338,11 +338,11 @@
     "tp1": 493.07631564347696,
     "tp2": 467.9384026483117,
     "signal_time": "2026-08-18T02:47:05.595696+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-08-19T14:00:00+00:00",
+    "closed_time": "2026-08-19T15:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "DOGE_1787035625",
