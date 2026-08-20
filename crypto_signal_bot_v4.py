@@ -1,17 +1,21 @@
 """
 Crypto Signal Bot V4 — Institutional Liquidity Reversal Strategy
 --------------------------------------------------------------------
-نسخه مستقل و جدید، طبق V4 Final Specification + V4 Directive.
+نسخه مستقل و جدید، طبق V4 Final Specification + Directive + Breakout Patch.
 
 ⚠️ این فایل کاملاً جدا از crypto_signal_bot.py (نسخه V3) است.
 
 PHASE 1: Real OHLCV Data Layer (KuCoin) - تکمیل‌شده
 PHASE 2: Structure Engine (Swing High/Low, BOS با تأیید Close) - تکمیل‌شده
-PHASE 3: Breakout / Continuation Engine
+PHASE 3 (اصلاح‌شده): Breakout / Continuation Engine با دو مسیر مستقل
 ------------------------------------------
-طبق بند ۱۱ و ۱۲ Specification: تشخیص حرکت‌های قدرتمند که با Compression
-+ Volume Expansion + Structure Break + Displacement تأیید می‌شن - برای
-جلوگیری از مشکل قبلی (از دست رفتن فرصت‌هایی مثل حرکت +6% تا +9% XRP).
+PATH A: Compression → Expansion (Compression اجباری)
+PATH B: Trend Continuation (بدون نیاز به Compression، ولی با فیلتر
+        Anti-Chasing برای جلوگیری از ورود در انتهای Pump)
+هر دو مسیر باید از فیلترهای مشترک (Structure, Volume, Entry Location,
+R:R) عبور کنن. طبق تست قبلی BTC، حرکت +5.7% که Compression نداشت ولی
+Displacement/Volume/Follow-through معتبر داشت، الان باید از PATH B رد
+بشه (اگه Anti-Chasing هم تأیید کنه).
 """
 
 import requests
@@ -199,27 +203,24 @@ def detect_bos(df, swing_highs, swing_lows, lookback_candles=30):
 
 
 # ============================================================
-# PHASE 3: BREAKOUT / CONTINUATION ENGINE
+# PHASE 3 (اصلاح‌شده): BREAKOUT / CONTINUATION ENGINE
 # ============================================================
 
 def compute_avg_body(df, lookback=20):
-    """میانگین اندازه بدنه کندل‌ها (Body = |Close - Open|) در `lookback` کندل اخیر"""
     body = (df["close"] - df["open"]).abs()
     return body.rolling(window=lookback).mean()
 
 
 def compute_avg_volume(df, lookback=20):
-    """میانگین حجم در `lookback` کندل اخیر (بدون احتساب کندل فعلی)"""
     return df["volume"].rolling(window=lookback).mean()
 
 
+def compute_avg_range(df, lookback=20):
+    """میانگین دامنه نوسان (High-Low) - برای Anti-Chasing استفاده می‌شه"""
+    return (df["high"] - df["low"]).rolling(window=lookback).mean()
+
+
 def detect_compression(df, idx, lookback=20, threshold=0.75):
-    """
-    تشخیص فشردگی (Compression) قبل از یه کندل مشخص: میانگین دامنه نوسان
-    (High-Low) در `lookback` کندل قبل از idx، نسبت به دامنه بلندمدت‌تر.
-    اگه نسبت کمتر از threshold باشه، یعنی بازار قبل از این لحظه توی
-    یه محدوده فشرده/بی‌حرکت بوده - پیش‌نیاز Breakout واقعی.
-    """
     if idx < lookback * 2:
         return False, None
     recent_range = (df["high"] - df["low"]).iloc[idx - lookback:idx].mean()
@@ -232,11 +233,6 @@ def detect_compression(df, idx, lookback=20, threshold=0.75):
 
 def detect_displacement(df, idx, avg_body, avg_volume, direction,
                           body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
-    """
-    تشخیص کندل Displacement (حرکت قدرتمند): بدنه بزرگ‌تر از میانگین،
-    حجم بالاتر از میانگین، و Close نزدیک به یک سر کندل.
-    طبق بند ۱۱ Specification.
-    """
     if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
         return False
 
@@ -260,36 +256,61 @@ def detect_displacement(df, idx, avg_body, avg_volume, direction,
 
 
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
-    """
-    بررسی می‌کنه که بعد از کندل Breakout، حرکت واقعاً ادامه پیدا کرده یا
-    فوری برگشته (که نشونه Fakeout بوده). طبق بند ۱۲: بعد از Breakout باید
-    Confirmation/Continuation باشه.
-    """
     end_idx = min(breakout_idx + candles_after + 1, len(df))
     if end_idx <= breakout_idx + 1:
-        return False  # هنوز کندل کافی بعدش نیومده
+        return False
 
     breakout_close = df["close"].iloc[breakout_idx]
     after_candles = df.iloc[breakout_idx + 1:end_idx]
 
     if direction == "bullish":
-        # حداقل یکی از کندل‌های بعدی باید بالاتر از close کندل breakout بسته بشه
         return (after_candles["close"] > breakout_close).any()
     else:
         return (after_candles["close"] < breakout_close).any()
 
 
+def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=2.5):
+    """
+    فیلتر Anti-Chasing: جلوگیری از ورود در انتهای یه حرکت بزرگ (Pump/Dump).
+    چک می‌کنه:
+    1. فاصله قیمت فعلی از آخرین Swing معتبر مخالف جهت (نقطه شروع منطقی حرکت)
+       نباید بیش از `max_extension_atr` برابر میانگین دامنه نوسان باشه.
+    2. اگه این فاصله خیلی زیاد باشه، یعنی بخش عمده حرکت قبلاً انجام شده و
+       ورود الان ریسک Exhaustion داره.
+    """
+    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+        return False, None
+
+    current_price = df["close"].iloc[idx]
+
+    if direction == "bullish":
+        # آخرین Swing Low قبل از این نقطه رو به‌عنوان "نقطه شروع حرکت" در نظر می‌گیریم
+        relevant_lows = [s for s in structure["swing_lows"] if s["index"] < idx]
+        if not relevant_lows:
+            return False, None
+        origin_price = relevant_lows[-1]["price"]
+        extension = current_price - origin_price
+    else:
+        relevant_highs = [s for s in structure["swing_highs"] if s["index"] < idx]
+        if not relevant_highs:
+            return False, None
+        origin_price = relevant_highs[-1]["price"]
+        extension = origin_price - current_price
+
+    extension_in_atr = extension / avg_range.iloc[idx]
+    passed = extension_in_atr <= max_extension_atr
+    return passed, extension_in_atr
+
+
 def scan_breakout_setups(df, structure, bos_events, lookback_recent=15):
     """
-    ترکیب تمام اجزا برای پیدا کردن Setup های معتبر Breakout/Continuation
-    در `lookback_recent` کندل اخیر. برای هر BOS اخیر، چک می‌کنه که آیا
-    Compression + Displacement + Volume + Follow-through همه تأیید شدن.
-
-    خروجی: لیستی از Setup های Breakout معتبر با جزئیات کامل (برای Missed
-    Opportunity Log هم لازمه بدونیم چرا هر کاندید رد شده).
+    برای هر رویداد BOS اخیر، هر دو مسیر (PATH A و PATH B) رو بررسی می‌کنه
+    و مشخص می‌کنه که آیا Setup از حداقل یکی از این دو مسیر معتبر شناخته
+    می‌شه یا نه - همراه با دلیل دقیق رد شدن برای Missed Opportunity Log.
     """
     avg_body = compute_avg_body(df)
     avg_volume = compute_avg_volume(df)
+    avg_range = compute_avg_range(df)
     results = []
 
     recent_bos = [e for e in bos_events if e["index"] >= len(df) - lookback_recent]
@@ -300,17 +321,40 @@ def scan_breakout_setups(df, structure, bos_events, lookback_recent=15):
 
         compression_ok, compression_ratio = detect_compression(df, idx)
         displacement_ok = detect_displacement(df, idx, avg_body, avg_volume, direction)
+        volume_ok = displacement_ok  # فعلاً حجم بخشی از تعریف Displacement است
         follow_through_ok = detect_follow_through(df, idx, direction)
+        anti_chasing_ok, extension_atr = check_anti_chasing(df, idx, direction, avg_range, structure)
 
-        reasons_failed = []
+        # ---- PATH A: Compression -> Expansion ----
+        path_a_reasons_failed = []
         if not compression_ok:
-            reasons_failed.append("no_compression_before_breakout")
+            path_a_reasons_failed.append("no_compression_before_breakout")
         if not displacement_ok:
-            reasons_failed.append("weak_displacement_or_volume")
+            path_a_reasons_failed.append("weak_displacement_or_volume")
         if not follow_through_ok:
-            reasons_failed.append("no_follow_through")
+            path_a_reasons_failed.append("no_follow_through")
+        path_a_valid = compression_ok and displacement_ok and follow_through_ok
 
-        valid = compression_ok and displacement_ok and follow_through_ok
+        # ---- PATH B: Trend Continuation ----
+        regime_aligned = (structure["regime"] == "up" and direction == "bullish") or \
+                          (structure["regime"] == "down" and direction == "bearish")
+        path_b_reasons_failed = []
+        if not regime_aligned:
+            path_b_reasons_failed.append("regime_not_aligned")
+        if not displacement_ok:
+            path_b_reasons_failed.append("weak_displacement_or_volume")
+        if not follow_through_ok:
+            path_b_reasons_failed.append("no_follow_through")
+        if not anti_chasing_ok:
+            path_b_reasons_failed.append("excessive_extension")
+        path_b_valid = regime_aligned and displacement_ok and follow_through_ok and anti_chasing_ok
+
+        valid_setup = path_a_valid or path_b_valid
+        setup_path = None
+        if path_a_valid:
+            setup_path = "A"
+        elif path_b_valid:
+            setup_path = "B"
 
         results.append({
             "index": idx,
@@ -322,8 +366,14 @@ def scan_breakout_setups(df, structure, bos_events, lookback_recent=15):
             "compression_ok": compression_ok,
             "displacement_ok": displacement_ok,
             "follow_through_ok": follow_through_ok,
-            "valid_breakout": valid,
-            "reasons_failed": reasons_failed,
+            "anti_chasing_ok": anti_chasing_ok,
+            "extension_atr": extension_atr,
+            "path_a_valid": path_a_valid,
+            "path_a_reasons_failed": path_a_reasons_failed,
+            "path_b_valid": path_b_valid,
+            "path_b_reasons_failed": path_b_reasons_failed,
+            "valid_setup": valid_setup,
+            "setup_path": setup_path,
         })
 
     return results
@@ -331,7 +381,7 @@ def scan_breakout_setups(df, structure, bos_events, lookback_recent=15):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("PHASE 3 TEST — Breakout/Continuation Engine روی BTC-USDT (4H)")
+    print("PHASE 3 (اصلاح‌شده) TEST — Breakout Engine با دو مسیر روی BTC-USDT (4H)")
     print("=" * 60)
 
     df4h = get_ohlcv_v4("BTC-USDT", "4h", total_candles=150)
@@ -348,17 +398,18 @@ if __name__ == "__main__":
         print(f"تعداد رویداد BOS اخیر: {len(bos_events)}\n")
 
         print("-" * 60)
-        print("بررسی Breakout Setups:")
+        print("بررسی Breakout Setups (دو مسیر):")
         print("-" * 60)
         breakout_results = scan_breakout_setups(df4h, structure, bos_events)
 
         if not breakout_results:
             print("هیچ رویداد BOS اخیری برای بررسی وجود نداشت.")
         for r in breakout_results:
-            status = "✅ معتبر" if r["valid_breakout"] else "❌ رد شد"
+            status = f"✅ معتبر (PATH {r['setup_path']})" if r["valid_setup"] else "❌ رد شد"
             print(f"\n{r['time']} | {r['direction']} | close={r['close']:.2f} | {status}")
             print(f"  Compression: {r['compression_ok']} (ratio={r['compression_ratio']})")
-            print(f"  Displacement: {r['displacement_ok']}")
+            print(f"  Displacement/Volume: {r['displacement_ok']}")
             print(f"  Follow-through: {r['follow_through_ok']}")
-            if r["reasons_failed"]:
-                print(f"  دلایل رد شدن: {', '.join(r['reasons_failed'])}")
+            print(f"  Anti-Chasing: {r['anti_chasing_ok']} (extension={r['extension_atr']})")
+            print(f"  PATH A: {'✅' if r['path_a_valid'] else '❌ ' + str(r['path_a_reasons_failed'])}")
+            print(f"  PATH B: {'✅' if r['path_b_valid'] else '❌ ' + str(r['path_b_reasons_failed'])}")
