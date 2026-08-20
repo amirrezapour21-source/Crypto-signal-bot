@@ -559,11 +559,11 @@
     "tp1": 200.32735602124365,
     "tp2": 189.181956239295,
     "signal_time": "2026-08-20T16:18:09.784850+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-20T20:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-20T21:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "GRAM_1787246419",
