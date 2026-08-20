@@ -559,9 +559,9 @@
     "tp1": 200.32735602124365,
     "tp2": 189.181956239295,
     "signal_time": "2026-08-20T16:18:09.784850+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-08-20T20:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -593,11 +593,11 @@
     "tp1": 2.8200704379116117e-06,
     "tp2": 2.4913182655970043e-06,
     "signal_time": "2026-08-20T18:18:57.684996+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-08-20T20:00:00+00:00",
+    "closed_time": "2026-08-20T20:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "DOT_1787257131",
