@@ -598,5 +598,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "DOT_1787257131",
+    "symbol": "DOT",
+    "coin_id": "polkadot",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.8315637900617634,
+    "sl": 0.853186050411518,
+    "tp1": 0.7871813818209334,
+    "tp2": 0.7296240998680866,
+    "signal_time": "2026-08-20T20:18:51.293851+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
