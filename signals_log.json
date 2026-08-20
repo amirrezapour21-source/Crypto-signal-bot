@@ -474,11 +474,11 @@
     "tp1": 3.349779263008768,
     "tp2": 3.092888467339256,
     "signal_time": "2026-08-20T03:50:11.559930+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-08-20T06:00:00+00:00",
+    "closed_time": "2026-08-20T09:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "LINK_1787213925",
