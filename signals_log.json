@@ -581,5 +581,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "PEPE_1787249937",
+    "symbol": "PEPE",
+    "coin_id": "pepe",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 3.124e-06,
+    "sl": 3.1809049021644892e-06,
+    "tp1": 2.8200704379116117e-06,
+    "tp2": 2.4913182655970043e-06,
+    "signal_time": "2026-08-20T18:18:57.684996+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
