@@ -683,5 +683,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "AVAX_1787316801",
+    "symbol": "AVAX",
+    "coin_id": "avalanche-2",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 7.501494928601137,
+    "sl": 7.760852684521912,
+    "tp1": 6.963966038130716,
+    "tp2": 6.243919517328846,
+    "signal_time": "2026-08-21T12:53:21.329318+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
