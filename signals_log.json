@@ -717,5 +717,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ZEC_1787327504",
+    "symbol": "ZEC",
+    "coin_id": "zcash",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 647.1071151515997,
+    "sl": 664.7386879707552,
+    "tp1": 571.6062205673608,
+    "tp2": 485.0553243319935,
+    "signal_time": "2026-08-21T15:51:44.988737+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
