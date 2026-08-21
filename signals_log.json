@@ -491,11 +491,11 @@
     "tp1": 9.928886871063408,
     "tp2": 8.951430323471842,
     "signal_time": "2026-08-20T08:18:45.197723+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-20T11:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-21T07:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "UNI_1787226244",
