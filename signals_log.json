@@ -423,11 +423,11 @@
     "tp1": 4414.332723543464,
     "tp2": 4316.39498333881,
     "signal_time": "2026-08-19T22:20:32.206248+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-20T19:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-21T09:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "HYPE_1787194024",
@@ -508,11 +508,11 @@
     "tp1": 3.489488759520995,
     "tp2": 3.2193498066179815,
     "signal_time": "2026-08-20T11:44:04.187922+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-08-20T17:00:00+00:00",
+    "closed_time": "2026-08-21T01:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "SUI_1787233565",
@@ -661,10 +661,10 @@
     "tp1": 2.3356654422230716,
     "tp2": 2.2033660606518053,
     "signal_time": "2026-08-21T07:50:19.134855+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-08-21T09:00:00+00:00",
+    "closed_time": "2026-08-21T09:00:00+00:00",
+    "result": "LOSS"
   }
 ]
