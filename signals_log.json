@@ -632,5 +632,22 @@
     "entry_time": "2026-08-20T23:00:00+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "TAO_1787282596",
+    "symbol": "TAO",
+    "coin_id": "bittensor",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 215.58557246065098,
+    "sl": 219.9821526387057,
+    "tp1": 203.49303388138298,
+    "tp2": 189.181956239295,
+    "signal_time": "2026-08-21T03:23:16.202702+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
