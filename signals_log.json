@@ -763,11 +763,11 @@
     "tp1": 3.7451223491884393,
     "tp2": 3.2723130951791934,
     "signal_time": "2026-08-22T00:53:16.745292+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-08-22T05:00:00+00:00",
+    "closed_time": "2026-08-22T05:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ADA_1787363590",
