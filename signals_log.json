@@ -768,5 +768,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ADA_1787363590",
+    "symbol": "ADA",
+    "coin_id": "cardano",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.22846837808722228,
+    "sl": 0.23365139571493254,
+    "tp1": 0.2015758129086619,
+    "tp2": 0.17181361025798467,
+    "signal_time": "2026-08-22T01:53:10.117747+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
