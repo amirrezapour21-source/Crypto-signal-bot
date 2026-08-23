@@ -610,10 +610,10 @@
     "tp1": 0.7871813818209334,
     "tp2": 0.7296240998680866,
     "signal_time": "2026-08-20T20:18:51.293851+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-08-23T20:55:07.879090+00:00",
     "result": null
   },
   {
