@@ -137,10 +137,10 @@
     "tp1": 0.43613551043950194,
     "tp2": 0.4068497597409369,
     "signal_time": "2026-08-13T07:47:00.256408+00:00",
-    "status": "TP1_HIT",
+    "status": "TIMEOUT",
     "entered": true,
     "entry_time": "2026-08-13T12:00:00+00:00",
-    "closed_time": null,
+    "closed_time": "2026-08-23T13:42:26.141141+00:00",
     "result": "WIN (TP1)"
   },
   {
