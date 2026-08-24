@@ -14,7 +14,8 @@ TEST_SYMBOLS = [
     "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT"
 ]
 
-MIN_SL_DISTANCE_PCT = 0.005  # حداقل فاصله SL از Entry - طبق بند ۹ Spec، محافظتی، قابل بازبینی بعدی
+MIN_SL_DISTANCE_PCT = 0.005
+MAX_EXTENSION_ATR = 2.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -96,10 +97,6 @@ def drop_unclosed_candle(df, interval_key):
     return df
 
 
-# ============================================================
-# STRUCTURE ENGINE (مشترک بین 4H و Daily)
-# ============================================================
-
 def find_swings(df, left=3, right=3):
     highs = df["high"].values
     lows = df["low"].values
@@ -115,7 +112,6 @@ def find_swings(df, left=3, right=3):
 
 
 def classify_market_structure(df, left=3, right=3):
-    """خروجی رگیم: 'up' / 'down' / 'range' (choppy)"""
     swing_highs, swing_lows = find_swings(df, left, right)
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return {"regime": "range", "swing_highs": swing_highs, "swing_lows": swing_lows}
@@ -154,16 +150,7 @@ def detect_bos(df, swing_highs, swing_lows, lookback_candles=30):
     return events
 
 
-# ============================================================
-# PHASE 1-2: DAILY REGIME + GLOBAL REGIME FILTER
-# ============================================================
-
 def get_daily_regime(symbol):
-    """
-    Daily Regime رو با همون منطق Structure Engine محاسبه می‌کنه (طبق
-    بند ۲ Spec: از منطق/اندیکاتور جدید استفاده نشه، فقط تایم‌فریم عوض بشه).
-    خروجی: 'BULLISH' / 'BEARISH' / 'CHOPPY'
-    """
     df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
     if df_daily is None or len(df_daily) < 30:
         return None
@@ -174,106 +161,212 @@ def get_daily_regime(symbol):
 
 
 def global_regime_filter(daily_regime, h4_regime_raw, requested_direction):
-    """
-    طبق بند ۳ و ۴ Spec: تصمیم می‌گیره که آیا `requested_direction`
-    (bullish/bearish) اجازه بررسی بیشتر داره یا باید رد بشه.
-
-    h4_regime_raw: خروجی خام Structure Engine روی 4H ('up'/'down'/'range')
-    daily_regime: 'BULLISH'/'BEARISH'/'CHOPPY' یا None (داده در دسترس نبود)
-
-    خروجی: (allowed: bool, reason: str)
-    """
     h4_map = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
     h4_regime = h4_map.get(h4_regime_raw, "CHOPPY")
-
     if daily_regime is None:
         return False, "daily_regime_unavailable"
-
     direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-
-    # بند ۴: تناقض مستقیم Daily/4H
     if daily_regime == "BULLISH" and h4_regime == "BEARISH" and direction_regime == "BEARISH":
         return False, "conflict_daily_bullish_4h_bearish_short_setup"
     if daily_regime == "BEARISH" and h4_regime == "BULLISH" and direction_regime == "BULLISH":
         return False, "conflict_daily_bearish_4h_bullish_long_setup"
-
-    # بند ۳: قانون اصلی - Daily جهت میده، خلافش ممنوعه
     if daily_regime == "BULLISH" and direction_regime == "BEARISH":
         return False, "daily_bullish_short_forbidden"
     if daily_regime == "BEARISH" and direction_regime == "BULLISH":
         return False, "daily_bearish_long_forbidden"
-
-    # Daily CHOPPY: خودش به‌تنهایی سیگنال تولید نمی‌کنه، ولی مانع 4H هم نیست
-    # (تصمیم بر عهده 4H regime و قوانین PATH گذاشته می‌شه)
     return True, "allowed"
 
 
 # ============================================================
-# PHASE 3: UNIT TESTS (V3 Failure Reproduction Tests)
+# PATH A / PATH B ENGINE
 # ============================================================
 
-def run_regime_filter_unit_tests():
+def compute_avg_body(df, lookback=20):
+    return (df["close"] - df["open"]).abs().rolling(lookback).mean()
+
+
+def compute_avg_volume(df, lookback=20):
+    return df["volume"].rolling(lookback).mean()
+
+
+def compute_avg_range(df, lookback=20):
+    return (df["high"] - df["low"]).rolling(lookback).mean()
+
+
+def detect_compression(df, idx, lookback=20, threshold=0.75):
+    if idx < lookback * 2:
+        return False, None
+    recent_range = (df["high"] - df["low"]).iloc[idx-lookback:idx].mean()
+    longer_range = (df["high"] - df["low"]).iloc[idx-lookback*2:idx].mean()
+    if longer_range == 0:
+        return False, None
+    ratio = recent_range / longer_range
+    return ratio < threshold, ratio
+
+
+def detect_displacement(df, idx, avg_body, avg_volume, direction,
+                          body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
+    if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
+        return False
+    row = df.iloc[idx]
+    body_size = abs(row["close"] - row["open"])
+    candle_range = row["high"] - row["low"]
+    if candle_range == 0:
+        return False
+    body_ok = body_size >= body_multiplier * avg_body.iloc[idx]
+    volume_ok = row["volume"] >= volume_multiplier * avg_volume.iloc[idx]
+    if direction == "bullish":
+        close_position = (row["close"] - row["low"]) / candle_range
+    else:
+        close_position = (row["high"] - row["close"]) / candle_range
+    close_ok = close_position >= (1 - close_position_pct)
+    return body_ok and volume_ok and close_ok
+
+
+def detect_follow_through(df, breakout_idx, direction, candles_after=2):
+    end_idx = min(breakout_idx + candles_after + 1, len(df))
+    if end_idx <= breakout_idx + 1:
+        return False
+    breakout_close = df["close"].iloc[breakout_idx]
+    after = df.iloc[breakout_idx+1:end_idx]
+    if direction == "bullish":
+        return (after["close"] > breakout_close).any()
+    return (after["close"] < breakout_close).any()
+
+
+def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
     """
-    طبق بند ۵ Spec: باید این سناریوها تست بشن. چون تست‌ها منطق
-    global_regime_filter رو مستقیم صدا می‌زنن (نه از طریق API واقعی)،
-    بدون نیاز به داده زنده اجرا می‌شن.
+    extension_atr = فاصله (Current Close - Origin Swing) / میانگین Range.
+    Origin Swing = آخرین Swing مخالف جهت قبل از این کندل (نقطه شروع فرضی حرکت).
+    این Metric فاصله کل حرکت رو از نقطه شروع اندازه می‌گیره، نه فاصله از
+    خود سطح BOS - طبق بند ۷ Spec، مستند شد، Threshold فعلاً ثابت می‌مونه.
     """
-    tests = []
+    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+        return False, None
+    current_price = df["close"].iloc[idx]
+    if direction == "bullish":
+        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
+        if not relevant:
+            return False, None
+        origin_price = relevant[-1]["price"]
+        extension = current_price - origin_price
+    else:
+        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+        if not relevant:
+            return False, None
+        origin_price = relevant[-1]["price"]
+        extension = origin_price - current_price
+    extension_atr = extension / avg_range.iloc[idx]
+    return extension_atr <= max_extension_atr, extension_atr
 
-    # Test 1: Daily Bullish + 4H Choppy + Short Setup -> MUST REJECT
-    allowed, reason = global_regime_filter("BULLISH", "range", "bearish")
-    tests.append(("Test1_DailyBullish_4hChoppy_Short_MUST_REJECT", not allowed, reason))
 
-    # Test 2: Daily Bearish + 4H Choppy + Long Setup -> MUST REJECT
-    allowed, reason = global_regime_filter("BEARISH", "range", "bullish")
-    tests.append(("Test2_DailyBearish_4hChoppy_Long_MUST_REJECT", not allowed, reason))
+def sl_distance_ok(entry, sl):
+    if entry == 0:
+        return False
+    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
-    # Test 3: Daily Bullish + 4H Choppy + Long Setup -> MUST ALLOW (ادامه Validation)
-    allowed, reason = global_regime_filter("BULLISH", "range", "bullish")
-    tests.append(("Test3_DailyBullish_4hChoppy_Long_MUST_ALLOW", allowed, reason))
 
-    # Test 4: Daily Bearish + 4H Choppy + Short Setup -> MUST ALLOW
-    allowed, reason = global_regime_filter("BEARISH", "range", "bearish")
-    tests.append(("Test4_DailyBearish_4hChoppy_Short_MUST_ALLOW", allowed, reason))
+def scan_symbol_v4(symbol, lookback_recent=15):
+    """
+    اسکن کامل یک نماد طبق معماری Spec:
+    Structure -> 4H+Daily Regime -> Global Filter -> PATH A/B -> Setup
+    """
+    log = {"symbol": symbol, "setups": [], "rejects": []}
 
-    # Test 5 (Conflict): Daily Bullish + 4H Bearish + Short Setup -> MUST REJECT
-    allowed, reason = global_regime_filter("BULLISH", "down", "bearish")
-    tests.append(("Test5_Conflict_DailyBullish_4hBearish_Short_MUST_REJECT", not allowed, reason))
+    df4h = get_ohlcv_v4(symbol, "4h", total_candles=150)
+    if df4h is None or len(df4h) < 60:
+        log["error"] = "4h_data_unavailable"
+        return log
+    df4h = drop_unclosed_candle(df4h, "4h")
 
-    # Test 6 (Conflict): Daily Bearish + 4H Bullish + Long Setup -> MUST REJECT
-    allowed, reason = global_regime_filter("BEARISH", "up", "bullish")
-    tests.append(("Test6_Conflict_DailyBearish_4hBullish_Long_MUST_REJECT", not allowed, reason))
+    structure = classify_market_structure(df4h)
+    bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
 
-    # Test 7 (Sanity): Daily Bullish + 4H Bullish + Long Setup -> MUST ALLOW
-    allowed, reason = global_regime_filter("BULLISH", "up", "bullish")
-    tests.append(("Test7_DailyBullish_4hBullish_Long_MUST_ALLOW", allowed, reason))
+    daily_regime = get_daily_regime(symbol)
+    log["daily_regime"] = daily_regime
+    log["h4_regime"] = structure["regime"]
 
-    # Test 8 (Sanity): Daily Bearish + 4H Bearish + Short Setup -> MUST ALLOW
-    allowed, reason = global_regime_filter("BEARISH", "down", "bearish")
-    tests.append(("Test8_DailyBearish_4hBearish_Short_MUST_ALLOW", allowed, reason))
+    avg_body = compute_avg_body(df4h)
+    avg_volume = compute_avg_volume(df4h)
+    avg_range = compute_avg_range(df4h)
 
-    return tests
+    recent_bos = [e for e in bos_events if e["index"] >= len(df4h) - lookback_recent]
+
+    for bos in recent_bos:
+        idx = bos["index"]
+        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+
+        allowed, reason = global_regime_filter(daily_regime, structure["regime"], direction)
+        if not allowed:
+            log["rejects"].append({"time": bos["time"], "direction": direction, "stage": "global_regime_filter", "reason": reason})
+            continue
+
+        compression_ok, compression_ratio = detect_compression(df4h, idx)
+        displacement_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
+        follow_through_ok = detect_follow_through(df4h, idx, direction)
+        anti_chasing_ok, extension_atr = check_anti_chasing(df4h, idx, direction, avg_range, structure)
+
+        path_a_valid = compression_ok and displacement_ok and follow_through_ok
+
+        regime_aligned_4h = (structure["regime"] == "up" and direction == "bullish") or \
+                             (structure["regime"] == "down" and direction == "bearish")
+        path_b_valid = regime_aligned_4h and displacement_ok and follow_through_ok and anti_chasing_ok
+
+        if path_a_valid or path_b_valid:
+            setup_path = "A" if path_a_valid else "B"
+            log["setups"].append({
+                "time": bos["time"], "direction": direction, "close": bos["close"],
+                "path": setup_path, "compression_ratio": compression_ratio,
+                "extension_atr": extension_atr,
+            })
+        else:
+            reasons = []
+            if not compression_ok:
+                reasons.append("no_compression")
+            if not displacement_ok:
+                reasons.append("weak_displacement")
+            if not follow_through_ok:
+                reasons.append("no_follow_through")
+            if not regime_aligned_4h:
+                reasons.append("4h_regime_not_aligned")
+            if not anti_chasing_ok:
+                reasons.append("excessive_extension")
+            log["rejects"].append({"time": bos["time"], "direction": direction, "stage": "path_validation", "reason": reasons})
+
+    return log
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 1-3: Daily Regime + Global Filter + Unit Tests")
+    print("PHASE 4: PATH A/B + Global Regime Filter — Multi-Symbol Scan")
     print("=" * 70)
 
-    print("\n--- Unit Tests (منطقی، بدون نیاز به داده زنده) ---")
-    tests = run_regime_filter_unit_tests()
-    all_passed = True
-    for name, passed, reason in tests:
-        status = "✅ PASS" if passed else "❌ FAIL"
-        if not passed:
-            all_passed = False
-        print(f"{status} | {name} | reason={reason}")
+    total_setups = 0
+    total_regime_rejects = 0
+    total_path_rejects = 0
 
-    print(f"\nنتیجه کلی Unit Tests: {'✅ همه موفق' if all_passed else '❌ حداقل یک تست شکست خورد'}")
+    for symbol in TEST_SYMBOLS:
+        result = scan_symbol_v4(symbol)
+        if "error" in result:
+            print(f"\n{symbol} | ERROR | {result['error']}")
+            continue
 
-    print("\n" + "-" * 70)
-    print("--- تست Daily Regime واقعی روی چند نماد ---")
-    for symbol in TEST_SYMBOLS[:5]:
-        daily_regime = get_daily_regime(symbol)
-        print(f"{symbol} | Daily Regime = {daily_regime}")
-        time.sleep(0.5)
+        print(f"\n{symbol} | Daily={result['daily_regime']} | 4H={result['h4_regime']}")
+
+        for s in result["setups"]:
+            total_setups += 1
+            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext_atr={s['extension_atr']}")
+
+        regime_rejects = [r for r in result["rejects"] if r["stage"] == "global_regime_filter"]
+        path_rejects = [r for r in result["rejects"] if r["stage"] == "path_validation"]
+        total_regime_rejects += len(regime_rejects)
+        total_path_rejects += len(path_rejects)
+
+        print(f"  رد شده در Global Regime Filter: {len(regime_rejects)}")
+        print(f"  رد شده در Path Validation: {len(path_rejects)}")
+
+        time.sleep(1)
+
+    print("\n" + "=" * 70)
+    print(f"خلاصه: {total_setups} Setup معتبر | {total_regime_rejects} رد در Regime Filter | {total_path_rejects} رد در Path Validation")
+    print("=" * 70)
