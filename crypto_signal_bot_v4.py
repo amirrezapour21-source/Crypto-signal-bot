@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Regime-Aware Structure & Breakout Engine
+Crypto Signal Bot V4 — Phase 5: Anti-Chasing Audit + Detailed Rejection Log
 """
 
 import requests
@@ -177,10 +177,6 @@ def global_regime_filter(daily_regime, h4_regime_raw, requested_direction):
     return True, "allowed"
 
 
-# ============================================================
-# PATH A / PATH B ENGINE
-# ============================================================
-
 def compute_avg_body(df, lookback=20):
     return (df["close"] - df["open"]).abs().rolling(lookback).mean()
 
@@ -204,23 +200,28 @@ def detect_compression(df, idx, lookback=20, threshold=0.75):
     return ratio < threshold, ratio
 
 
-def detect_displacement(df, idx, avg_body, avg_volume, direction,
-                          body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
+def detect_displacement_debug(df, idx, avg_body, avg_volume, direction,
+                                body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
     if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
-        return False
+        return False, {}
     row = df.iloc[idx]
     body_size = abs(row["close"] - row["open"])
     candle_range = row["high"] - row["low"]
     if candle_range == 0:
-        return False
-    body_ok = body_size >= body_multiplier * avg_body.iloc[idx]
-    volume_ok = row["volume"] >= volume_multiplier * avg_volume.iloc[idx]
+        return False, {}
+    body_ratio = body_size / avg_body.iloc[idx]
+    volume_ratio = row["volume"] / avg_volume.iloc[idx]
+    body_ok = body_ratio >= body_multiplier
+    volume_ok = volume_ratio >= volume_multiplier
     if direction == "bullish":
         close_position = (row["close"] - row["low"]) / candle_range
     else:
         close_position = (row["high"] - row["close"]) / candle_range
     close_ok = close_position >= (1 - close_position_pct)
-    return body_ok and volume_ok and close_ok
+    details = {"body_ratio": round(body_ratio, 2), "body_ok": body_ok,
+               "volume_ratio": round(volume_ratio, 2), "volume_ok": volume_ok,
+               "close_position": round(close_position, 2), "close_ok": close_ok}
+    return (body_ok and volume_ok and close_ok), details
 
 
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
@@ -235,12 +236,6 @@ def detect_follow_through(df, breakout_idx, direction, candles_after=2):
 
 
 def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
-    """
-    extension_atr = فاصله (Current Close - Origin Swing) / میانگین Range.
-    Origin Swing = آخرین Swing مخالف جهت قبل از این کندل (نقطه شروع فرضی حرکت).
-    این Metric فاصله کل حرکت رو از نقطه شروع اندازه می‌گیره، نه فاصله از
-    خود سطح BOS - طبق بند ۷ Spec، مستند شد، Threshold فعلاً ثابت می‌مونه.
-    """
     if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
         return False, None
     current_price = df["close"].iloc[idx]
@@ -260,113 +255,105 @@ def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_a
     return extension_atr <= max_extension_atr, extension_atr
 
 
-def sl_distance_ok(entry, sl):
-    if entry == 0:
-        return False
-    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
-
-
-def scan_symbol_v4(symbol, lookback_recent=15):
-    """
-    اسکن کامل یک نماد طبق معماری Spec:
-    Structure -> 4H+Daily Regime -> Global Filter -> PATH A/B -> Setup
-    """
+def scan_symbol_debug(symbol, lookback_recent=15):
     log = {"symbol": symbol, "setups": [], "rejects": []}
-
     df4h = get_ohlcv_v4(symbol, "4h", total_candles=150)
     if df4h is None or len(df4h) < 60:
         log["error"] = "4h_data_unavailable"
         return log
     df4h = drop_unclosed_candle(df4h, "4h")
-
     structure = classify_market_structure(df4h)
     bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
-
     daily_regime = get_daily_regime(symbol)
     log["daily_regime"] = daily_regime
     log["h4_regime"] = structure["regime"]
-
     avg_body = compute_avg_body(df4h)
     avg_volume = compute_avg_volume(df4h)
     avg_range = compute_avg_range(df4h)
-
     recent_bos = [e for e in bos_events if e["index"] >= len(df4h) - lookback_recent]
 
     for bos in recent_bos:
         idx = bos["index"]
         direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-
         allowed, reason = global_regime_filter(daily_regime, structure["regime"], direction)
         if not allowed:
-            log["rejects"].append({"time": bos["time"], "direction": direction, "stage": "global_regime_filter", "reason": reason})
+            log["rejects"].append({"time": bos["time"], "direction": direction, "stage": "regime", "reason": reason})
             continue
 
         compression_ok, compression_ratio = detect_compression(df4h, idx)
-        displacement_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
+        displacement_ok, disp_details = detect_displacement_debug(df4h, idx, avg_body, avg_volume, direction)
         follow_through_ok = detect_follow_through(df4h, idx, direction)
         anti_chasing_ok, extension_atr = check_anti_chasing(df4h, idx, direction, avg_range, structure)
 
         path_a_valid = compression_ok and displacement_ok and follow_through_ok
-
         regime_aligned_4h = (structure["regime"] == "up" and direction == "bullish") or \
                              (structure["regime"] == "down" and direction == "bearish")
         path_b_valid = regime_aligned_4h and displacement_ok and follow_through_ok and anti_chasing_ok
 
         if path_a_valid or path_b_valid:
-            setup_path = "A" if path_a_valid else "B"
-            log["setups"].append({
-                "time": bos["time"], "direction": direction, "close": bos["close"],
-                "path": setup_path, "compression_ratio": compression_ratio,
-                "extension_atr": extension_atr,
-            })
+            log["setups"].append({"time": bos["time"], "direction": direction,
+                                   "path": "A" if path_a_valid else "B", "extension_atr": extension_atr})
         else:
-            reasons = []
-            if not compression_ok:
-                reasons.append("no_compression")
-            if not displacement_ok:
-                reasons.append("weak_displacement")
-            if not follow_through_ok:
-                reasons.append("no_follow_through")
-            if not regime_aligned_4h:
-                reasons.append("4h_regime_not_aligned")
-            if not anti_chasing_ok:
-                reasons.append("excessive_extension")
-            log["rejects"].append({"time": bos["time"], "direction": direction, "stage": "path_validation", "reason": reasons})
-
+            log["rejects"].append({
+                "time": bos["time"], "direction": direction, "stage": "path",
+                "compression_ok": compression_ok, "compression_ratio": compression_ratio,
+                "disp_details": disp_details, "follow_through_ok": follow_through_ok,
+                "regime_aligned_4h": regime_aligned_4h,
+                "anti_chasing_ok": anti_chasing_ok, "extension_atr": extension_atr,
+            })
     return log
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 4: PATH A/B + Global Regime Filter — Multi-Symbol Scan")
+    print("PHASE 5: Detailed Rejection Audit")
     print("=" * 70)
 
+    fail_counts = {"no_compression": 0, "weak_body": 0, "weak_volume": 0, "weak_close_pos": 0,
+                   "no_follow_through": 0, "4h_regime_not_aligned": 0, "excessive_extension": 0}
     total_setups = 0
-    total_regime_rejects = 0
-    total_path_rejects = 0
+    total_path_checked = 0
 
     for symbol in TEST_SYMBOLS:
-        result = scan_symbol_v4(symbol)
+        result = scan_symbol_debug(symbol)
         if "error" in result:
-            print(f"\n{symbol} | ERROR | {result['error']}")
             continue
-
         print(f"\n{symbol} | Daily={result['daily_regime']} | 4H={result['h4_regime']}")
 
         for s in result["setups"]:
             total_setups += 1
-            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext_atr={s['extension_atr']}")
+            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | ext_atr={s['extension_atr']}")
 
-        regime_rejects = [r for r in result["rejects"] if r["stage"] == "global_regime_filter"]
-        path_rejects = [r for r in result["rejects"] if r["stage"] == "path_validation"]
-        total_regime_rejects += len(regime_rejects)
-        total_path_rejects += len(path_rejects)
+        for r in result["rejects"]:
+            if r["stage"] != "path":
+                continue
+            total_path_checked += 1
+            dd = r["disp_details"]
+            print(f"  ❌ {r['direction']} | Compression={r['compression_ok']}({r['compression_ratio']}) | "
+                  f"Body={dd.get('body_ok')}({dd.get('body_ratio')}) | Vol={dd.get('volume_ok')}({dd.get('volume_ratio')}) | "
+                  f"ClosePos={dd.get('close_ok')}({dd.get('close_position')}) | FollowThru={r['follow_through_ok']} | "
+                  f"4hAligned={r['regime_aligned_4h']} | AntiChase={r['anti_chasing_ok']}({r['extension_atr']})")
 
-        print(f"  رد شده در Global Regime Filter: {len(regime_rejects)}")
-        print(f"  رد شده در Path Validation: {len(path_rejects)}")
+            if not r["compression_ok"]:
+                fail_counts["no_compression"] += 1
+            if dd.get("body_ok") is False:
+                fail_counts["weak_body"] += 1
+            if dd.get("volume_ok") is False:
+                fail_counts["weak_volume"] += 1
+            if dd.get("close_ok") is False:
+                fail_counts["weak_close_pos"] += 1
+            if not r["follow_through_ok"]:
+                fail_counts["no_follow_through"] += 1
+            if not r["regime_aligned_4h"]:
+                fail_counts["4h_regime_not_aligned"] += 1
+            if not r["anti_chasing_ok"]:
+                fail_counts["excessive_extension"] += 1
 
         time.sleep(1)
 
     print("\n" + "=" * 70)
-    print(f"خلاصه: {total_setups} Setup معتبر | {total_regime_rejects} رد در Regime Filter | {total_path_rejects} رد در Path Validation")
+    print(f"Setup معتبر: {total_setups} | بررسی‌شده در Path: {total_path_checked}")
+    print("تفکیک دلایل رد شدن:")
+    for k, v in sorted(fail_counts.items(), key=lambda x: -x[1]):
+        print(f"  {k}: {v}")
     print("=" * 70)
