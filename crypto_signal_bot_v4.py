@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5b: Extended Lookback Audit
+Crypto Signal Bot V4 — Phase 4-5c: PATH B Direction from BOS (not h4_regime)
 """
 
 import requests
@@ -12,7 +12,7 @@ KUCOIN_INTERVALS = {"4h": "4hour", "15m": "15min", "1h": "1hour", "1d": "1day"}
 TEST_SYMBOLS = [
     "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
     "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT",
-    "MATIC-USDT", "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT"
+    "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT"
 ]
 
 MIN_SL_DISTANCE_PCT = 0.005
@@ -162,16 +162,14 @@ def get_daily_regime(symbol):
     return mapping[structure["regime"]]
 
 
-def global_regime_filter(daily_regime, h4_regime_raw, requested_direction):
-    h4_map = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
-    h4_regime = h4_map.get(h4_regime_raw, "CHOPPY")
+def global_regime_filter(daily_regime, requested_direction):
+    """
+    فقط بر اساس Daily. مطابق تصمیم طراح: 4H دیگر در این فیلتر دخیل نیست،
+    4H فقط برای پیدا کردن خود BOS/Setup استفاده می‌شود.
+    """
     if daily_regime is None:
         return False, "daily_regime_unavailable"
     direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-    if daily_regime == "BULLISH" and h4_regime == "BEARISH" and direction_regime == "BEARISH":
-        return False, "conflict_daily_bullish_4h_bearish_short_setup"
-    if daily_regime == "BEARISH" and h4_regime == "BULLISH" and direction_regime == "BULLISH":
-        return False, "conflict_daily_bearish_4h_bullish_long_setup"
     if daily_regime == "BULLISH" and direction_regime == "BEARISH":
         return False, "daily_bullish_short_forbidden"
     if daily_regime == "BEARISH" and direction_regime == "BULLISH":
@@ -224,7 +222,7 @@ def detect_displacement(df, idx, avg_body, avg_volume, direction,
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
     end_idx = min(breakout_idx + candles_after + 1, len(df))
     if end_idx <= breakout_idx + 1:
-        return None  # داده کافی بعد از این کندل نیست - نه رد قطعی
+        return None
     breakout_close = df["close"].iloc[breakout_idx]
     after = df.iloc[breakout_idx+1:end_idx]
     if direction == "bullish":
@@ -253,7 +251,9 @@ def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_a
 
 
 def scan_symbol(symbol):
-    log = {"symbol": symbol, "setups": [], "reject_count": 0}
+    log = {"symbol": symbol, "setups": [], "path_a": 0, "path_b": 0,
+           "reject_daily": 0, "reject_compression": 0, "reject_followthru": 0,
+           "reject_antichase": 0, "reject_displacement": 0, "bullish_bos": 0, "bearish_bos": 0}
     df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
     if df4h is None or len(df4h) < 60:
         log["error"] = "4h_data_unavailable"
@@ -272,42 +272,91 @@ def scan_symbol(symbol):
     for bos in bos_events:
         idx = bos["index"]
         direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-        allowed, reason = global_regime_filter(daily_regime, structure["regime"], direction)
+        if direction == "bullish":
+            log["bullish_bos"] += 1
+        else:
+            log["bearish_bos"] += 1
+
+        allowed, reason = global_regime_filter(daily_regime, direction)
         if not allowed:
-            log["reject_count"] += 1
+            log["reject_daily"] += 1
             continue
 
         compression_ok, _ = detect_compression(df4h, idx)
         displacement_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
         follow_through_ok = detect_follow_through(df4h, idx, direction)
         if follow_through_ok is None:
-            continue  # داده کافی نبود، این کاندید رو نادیده می‌گیریم نه رد
+            continue
         anti_chasing_ok, extension_atr = check_anti_chasing(df4h, idx, direction, avg_range, structure)
 
         path_a_valid = compression_ok and displacement_ok and follow_through_ok
-        regime_aligned_4h = (structure["regime"] == "up" and direction == "bullish") or \
-                             (structure["regime"] == "down" and direction == "bearish")
-        path_b_valid = regime_aligned_4h and displacement_ok and follow_through_ok and anti_chasing_ok
+        # PATH B: جهت از خود BOS میاد (نه از h4_regime) - طبق تصمیم طراح
+        path_b_valid = displacement_ok and follow_through_ok and anti_chasing_ok
 
-        if path_a_valid or path_b_valid:
-            log["setups"].append({
-                "time": bos["time"], "direction": direction,
-                "path": "A" if path_a_valid else "B",
-                "close": bos["close"], "extension_atr": extension_atr,
-            })
+        if path_a_valid:
+            log["path_a"] += 1
+            log["setups"].append({"time": bos["time"], "direction": direction, "path": "A",
+                                   "close": bos["close"], "extension_atr": extension_atr})
+        elif path_b_valid:
+            log["path_b"] += 1
+            log["setups"].append({"time": bos["time"], "direction": direction, "path": "B",
+                                   "close": bos["close"], "extension_atr": extension_atr})
         else:
-            log["reject_count"] += 1
+            if not displacement_ok:
+                log["reject_displacement"] += 1
+            elif not follow_through_ok:
+                log["reject_followthru"] += 1
+            elif not anti_chasing_ok:
+                log["reject_antichase"] += 1
+            else:
+                log["reject_compression"] += 1
     return log
+
+
+def run_unit_tests():
+    """طبق بند ۱۰ Spec - سناریوهای A تا F"""
+    results = []
+    # A: Daily Bullish + Bullish BOS -> ALLOW
+    allowed, _ = global_regime_filter("BULLISH", "bullish")
+    results.append(("A_DailyBullish_BullishBOS_ALLOW", allowed))
+    # B: Daily Bearish + Bearish BOS -> ALLOW
+    allowed, _ = global_regime_filter("BEARISH", "bearish")
+    results.append(("B_DailyBearish_BearishBOS_ALLOW", allowed))
+    # C: Daily Bearish + Bullish BOS -> REJECT
+    allowed, _ = global_regime_filter("BEARISH", "bullish")
+    results.append(("C_DailyBearish_BullishBOS_MUST_REJECT", not allowed))
+    # D: Daily Bullish + Bearish BOS -> REJECT
+    allowed, _ = global_regime_filter("BULLISH", "bearish")
+    results.append(("D_DailyBullish_BearishBOS_MUST_REJECT", not allowed))
+    # E: Daily Bullish + Bullish BOS -> ALLOW (4H bullish context, همون A)
+    allowed, _ = global_regime_filter("BULLISH", "bullish")
+    results.append(("E_DailyBullish_4hBullish_BullishBOS_ALLOW", allowed))
+    # F: Daily Bearish + Bearish BOS -> ALLOW (همون B)
+    allowed, _ = global_regime_filter("BEARISH", "bearish")
+    results.append(("F_DailyBearish_4hBearish_BearishBOS_ALLOW", allowed))
+    return results
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print(f"PHASE 5b: Extended Lookback ({LOOKBACK_RECENT} candles) — {len(TEST_SYMBOLS)} symbols")
+    print("PHASE 4-5c: PATH B Direction from Fresh BOS (Daily = Safety Filter Only)")
     print("=" * 70)
 
-    total_setups = 0
-    total_bos = 0
-    total_rejects = 0
+    print("\n--- Unit Tests A-F ---")
+    all_passed = True
+    for name, passed in run_unit_tests():
+        status = "✅ PASS" if passed else "❌ FAIL"
+        if not passed:
+            all_passed = False
+        print(f"{status} | {name}")
+    print(f"نتیجه: {'✅ همه موفق' if all_passed else '❌ شکست خورد'}")
+
+    print("\n" + "-" * 70)
+    print("--- اسکن چندنمادی ---")
+
+    agg = {"total_bos": 0, "bullish_bos": 0, "bearish_bos": 0, "path_a": 0, "path_b": 0,
+           "reject_daily": 0, "reject_compression": 0, "reject_followthru": 0,
+           "reject_antichase": 0, "reject_displacement": 0}
 
     for symbol in TEST_SYMBOLS:
         result = scan_symbol(symbol)
@@ -315,16 +364,26 @@ if __name__ == "__main__":
             print(f"\n{symbol} | ERROR | {result['error']}")
             continue
 
-        total_bos += result.get("bos_count", 0)
-        total_rejects += result["reject_count"]
-
-        print(f"\n{symbol} | Daily={result['daily_regime']} | 4H={result['h4_regime']} | BOS={result['bos_count']} | Rejects={result['reject_count']}")
+        print(f"\n{symbol} | Daily={result['daily_regime']} | 4H={result['h4_regime']} | BOS={result['bos_count']}")
         for s in result["setups"]:
-            total_setups += 1
-            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext_atr={s['extension_atr']}")
+            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext={s['extension_atr']}")
+
+        for k in agg:
+            if k == "total_bos":
+                agg[k] += result.get("bos_count", 0)
+            elif k in result:
+                agg[k] += result[k]
 
         time.sleep(1)
 
     print("\n" + "=" * 70)
-    print(f"خلاصه نهایی: {total_setups} Setup معتبر از {total_bos} کل BOS ({total_rejects} رد شده)")
+    print("خلاصه کلی:")
+    print(f"  کل BOS: {agg['total_bos']} (Bullish={agg['bullish_bos']}, Bearish={agg['bearish_bos']})")
+    print(f"  PATH A معتبر: {agg['path_a']}")
+    print(f"  PATH B معتبر: {agg['path_b']}")
+    print(f"  رد به دلیل Daily: {agg['reject_daily']}")
+    print(f"  رد به دلیل Displacement: {agg['reject_displacement']}")
+    print(f"  رد به دلیل Follow-through: {agg['reject_followthru']}")
+    print(f"  رد به دلیل Anti-Chasing: {agg['reject_antichase']}")
+    print(f"  رد به دلیل Compression (فقط برای Path A رد شده‌ها): {agg['reject_compression']}")
     print("=" * 70)
