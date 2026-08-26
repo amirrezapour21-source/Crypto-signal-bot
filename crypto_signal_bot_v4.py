@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5f: Full Chain Test on Displacement-Passed Samples
+Crypto Signal Bot V4 — Phase 5g: extension_atr Deep Audit (no threshold change)
 """
 
 import requests
@@ -133,31 +133,12 @@ def detect_bos(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
         relevant_highs = [s for s in swing_highs if s["index"] < i]
         relevant_lows = [s for s in swing_lows if s["index"] < i]
         if relevant_highs and close_price > relevant_highs[-1]["price"]:
-            events.append({"type": "bullish_bos", "index": i, "time": df["dt"].iloc[i], "close": close_price})
+            events.append({"type": "bullish_bos", "index": i, "time": df["dt"].iloc[i],
+                          "close": close_price, "broken_level": relevant_highs[-1]["price"]})
         if relevant_lows and close_price < relevant_lows[-1]["price"]:
-            events.append({"type": "bearish_bos", "index": i, "time": df["dt"].iloc[i], "close": close_price})
+            events.append({"type": "bearish_bos", "index": i, "time": df["dt"].iloc[i],
+                          "close": close_price, "broken_level": relevant_lows[-1]["price"]})
     return events
-
-
-def get_daily_regime(symbol):
-    df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
-    if df_daily is None or len(df_daily) < 30:
-        return None
-    df_daily = drop_unclosed_candle(df_daily, "1d")
-    structure = classify_market_structure(df_daily)
-    mapping = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
-    return mapping[structure["regime"]]
-
-
-def global_regime_filter(daily_regime, requested_direction):
-    if daily_regime is None:
-        return False, "daily_regime_unavailable"
-    direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-    if daily_regime == "BULLISH" and direction_regime == "BEARISH":
-        return False, "daily_bullish_short_forbidden"
-    if daily_regime == "BEARISH" and direction_regime == "BULLISH":
-        return False, "daily_bearish_long_forbidden"
-    return True, "allowed"
 
 
 def compute_avg_body(df, lookback=20):
@@ -170,17 +151,6 @@ def compute_avg_volume(df, lookback=20):
 
 def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
-
-
-def detect_compression(df, idx, lookback=20, threshold=0.75):
-    if idx < lookback * 2:
-        return False, None
-    recent_range = (df["high"] - df["low"]).iloc[idx-lookback:idx].mean()
-    longer_range = (df["high"] - df["low"]).iloc[idx-lookback*2:idx].mean()
-    if longer_range == 0:
-        return False, None
-    ratio = recent_range / longer_range
-    return ratio < threshold, ratio
 
 
 def detect_displacement(df, idx, avg_body, avg_volume, direction,
@@ -202,116 +172,133 @@ def detect_displacement(df, idx, avg_body, avg_volume, direction,
     return body_ok and volume_ok and close_ok
 
 
-def detect_follow_through(df, breakout_idx, direction, candles_after=2):
-    end_idx = min(breakout_idx + candles_after + 1, len(df))
-    if end_idx <= breakout_idx + 1:
+def extension_at_index(df, eval_idx, direction, avg_range, structure):
+    """extension_atr رو در یک نقطه زمانی مشخص (eval_idx) محاسبه می‌کنه"""
+    if pd.isna(avg_range.iloc[eval_idx]) or avg_range.iloc[eval_idx] == 0:
         return None
-    breakout_close = df["close"].iloc[breakout_idx]
-    after = df.iloc[breakout_idx+1:end_idx]
+    current_price = df["close"].iloc[eval_idx]
     if direction == "bullish":
-        return bool((after["close"] > breakout_close).any())
-    return bool((after["close"] < breakout_close).any())
-
-
-def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
-    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
-        return False, None
-    current_price = df["close"].iloc[idx]
-    if direction == "bullish":
-        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
+        relevant = [s for s in structure["swing_lows"] if s["index"] < eval_idx]
         if not relevant:
-            return False, None
+            return None
         origin_price = relevant[-1]["price"]
         extension = current_price - origin_price
     else:
-        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+        relevant = [s for s in structure["swing_highs"] if s["index"] < eval_idx]
         if not relevant:
-            return False, None
+            return None
         origin_price = relevant[-1]["price"]
         extension = origin_price - current_price
-    extension_atr = extension / avg_range.iloc[idx]
-    return extension_atr <= max_extension_atr, extension_atr
+    return extension / avg_range.iloc[eval_idx]
 
 
-def scan_symbol(symbol):
-    log = {"symbol": symbol, "setups": [], "displacement_passed": 0,
-           "reject_daily": 0, "reject_followthru": 0, "reject_antichase": 0, "reject_compression": 0}
-    df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
-    if df4h is None or len(df4h) < 60:
-        log["error"] = "4h_data_unavailable"
-        return log
-    df4h = drop_unclosed_candle(df4h, "4h")
-    structure = classify_market_structure(df4h)
-    bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
-    daily_regime = get_daily_regime(symbol)
-    avg_body = compute_avg_body(df4h)
-    avg_volume = compute_avg_volume(df4h)
-    avg_range = compute_avg_range(df4h)
-
-    for bos in bos_events:
-        idx = bos["index"]
-        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-        displacement_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
-        if not displacement_ok:
-            continue
-        log["displacement_passed"] += 1
-
-        allowed, _ = global_regime_filter(daily_regime, direction)
-        if not allowed:
-            log["reject_daily"] += 1
-            continue
-
-        follow_through_ok = detect_follow_through(df4h, idx, direction)
-        if follow_through_ok is None:
-            continue
-        if not follow_through_ok:
-            log["reject_followthru"] += 1
-            continue
-
-        anti_chasing_ok, extension_atr = check_anti_chasing(df4h, idx, direction, avg_range, structure)
-        if not anti_chasing_ok:
-            log["reject_antichase"] += 1
-            continue
-
-        compression_ok, _ = detect_compression(df4h, idx)
-        path = "A" if compression_ok else "B"
-        log["setups"].append({
-            "time": bos["time"], "direction": direction, "path": path,
-            "close": bos["close"], "extension_atr": extension_atr,
-            "daily_regime": daily_regime, "h4_regime": structure["regime"],
-        })
-    return log
+def bucket_ext(v):
+    if v < 1:
+        return "<1"
+    if v < 2:
+        return "1-2"
+    if v < 2.5:
+        return "2-2.5"
+    if v < 3:
+        return "2.5-3"
+    if v < 4:
+        return "3-4"
+    if v < 5:
+        return "4-5"
+    if v < 6:
+        return "5-6"
+    if v < 8:
+        return "6-8"
+    return ">8"
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 5f: Full Chain Test — Displacement Passed -> Daily -> FollowThru -> AntiChase")
+    print("PHASE 5g: extension_atr Deep Audit")
     print("=" * 70)
 
-    total_setups = 0
-    total_disp_passed = 0
-    total_reject_daily = 0
-    total_reject_ft = 0
-    total_reject_ac = 0
+    records = []
 
     for symbol in TEST_SYMBOLS:
-        result = scan_symbol(symbol)
-        if "error" in result:
-            print(f"\n{symbol} | ERROR")
+        df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
+        if df4h is None or len(df4h) < 60:
             continue
-        total_disp_passed += result["displacement_passed"]
-        total_reject_daily += result["reject_daily"]
-        total_reject_ft += result["reject_followthru"]
-        total_reject_ac += result["reject_antichase"]
+        df4h = drop_unclosed_candle(df4h, "4h")
+        structure = classify_market_structure(df4h)
+        bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
+        avg_body = compute_avg_body(df4h)
+        avg_volume = compute_avg_volume(df4h)
+        avg_range = compute_avg_range(df4h)
 
-        print(f"\n{symbol} | DispPassed={result['displacement_passed']} | RejDaily={result['reject_daily']} | RejFT={result['reject_followthru']} | RejAC={result['reject_antichase']}")
-        for s in result["setups"]:
-            total_setups += 1
-            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext={s['extension_atr']} | Daily={s['daily_regime']} | 4H={s['h4_regime']}")
+        for bos in bos_events:
+            idx = bos["index"]
+            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
+                continue
 
+            # مؤلفه A: فاصله Swing تا سطح BOS (broken_level) بر حسب ATR
+            if direction == "bullish":
+                relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
+            else:
+                relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+            if not relevant or pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+                continue
+            origin_price = relevant[-1]["price"]
+            dist_swing_to_bos = abs(bos["broken_level"] - origin_price) / avg_range.iloc[idx]
+            dist_bos_to_close = abs(bos["close"] - bos["broken_level"]) / avg_range.iloc[idx]
+
+            ext_at_bos = extension_at_index(df4h, idx, direction, avg_range, structure)
+
+            # extension در ۲ کندل بعد (زمان ارزیابی follow-through)
+            eval_idx = min(idx + 2, len(df4h) - 1)
+            ext_at_eval = extension_at_index(df4h, eval_idx, direction, avg_range, structure)
+
+            records.append({
+                "symbol": symbol, "direction": direction,
+                "dist_swing_to_bos": round(dist_swing_to_bos, 2),
+                "dist_bos_to_close": round(dist_bos_to_close, 2),
+                "ext_at_bos": round(ext_at_bos, 2) if ext_at_bos else None,
+                "ext_at_eval_2bars_later": round(ext_at_eval, 2) if ext_at_eval else None,
+                "bars_evaluated_later": eval_idx - idx,
+            })
         time.sleep(1)
 
-    print("\n" + "=" * 70)
-    print(f"جمع کل: Displacement Passed={total_disp_passed} | Reject Daily={total_reject_daily} | Reject FollowThru={total_reject_ft} | Reject AntiChase={total_reject_ac}")
-    print(f"SETUP نهایی معتبر: {total_setups}")
+    print(f"\nکل نمونه بررسی‌شده (Displacement-passed): {len(records)}\n")
+
+    for r in records:
+        print(f"{r['symbol']} | {r['direction']} | SwingToBOS={r['dist_swing_to_bos']} | "
+              f"BOSToClose={r['dist_bos_to_close']} | ExtAtBOS={r['ext_at_bos']} | "
+              f"ExtAt+{r['bars_evaluated_later']}bars={r['ext_at_eval_2bars_later']}")
+
+    ext_bos_values = [r["ext_at_bos"] for r in records if r["ext_at_bos"] is not None]
+    ext_eval_values = [r["ext_at_eval_2bars_later"] for r in records if r["ext_at_eval_2bars_later"] is not None]
+
+    print("\n--- توزیع extension_atr در لحظه BOS ---")
+    dist = {}
+    for v in ext_bos_values:
+        b = bucket_ext(v)
+        dist[b] = dist.get(b, 0) + 1
+    for b in ["<1", "1-2", "2-2.5", "2.5-3", "3-4", "4-5", "5-6", "6-8", ">8"]:
+        print(f"  {b}: {dist.get(b, 0)}")
+    if ext_bos_values:
+        sorted_v = sorted(ext_bos_values)
+        print(f"  Min={min(ext_bos_values):.2f} Median={sorted_v[len(sorted_v)//2]:.2f} Mean={sum(ext_bos_values)/len(ext_bos_values):.2f} Max={max(ext_bos_values):.2f}")
+
+    print("\n--- توزیع extension_atr در زمان ارزیابی (2 کندل بعد از BOS) ---")
+    dist2 = {}
+    for v in ext_eval_values:
+        b = bucket_ext(v)
+        dist2[b] = dist2.get(b, 0) + 1
+    for b in ["<1", "1-2", "2-2.5", "2.5-3", "3-4", "4-5", "5-6", "6-8", ">8"]:
+        print(f"  {b}: {dist2.get(b, 0)}")
+    if ext_eval_values:
+        sorted_v2 = sorted(ext_eval_values)
+        print(f"  Min={min(ext_eval_values):.2f} Median={sorted_v2[len(sorted_v2)//2]:.2f} Mean={sum(ext_eval_values)/len(ext_eval_values):.2f} Max={max(ext_eval_values):.2f}")
+
+    already_extended_at_bos = sum(1 for v in ext_bos_values if v > MAX_EXTENSION_ATR)
+    extended_only_later = sum(1 for r in records if r["ext_at_bos"] and r["ext_at_bos"] <= MAX_EXTENSION_ATR
+                               and r["ext_at_eval_2bars_later"] and r["ext_at_eval_2bars_later"] > MAX_EXTENSION_ATR)
+
+    print(f"\nبیش‌ازحد‌کشیده در لحظه BOS (ext_at_bos > 2.5): {already_extended_at_bos}")
+    print(f"در لحظه BOS نرمال بود ولی 2 کندل بعد بیش‌ازحد شد: {extended_only_later}")
     print("=" * 70)
