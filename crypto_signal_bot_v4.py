@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5e: close_position Distribution + Directional Audit
+Crypto Signal Bot V4 — Phase 5f: Full Chain Test on Displacement-Passed Samples
 """
 
 import requests
@@ -14,6 +14,7 @@ TEST_SYMBOLS = [
     "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT"
 ]
 LOOKBACK_RECENT = 40
+MAX_EXTENSION_ATR = 2.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -138,14 +139,6 @@ def detect_bos(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
     return events
 
 
-def compute_avg_body(df, lookback=20):
-    return (df["close"] - df["open"]).abs().rolling(lookback).mean()
-
-
-def compute_avg_volume(df, lookback=20):
-    return df["volume"].rolling(lookback).mean()
-
-
 def get_daily_regime(symbol):
     df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
     if df_daily is None or len(df_daily) < 30:
@@ -156,104 +149,169 @@ def get_daily_regime(symbol):
     return mapping[structure["regime"]]
 
 
-def analyze_displacement(df, idx, avg_body, avg_volume, direction,
-                          body_multiplier=1.2, volume_multiplier=1.3, close_threshold=0.75):
+def global_regime_filter(daily_regime, requested_direction):
+    if daily_regime is None:
+        return False, "daily_regime_unavailable"
+    direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
+    if daily_regime == "BULLISH" and direction_regime == "BEARISH":
+        return False, "daily_bullish_short_forbidden"
+    if daily_regime == "BEARISH" and direction_regime == "BULLISH":
+        return False, "daily_bearish_long_forbidden"
+    return True, "allowed"
+
+
+def compute_avg_body(df, lookback=20):
+    return (df["close"] - df["open"]).abs().rolling(lookback).mean()
+
+
+def compute_avg_volume(df, lookback=20):
+    return df["volume"].rolling(lookback).mean()
+
+
+def compute_avg_range(df, lookback=20):
+    return (df["high"] - df["low"]).rolling(lookback).mean()
+
+
+def detect_compression(df, idx, lookback=20, threshold=0.75):
+    if idx < lookback * 2:
+        return False, None
+    recent_range = (df["high"] - df["low"]).iloc[idx-lookback:idx].mean()
+    longer_range = (df["high"] - df["low"]).iloc[idx-lookback*2:idx].mean()
+    if longer_range == 0:
+        return False, None
+    ratio = recent_range / longer_range
+    return ratio < threshold, ratio
+
+
+def detect_displacement(df, idx, avg_body, avg_volume, direction,
+                          body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
     if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
-        return None
+        return False
     row = df.iloc[idx]
     body_size = abs(row["close"] - row["open"])
     candle_range = row["high"] - row["low"]
     if candle_range == 0:
-        return None
-    body_ratio = body_size / avg_body.iloc[idx]
-    volume_ratio = row["volume"] / avg_volume.iloc[idx]
+        return False
+    body_ok = body_size >= body_multiplier * avg_body.iloc[idx]
+    volume_ok = row["volume"] >= volume_multiplier * avg_volume.iloc[idx]
     if direction == "bullish":
         close_position = (row["close"] - row["low"]) / candle_range
     else:
         close_position = (row["high"] - row["close"]) / candle_range
-    return {
-        "direction": direction, "body_ratio": round(body_ratio, 3),
-        "body_ok": body_ratio >= body_multiplier,
-        "volume_ratio": round(volume_ratio, 3), "volume_ok": volume_ratio >= volume_multiplier,
-        "close_position": round(close_position, 3), "close_ok": close_position >= close_threshold,
-        "all_pass": body_ratio >= body_multiplier and volume_ratio >= volume_multiplier and close_position >= close_threshold,
-    }
+    close_ok = close_position >= (1 - close_position_pct)
+    return body_ok and volume_ok and close_ok
 
 
-def bucket_close_position(cp):
-    buckets = [(0.0, 0.10), (0.10, 0.20), (0.20, 0.30), (0.30, 0.40), (0.40, 0.50),
-               (0.50, 0.60), (0.60, 0.70), (0.70, 0.75), (0.75, 0.80), (0.80, 0.90), (0.90, 1.01)]
-    for lo, hi in buckets:
-        if lo <= cp < hi:
-            return f"{lo:.2f}-{hi:.2f}"
-    return "out_of_range"
+def detect_follow_through(df, breakout_idx, direction, candles_after=2):
+    end_idx = min(breakout_idx + candles_after + 1, len(df))
+    if end_idx <= breakout_idx + 1:
+        return None
+    breakout_close = df["close"].iloc[breakout_idx]
+    after = df.iloc[breakout_idx+1:end_idx]
+    if direction == "bullish":
+        return bool((after["close"] > breakout_close).any())
+    return bool((after["close"] < breakout_close).any())
+
+
+def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
+    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+        return False, None
+    current_price = df["close"].iloc[idx]
+    if direction == "bullish":
+        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
+        if not relevant:
+            return False, None
+        origin_price = relevant[-1]["price"]
+        extension = current_price - origin_price
+    else:
+        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+        if not relevant:
+            return False, None
+        origin_price = relevant[-1]["price"]
+        extension = origin_price - current_price
+    extension_atr = extension / avg_range.iloc[idx]
+    return extension_atr <= max_extension_atr, extension_atr
+
+
+def scan_symbol(symbol):
+    log = {"symbol": symbol, "setups": [], "displacement_passed": 0,
+           "reject_daily": 0, "reject_followthru": 0, "reject_antichase": 0, "reject_compression": 0}
+    df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
+    if df4h is None or len(df4h) < 60:
+        log["error"] = "4h_data_unavailable"
+        return log
+    df4h = drop_unclosed_candle(df4h, "4h")
+    structure = classify_market_structure(df4h)
+    bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
+    daily_regime = get_daily_regime(symbol)
+    avg_body = compute_avg_body(df4h)
+    avg_volume = compute_avg_volume(df4h)
+    avg_range = compute_avg_range(df4h)
+
+    for bos in bos_events:
+        idx = bos["index"]
+        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+        displacement_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
+        if not displacement_ok:
+            continue
+        log["displacement_passed"] += 1
+
+        allowed, _ = global_regime_filter(daily_regime, direction)
+        if not allowed:
+            log["reject_daily"] += 1
+            continue
+
+        follow_through_ok = detect_follow_through(df4h, idx, direction)
+        if follow_through_ok is None:
+            continue
+        if not follow_through_ok:
+            log["reject_followthru"] += 1
+            continue
+
+        anti_chasing_ok, extension_atr = check_anti_chasing(df4h, idx, direction, avg_range, structure)
+        if not anti_chasing_ok:
+            log["reject_antichase"] += 1
+            continue
+
+        compression_ok, _ = detect_compression(df4h, idx)
+        path = "A" if compression_ok else "B"
+        log["setups"].append({
+            "time": bos["time"], "direction": direction, "path": path,
+            "close": bos["close"], "extension_atr": extension_atr,
+            "daily_regime": daily_regime, "h4_regime": structure["regime"],
+        })
+    return log
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 5e: close_position Distribution + Directional Audit")
+    print("PHASE 5f: Full Chain Test — Displacement Passed -> Daily -> FollowThru -> AntiChase")
     print("=" * 70)
 
-    all_records = []
+    total_setups = 0
+    total_disp_passed = 0
+    total_reject_daily = 0
+    total_reject_ft = 0
+    total_reject_ac = 0
 
     for symbol in TEST_SYMBOLS:
-        df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
-        if df4h is None or len(df4h) < 60:
+        result = scan_symbol(symbol)
+        if "error" in result:
+            print(f"\n{symbol} | ERROR")
             continue
-        df4h = drop_unclosed_candle(df4h, "4h")
-        structure = classify_market_structure(df4h)
-        bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
-        daily_regime = get_daily_regime(symbol)
-        avg_body = compute_avg_body(df4h)
-        avg_volume = compute_avg_volume(df4h)
+        total_disp_passed += result["displacement_passed"]
+        total_reject_daily += result["reject_daily"]
+        total_reject_ft += result["reject_followthru"]
+        total_reject_ac += result["reject_antichase"]
 
-        for bos in bos_events:
-            idx = bos["index"]
-            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-            d = analyze_displacement(df4h, idx, avg_body, avg_volume, direction)
-            if d is None:
-                continue
-            d["symbol"] = symbol
-            d["daily_regime"] = daily_regime
-            d["h4_regime"] = structure["regime"]
-            all_records.append(d)
+        print(f"\n{symbol} | DispPassed={result['displacement_passed']} | RejDaily={result['reject_daily']} | RejFT={result['reject_followthru']} | RejAC={result['reject_antichase']}")
+        for s in result["setups"]:
+            total_setups += 1
+            print(f"  ✅ SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext={s['extension_atr']} | Daily={s['daily_regime']} | 4H={s['h4_regime']}")
+
         time.sleep(1)
 
-    total = len(all_records)
-    bullish = [r for r in all_records if r["direction"] == "bullish"]
-    bearish = [r for r in all_records if r["direction"] == "bearish"]
-
-    print(f"\nکل نمونه: {total} (Bullish={len(bullish)}, Bearish={len(bearish)})")
-
-    print("\n--- توزیع close_position (کل) ---")
-    dist = {}
-    for r in all_records:
-        b = bucket_close_position(r["close_position"])
-        dist[b] = dist.get(b, 0) + 1
-    for b in sorted(dist.keys()):
-        print(f"  {b}: {dist[b]}")
-
-    print("\n--- توزیع close_position (فقط Bullish) ---")
-    dist_b = {}
-    for r in bullish:
-        b = bucket_close_position(r["close_position"])
-        dist_b[b] = dist_b.get(b, 0) + 1
-    for b in sorted(dist_b.keys()):
-        print(f"  {b}: {dist_b[b]}")
-
-    print("\n--- توزیع close_position (فقط Bearish) ---")
-    dist_s = {}
-    for r in bearish:
-        b = bucket_close_position(r["close_position"])
-        dist_s[b] = dist_s.get(b, 0) + 1
-    for b in sorted(dist_s.keys()):
-        print(f"  {b}: {dist_s[b]}")
-
-    candidates_60_75 = [r for r in all_records if 0.60 <= r["close_position"] < 0.75]
-    print(f"\nتعداد نمونه در بازه Candidate (0.60-0.75): {len(candidates_60_75)}")
-    for r in candidates_60_75:
-        print(f"  {r['symbol']} | {r['direction']} | close_pos={r['close_position']} | body_ok={r['body_ok']} | vol_ok={r['volume_ok']} | daily={r['daily_regime']} | 4h={r['h4_regime']}")
-
-    all_pass_count = sum(1 for r in all_records if r["all_pass"])
-    print(f"\nکل نمونه‌هایی که همه ۳ شرط Displacement را پاس کردند: {all_pass_count}")
+    print("\n" + "=" * 70)
+    print(f"جمع کل: Displacement Passed={total_disp_passed} | Reject Daily={total_reject_daily} | Reject FollowThru={total_reject_ft} | Reject AntiChase={total_reject_ac}")
+    print(f"SETUP نهایی معتبر: {total_setups}")
     print("=" * 70)
