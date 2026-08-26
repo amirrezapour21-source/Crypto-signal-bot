@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5d: Displacement Debug (why 143/229 fail)
+Crypto Signal Bot V4 — Phase 5e: close_position Distribution + Directional Audit
 """
 
 import requests
@@ -8,7 +8,11 @@ import time
 
 KUCOIN_BASE = "https://api.kucoin.com/api/v1/market/candles"
 KUCOIN_INTERVALS = {"4h": "4hour", "1d": "1day"}
-TEST_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "DOGE-USDT"]
+TEST_SYMBOLS = [
+    "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
+    "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT",
+    "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT"
+]
 LOOKBACK_RECENT = 40
 
 
@@ -142,8 +146,18 @@ def compute_avg_volume(df, lookback=20):
     return df["volume"].rolling(lookback).mean()
 
 
-def detect_displacement_debug(df, idx, avg_body, avg_volume, direction,
-                                body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
+def get_daily_regime(symbol):
+    df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
+    if df_daily is None or len(df_daily) < 30:
+        return None
+    df_daily = drop_unclosed_candle(df_daily, "1d")
+    structure = classify_market_structure(df_daily)
+    mapping = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
+    return mapping[structure["regime"]]
+
+
+def analyze_displacement(df, idx, avg_body, avg_volume, direction,
+                          body_multiplier=1.2, volume_multiplier=1.3, close_threshold=0.75):
     if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
         return None
     row = df.iloc[idx]
@@ -158,20 +172,29 @@ def detect_displacement_debug(df, idx, avg_body, avg_volume, direction,
     else:
         close_position = (row["high"] - row["close"]) / candle_range
     return {
-        "body_ratio": round(body_ratio, 2), "body_ok": body_ratio >= body_multiplier,
-        "volume_ratio": round(volume_ratio, 2), "volume_ok": volume_ratio >= volume_multiplier,
-        "close_position": round(close_position, 2), "close_ok": close_position >= (1 - close_position_pct),
+        "direction": direction, "body_ratio": round(body_ratio, 3),
+        "body_ok": body_ratio >= body_multiplier,
+        "volume_ratio": round(volume_ratio, 3), "volume_ok": volume_ratio >= volume_multiplier,
+        "close_position": round(close_position, 3), "close_ok": close_position >= close_threshold,
+        "all_pass": body_ratio >= body_multiplier and volume_ratio >= volume_multiplier and close_position >= close_threshold,
     }
+
+
+def bucket_close_position(cp):
+    buckets = [(0.0, 0.10), (0.10, 0.20), (0.20, 0.30), (0.30, 0.40), (0.40, 0.50),
+               (0.50, 0.60), (0.60, 0.70), (0.70, 0.75), (0.75, 0.80), (0.80, 0.90), (0.90, 1.01)]
+    for lo, hi in buckets:
+        if lo <= cp < hi:
+            return f"{lo:.2f}-{hi:.2f}"
+    return "out_of_range"
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 5d: Displacement Failure Breakdown")
+    print("PHASE 5e: close_position Distribution + Directional Audit")
     print("=" * 70)
 
-    fail_body, fail_volume, fail_closepos = 0, 0, 0
-    total = 0
-    body_ratios, volume_ratios, close_positions = [], [], []
+    all_records = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
@@ -180,29 +203,57 @@ if __name__ == "__main__":
         df4h = drop_unclosed_candle(df4h, "4h")
         structure = classify_market_structure(df4h)
         bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
+        daily_regime = get_daily_regime(symbol)
         avg_body = compute_avg_body(df4h)
         avg_volume = compute_avg_volume(df4h)
 
         for bos in bos_events:
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-            d = detect_displacement_debug(df4h, idx, avg_body, avg_volume, direction)
+            d = analyze_displacement(df4h, idx, avg_body, avg_volume, direction)
             if d is None:
                 continue
-            total += 1
-            body_ratios.append(d["body_ratio"])
-            volume_ratios.append(d["volume_ratio"])
-            close_positions.append(d["close_position"])
-            if not d["body_ok"]:
-                fail_body += 1
-            if not d["volume_ok"]:
-                fail_volume += 1
-            if not d["close_ok"]:
-                fail_closepos += 1
+            d["symbol"] = symbol
+            d["daily_regime"] = daily_regime
+            d["h4_regime"] = structure["regime"]
+            all_records.append(d)
         time.sleep(1)
 
-    print(f"\nکل بررسی‌شده: {total}")
-    print(f"رد به دلیل body_ratio < 1.2: {fail_body} | میانگین body_ratio={sum(body_ratios)/len(body_ratios):.2f} | min={min(body_ratios):.2f} max={max(body_ratios):.2f}")
-    print(f"رد به دلیل volume_ratio < 1.3: {fail_volume} | میانگین volume_ratio={sum(volume_ratios)/len(volume_ratios):.2f} | min={min(volume_ratios):.2f} max={max(volume_ratios):.2f}")
-    print(f"رد به دلیل close_position < 0.75: {fail_closepos} | میانگین close_position={sum(close_positions)/len(close_positions):.2f} | min={min(close_positions):.2f} max={max(close_positions):.2f}")
+    total = len(all_records)
+    bullish = [r for r in all_records if r["direction"] == "bullish"]
+    bearish = [r for r in all_records if r["direction"] == "bearish"]
+
+    print(f"\nکل نمونه: {total} (Bullish={len(bullish)}, Bearish={len(bearish)})")
+
+    print("\n--- توزیع close_position (کل) ---")
+    dist = {}
+    for r in all_records:
+        b = bucket_close_position(r["close_position"])
+        dist[b] = dist.get(b, 0) + 1
+    for b in sorted(dist.keys()):
+        print(f"  {b}: {dist[b]}")
+
+    print("\n--- توزیع close_position (فقط Bullish) ---")
+    dist_b = {}
+    for r in bullish:
+        b = bucket_close_position(r["close_position"])
+        dist_b[b] = dist_b.get(b, 0) + 1
+    for b in sorted(dist_b.keys()):
+        print(f"  {b}: {dist_b[b]}")
+
+    print("\n--- توزیع close_position (فقط Bearish) ---")
+    dist_s = {}
+    for r in bearish:
+        b = bucket_close_position(r["close_position"])
+        dist_s[b] = dist_s.get(b, 0) + 1
+    for b in sorted(dist_s.keys()):
+        print(f"  {b}: {dist_s[b]}")
+
+    candidates_60_75 = [r for r in all_records if 0.60 <= r["close_position"] < 0.75]
+    print(f"\nتعداد نمونه در بازه Candidate (0.60-0.75): {len(candidates_60_75)}")
+    for r in candidates_60_75:
+        print(f"  {r['symbol']} | {r['direction']} | close_pos={r['close_position']} | body_ok={r['body_ok']} | vol_ok={r['volume_ok']} | daily={r['daily_regime']} | 4h={r['h4_regime']}")
+
+    all_pass_count = sum(1 for r in all_records if r["all_pass"])
+    print(f"\nکل نمونه‌هایی که همه ۳ شرط Displacement را پاس کردند: {all_pass_count}")
     print("=" * 70)
