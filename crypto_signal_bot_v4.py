@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5h: New Extension Metric (pre-BOS + entry chasing)
+Crypto Signal Bot V4 — Phase 5i: Swing Detection Audit (2/2, 3/3, 4/4 sensitivity)
 """
 
 import requests
@@ -7,16 +7,13 @@ import pandas as pd
 import time
 
 KUCOIN_BASE = "https://api.kucoin.com/api/v1/market/candles"
-KUCOIN_INTERVALS = {"4h": "4hour", "1d": "1day"}
+KUCOIN_INTERVALS = {"4h": "4hour"}
 TEST_SYMBOLS = [
     "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
     "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT",
     "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT"
 ]
 LOOKBACK_RECENT = 40
-LEGACY_MAX_EXTENSION_ATR = 2.5
-NEW_MAX_PRE_BOS_EXTENSION_ATR = 2.5
-NEW_MAX_ENTRY_EXTENSION_ATR = 1.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -89,7 +86,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=200):
 def drop_unclosed_candle(df, interval_key):
     if df is None or df.empty:
         return df
-    interval_seconds = {"4h": 4 * 3600, "1d": 86400}
+    interval_seconds = {"4h": 4 * 3600}
     now_ts = int(time.time())
     last_candle_time = int(df["time"].iloc[-1])
     duration = interval_seconds.get(interval_key, 0)
@@ -98,7 +95,7 @@ def drop_unclosed_candle(df, interval_key):
     return df
 
 
-def find_swings(df, left=3, right=3):
+def find_swings(df, left, right):
     highs = df["high"].values
     lows = df["low"].values
     swing_highs, swing_lows = [], []
@@ -106,25 +103,22 @@ def find_swings(df, left=3, right=3):
         window_h = highs[i-left:i+right+1]
         window_l = lows[i-left:i+right+1]
         if highs[i] == window_h.max() and (window_h == highs[i]).sum() == 1:
-            swing_highs.append({"index": i, "price": highs[i], "time": df["dt"].iloc[i]})
+            swing_highs.append({"index": i, "price": highs[i]})
         if lows[i] == window_l.min() and (window_l == lows[i]).sum() == 1:
-            swing_lows.append({"index": i, "price": lows[i], "time": df["dt"].iloc[i]})
+            swing_lows.append({"index": i, "price": lows[i]})
     return swing_highs, swing_lows
 
 
-def classify_market_structure(df, left=3, right=3):
-    swing_highs, swing_lows = find_swings(df, left, right)
+def classify_market_structure(swing_highs, swing_lows):
     if len(swing_highs) < 2 or len(swing_lows) < 2:
-        return {"regime": "range", "swing_highs": swing_highs, "swing_lows": swing_lows}
+        return "range"
     h1, h2 = swing_highs[-2:]
     l1, l2 = swing_lows[-2:]
     if h2["price"] > h1["price"] and l2["price"] > l1["price"]:
-        regime = "up"
+        return "up"
     elif h2["price"] < h1["price"] and l2["price"] < l1["price"]:
-        regime = "down"
-    else:
-        regime = "range"
-    return {"regime": regime, "swing_highs": swing_highs, "swing_lows": swing_lows}
+        return "down"
+    return "range"
 
 
 def detect_bos(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
@@ -135,33 +129,10 @@ def detect_bos(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
         relevant_highs = [s for s in swing_highs if s["index"] < i]
         relevant_lows = [s for s in swing_lows if s["index"] < i]
         if relevant_highs and close_price > relevant_highs[-1]["price"]:
-            events.append({"type": "bullish_bos", "index": i, "time": df["dt"].iloc[i],
-                          "close": close_price, "broken_level": relevant_highs[-1]["price"]})
+            events.append({"type": "bullish_bos", "index": i})
         if relevant_lows and close_price < relevant_lows[-1]["price"]:
-            events.append({"type": "bearish_bos", "index": i, "time": df["dt"].iloc[i],
-                          "close": close_price, "broken_level": relevant_lows[-1]["price"]})
+            events.append({"type": "bearish_bos", "index": i})
     return events
-
-
-def get_daily_regime(symbol):
-    df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
-    if df_daily is None or len(df_daily) < 30:
-        return None
-    df_daily = drop_unclosed_candle(df_daily, "1d")
-    structure = classify_market_structure(df_daily)
-    mapping = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
-    return mapping[structure["regime"]]
-
-
-def global_regime_filter(daily_regime, requested_direction):
-    if daily_regime is None:
-        return False, "daily_regime_unavailable"
-    direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-    if daily_regime == "BULLISH" and direction_regime == "BEARISH":
-        return False, "daily_bullish_short_forbidden"
-    if daily_regime == "BEARISH" and direction_regime == "BULLISH":
-        return False, "daily_bearish_long_forbidden"
-    return True, "allowed"
 
 
 def compute_avg_body(df, lookback=20):
@@ -195,141 +166,79 @@ def detect_displacement(df, idx, avg_body, avg_volume, direction,
     return body_ok and volume_ok and close_ok
 
 
-def detect_follow_through(df, breakout_idx, direction, candles_after=2):
-    end_idx = min(breakout_idx + candles_after + 1, len(df))
-    if end_idx <= breakout_idx + 1:
-        return None
-    breakout_close = df["close"].iloc[breakout_idx]
-    after = df.iloc[breakout_idx+1:end_idx]
-    if direction == "bullish":
-        return bool((after["close"] > breakout_close).any())
-    return bool((after["close"] < breakout_close).any())
+def audit_config(df, avg_body, avg_volume, avg_range, left, right):
+    swing_highs, swing_lows = find_swings(df, left, right)
+    bos_events = detect_bos(df, swing_highs, swing_lows)
 
+    results = []
+    for bos in bos_events:
+        idx = bos["index"]
+        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+        if not detect_displacement(df, idx, avg_body, avg_volume, direction):
+            continue
+        if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+            continue
 
-def legacy_extension(df, idx, direction, avg_range, structure, max_atr=LEGACY_MAX_EXTENSION_ATR):
-    """Metric قدیمی: از Swing تا Close همون کندل BOS (شامل خود Displacement)"""
-    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
-        return None, None
-    current_price = df["close"].iloc[idx]
-    if direction == "bullish":
-        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
-    else:
-        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
-    if not relevant:
-        return None, None
-    origin_price = relevant[-1]["price"]
-    if direction == "bullish":
-        extension = current_price - origin_price
-    else:
-        extension = origin_price - current_price
-    ext_atr = extension / avg_range.iloc[idx]
-    return ext_atr, (ext_atr <= max_atr)
+        if direction == "bullish":
+            relevant = [s for s in swing_lows if s["index"] < idx]
+        else:
+            relevant = [s for s in swing_highs if s["index"] < idx]
+        if not relevant:
+            continue
 
+        nearest = relevant[-1]
+        bars_since = idx - nearest["index"]
+        current_price = df["close"].iloc[idx]
+        if direction == "bullish":
+            ext = (current_price - nearest["price"]) / avg_range.iloc[idx]
+        else:
+            ext = (nearest["price"] - current_price) / avg_range.iloc[idx]
 
-def new_extension_metrics(df, idx, direction, avg_range, structure,
-                           max_pre_bos=NEW_MAX_PRE_BOS_EXTENSION_ATR,
-                           max_entry_ext=NEW_MAX_ENTRY_EXTENSION_ATR):
-    """
-    Metric جدید طبق تصمیم طراح - دو مؤلفه جدا:
-    1. pre_bos_extension: فاصله از Swing تا Open کندل BOS (قبل از خود
-       Displacement) - اندازه‌گیری اینکه آیا حرکت قبل از این کندل خودش
-       زیادی کشیده بوده یا نه.
-    2. entry_extension: فاصله از سطح BOS (broken_level) تا Close کندل
-       BOS - اندازه‌گیری اینکه Entry (که در Close این کندل قرار می‌گیره)
-       چقدر از سطح شکسته‌شده دور شده.
-    """
-    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
-        return None, None, None, None
-    row = df.iloc[idx]
-    open_price = row["open"]
-    close_price = row["close"]
+        results.append({"ext_atr": ext, "bars_since_swing": bars_since})
 
-    if direction == "bullish":
-        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
-    else:
-        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
-    if not relevant:
-        return None, None, None, None
-    origin_price = relevant[-1]["price"]
-
-    if direction == "bullish":
-        pre_bos_extension = (open_price - origin_price) / avg_range.iloc[idx]
-    else:
-        pre_bos_extension = (origin_price - open_price) / avg_range.iloc[idx]
-
-    pre_bos_ok = pre_bos_extension <= max_pre_bos
-    return pre_bos_extension, pre_bos_ok, open_price, origin_price
-
-
-def entry_extension_from_bos(broken_level, close_price, direction, atr):
-    if direction == "bullish":
-        ext = (close_price - broken_level) / atr
-    else:
-        ext = (broken_level - close_price) / atr
-    return ext, (ext <= NEW_MAX_ENTRY_EXTENSION_ATR)
+    return len(swing_highs) + len(swing_lows), results
 
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 5h: New Extension Metric vs Legacy — 39-sample comparison")
+    print("PHASE 5i: Swing Detection Sensitivity Audit (2/2, 3/3, 4/4)")
     print("=" * 70)
 
-    records = []
+    configs = [(2, 2), (3, 3), (4, 4)]
+    summary = {c: {"swing_count": 0, "exts": [], "bars": []} for c in configs}
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
         if df4h is None or len(df4h) < 60:
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
-        structure = classify_market_structure(df4h)
-        bos_events = detect_bos(df4h, structure["swing_highs"], structure["swing_lows"])
         avg_body = compute_avg_body(df4h)
         avg_volume = compute_avg_volume(df4h)
         avg_range = compute_avg_range(df4h)
 
-        for bos in bos_events:
-            idx = bos["index"]
-            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
-                continue
+        for left, right in configs:
+            swing_count, results = audit_config(df4h, avg_body, avg_volume, avg_range, left, right)
+            summary[(left, right)]["swing_count"] += swing_count
+            for r in results:
+                summary[(left, right)]["exts"].append(r["ext_atr"])
+                summary[(left, right)]["bars"].append(r["bars_since_swing"])
 
-            legacy_ext, legacy_pass = legacy_extension(df4h, idx, direction, avg_range, structure)
-            pre_bos_ext, pre_bos_pass, open_price, origin_price = new_extension_metrics(
-                df4h, idx, direction, avg_range, structure)
-            if pre_bos_ext is None:
-                continue
-
-            atr_val = avg_range.iloc[idx]
-            entry_ext, entry_pass = entry_extension_from_bos(bos["broken_level"], bos["close"], direction, atr_val)
-
-            new_pass = pre_bos_pass and entry_pass
-
-            records.append({
-                "symbol": symbol, "direction": direction,
-                "legacy_ext": round(legacy_ext, 2) if legacy_ext else None,
-                "legacy_pass": legacy_pass,
-                "pre_bos_ext": round(pre_bos_ext, 2),
-                "entry_ext": round(entry_ext, 2),
-                "new_pass": new_pass,
-                "idx": idx,
-            })
         time.sleep(1)
 
-    print(f"\nکل نمونه (Displacement-passed): {len(records)}\n")
+    print()
+    for cfg in configs:
+        exts = summary[cfg]["exts"]
+        bars = summary[cfg]["bars"]
+        n_le_25 = sum(1 for e in exts if e <= 2.5)
+        print(f"\n--- left/right = {cfg[0]}/{cfg[1]} ---")
+        print(f"  کل Swing شناسایی‌شده (همه نمادها): {summary[cfg]['swing_count']}")
+        print(f"  نمونه Displacement-passed بررسی‌شده: {len(exts)}")
+        if exts:
+            sorted_e = sorted(exts)
+            print(f"  Mean Ext={sum(exts)/len(exts):.2f} | Median={sorted_e[len(sorted_e)//2]:.2f} | Min={min(exts):.2f} | Max={max(exts):.2f}")
+        if bars:
+            sorted_b = sorted(bars)
+            print(f"  Mean bars_since_swing={sum(bars)/len(bars):.1f} | Median={sorted_b[len(sorted_b)//2]} | Min={min(bars)} | Max={max(bars)}")
+        print(f"  تعداد نمونه با Extension <= 2.5 ATR: {n_le_25} از {len(exts)}")
 
-    for r in records:
-        legacy_str = "PASS" if r["legacy_pass"] else "REJECT"
-        new_str = "PASS" if r["new_pass"] else "REJECT"
-        print(f"{r['symbol']} | {r['direction']} | LegacyExt={r['legacy_ext']}({legacy_str}) | "
-              f"PreBOS={r['pre_bos_ext']} | EntryExt={r['entry_ext']} | New={new_str}")
-
-    legacy_pass_count = sum(1 for r in records if r["legacy_pass"])
-    new_pass_count = sum(1 for r in records if r["new_pass"])
-    freed = sum(1 for r in records if not r["legacy_pass"] and r["new_pass"])
-    still_rejected = sum(1 for r in records if not r["new_pass"])
-
-    print(f"\nLegacy Metric PASS: {legacy_pass_count} / {len(records)}")
-    print(f"New Metric PASS: {new_pass_count} / {len(records)}")
-    print(f"نمونه‌هایی که با Metric جدید آزاد شدند (قبلاً رد بودند): {freed}")
-    print(f"نمونه‌هایی که همچنان با Metric جدید رد شدند: {still_rejected}")
-    print("=" * 70)
+    print("\n" + "=" * 70)
