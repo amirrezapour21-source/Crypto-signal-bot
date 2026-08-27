@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5i: Swing Detection Audit (2/2, 3/3, 4/4 sensitivity)
+Crypto Signal Bot V4 — Phase 5j: Anti-Chasing Concept / Entry Model Audit
 """
 
 import requests
@@ -95,7 +95,7 @@ def drop_unclosed_candle(df, interval_key):
     return df
 
 
-def find_swings(df, left, right):
+def find_swings(df, left=3, right=3):
     highs = df["high"].values
     lows = df["low"].values
     swing_highs, swing_lows = [], []
@@ -109,18 +109,6 @@ def find_swings(df, left, right):
     return swing_highs, swing_lows
 
 
-def classify_market_structure(swing_highs, swing_lows):
-    if len(swing_highs) < 2 or len(swing_lows) < 2:
-        return "range"
-    h1, h2 = swing_highs[-2:]
-    l1, l2 = swing_lows[-2:]
-    if h2["price"] > h1["price"] and l2["price"] > l1["price"]:
-        return "up"
-    elif h2["price"] < h1["price"] and l2["price"] < l1["price"]:
-        return "down"
-    return "range"
-
-
 def detect_bos(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
     events = []
     recent_start = max(0, len(df) - lookback_candles)
@@ -129,9 +117,9 @@ def detect_bos(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
         relevant_highs = [s for s in swing_highs if s["index"] < i]
         relevant_lows = [s for s in swing_lows if s["index"] < i]
         if relevant_highs and close_price > relevant_highs[-1]["price"]:
-            events.append({"type": "bullish_bos", "index": i})
+            events.append({"type": "bullish_bos", "index": i, "broken_level": relevant_highs[-1]["price"]})
         if relevant_lows and close_price < relevant_lows[-1]["price"]:
-            events.append({"type": "bearish_bos", "index": i})
+            events.append({"type": "bearish_bos", "index": i, "broken_level": relevant_lows[-1]["price"]})
     return events
 
 
@@ -166,79 +154,105 @@ def detect_displacement(df, idx, avg_body, avg_volume, direction,
     return body_ok and volume_ok and close_ok
 
 
-def audit_config(df, avg_body, avg_volume, avg_range, left, right):
-    swing_highs, swing_lows = find_swings(df, left, right)
-    bos_events = detect_bos(df, swing_highs, swing_lows)
-
-    results = []
-    for bos in bos_events:
-        idx = bos["index"]
-        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-        if not detect_displacement(df, idx, avg_body, avg_volume, direction):
-            continue
-        if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
-            continue
-
-        if direction == "bullish":
-            relevant = [s for s in swing_lows if s["index"] < idx]
-        else:
-            relevant = [s for s in swing_highs if s["index"] < idx]
-        if not relevant:
-            continue
-
-        nearest = relevant[-1]
-        bars_since = idx - nearest["index"]
-        current_price = df["close"].iloc[idx]
-        if direction == "bullish":
-            ext = (current_price - nearest["price"]) / avg_range.iloc[idx]
-        else:
-            ext = (nearest["price"] - current_price) / avg_range.iloc[idx]
-
-        results.append({"ext_atr": ext, "bars_since_swing": bars_since})
-
-    return len(swing_highs) + len(swing_lows), results
-
-
 if __name__ == "__main__":
     print("=" * 70)
-    print("PHASE 5i: Swing Detection Sensitivity Audit (2/2, 3/3, 4/4)")
+    print("PHASE 5j: Entry Model / Anti-Chasing Concept Audit")
     print("=" * 70)
 
-    configs = [(2, 2), (3, 3), (4, 4)]
-    summary = {c: {"swing_count": 0, "exts": [], "bars": []} for c in configs}
+    print("""
+--- تعریف فعلی Entry Model در کد V4 (تا این Phase) ---
+PATH B فعلاً "Entry" مستقلی تعریف نکرده - در تمام Phase های قبلی
+(5-5i)، Entry معادل Close همان کندل BOS فرض شده (چون check_anti_chasing
+و entry_extension_from_bos هر دو از df['close'].iloc[idx] یعنی Close
+کندل BOS استفاده می‌کنند - نه یک کندل بعدتر، نه Retest، نه Pullback).
 
+یعنی: BOS_to_Entry_ATR در Phase 5h همان مقدار entry_ext بود که از
+broken_level تا Close کندل BOS اندازه‌گیری شد - این عملاً معادل
+"BOS Displacement" (بند 2-B همین دستور) است، نه یک Entry جدا بعد
+از BOS.
+
+نتیجه مهم: در معماری فعلی V4، سه مفهوم (Pre-BOS Extension /
+BOS Displacement / Post-BOS Entry Extension) در عمل به دو مقدار
+تقلیل یافته‌اند چون Entry = Close BOS candle، یعنی:
+  - BOS Displacement == Post-BOS/Entry Extension (چون Entry همان
+    Close BOS است)
+  - این دقیقاً همان چیزی است که باعث شد "Displacement قوی" خودش
+    به‌طور خودکار به "Chasing بزرگ" تبدیل شود.
+""")
+
+    print("-" * 70)
+    print("--- Audit سه‌مؤلفه‌ای روی نمونه‌های Displacement-passed ---")
+
+    records = []
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
         if df4h is None or len(df4h) < 60:
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
+        swing_highs, swing_lows = find_swings(df4h, 3, 3)
+        bos_events = detect_bos(df4h, swing_highs, swing_lows)
         avg_body = compute_avg_body(df4h)
         avg_volume = compute_avg_volume(df4h)
         avg_range = compute_avg_range(df4h)
 
-        for left, right in configs:
-            swing_count, results = audit_config(df4h, avg_body, avg_volume, avg_range, left, right)
-            summary[(left, right)]["swing_count"] += swing_count
-            for r in results:
-                summary[(left, right)]["exts"].append(r["ext_atr"])
-                summary[(left, right)]["bars"].append(r["bars_since_swing"])
+        for bos in bos_events:
+            idx = bos["index"]
+            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
+                continue
+            if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+                continue
 
+            row = df4h.iloc[idx]
+            atr = avg_range.iloc[idx]
+            broken_level = bos["broken_level"]
+
+            if direction == "bullish":
+                relevant = [s for s in swing_lows if s["index"] < idx]
+            else:
+                relevant = [s for s in swing_highs if s["index"] < idx]
+            if not relevant:
+                continue
+            swing_price = relevant[-1]["price"]
+
+            if direction == "bullish":
+                swing_to_bos_level = (broken_level - swing_price) / atr
+                pre_bos_extension = (row["open"] - swing_price) / atr
+                bos_displacement = (row["close"] - row["open"]) / atr
+                bos_to_close = (row["close"] - broken_level) / atr
+            else:
+                swing_to_bos_level = (swing_price - broken_level) / atr
+                pre_bos_extension = (swing_price - row["open"]) / atr
+                bos_displacement = (row["open"] - row["close"]) / atr
+                bos_to_close = (broken_level - row["close"]) / atr
+
+            records.append({
+                "symbol": symbol, "direction": direction,
+                "swing_to_bos_level": round(swing_to_bos_level, 2),
+                "pre_bos_extension": round(pre_bos_extension, 2),
+                "bos_displacement_atr": round(bos_displacement, 2),
+                "bos_to_close_entry": round(bos_to_close, 2),
+            })
         time.sleep(1)
 
-    print()
-    for cfg in configs:
-        exts = summary[cfg]["exts"]
-        bars = summary[cfg]["bars"]
-        n_le_25 = sum(1 for e in exts if e <= 2.5)
-        print(f"\n--- left/right = {cfg[0]}/{cfg[1]} ---")
-        print(f"  کل Swing شناسایی‌شده (همه نمادها): {summary[cfg]['swing_count']}")
-        print(f"  نمونه Displacement-passed بررسی‌شده: {len(exts)}")
-        if exts:
-            sorted_e = sorted(exts)
-            print(f"  Mean Ext={sum(exts)/len(exts):.2f} | Median={sorted_e[len(sorted_e)//2]:.2f} | Min={min(exts):.2f} | Max={max(exts):.2f}")
-        if bars:
-            sorted_b = sorted(bars)
-            print(f"  Mean bars_since_swing={sum(bars)/len(bars):.1f} | Median={sorted_b[len(sorted_b)//2]} | Min={min(bars)} | Max={max(bars)}")
-        print(f"  تعداد نمونه با Extension <= 2.5 ATR: {n_le_25} از {len(exts)}")
+    print(f"\nکل نمونه: {len(records)}\n")
+    for r in records:
+        print(f"{r['symbol']} | {r['direction']} | Swing->BOSLevel={r['swing_to_bos_level']} | "
+              f"PreBOSExt={r['pre_bos_extension']} | BOSDisplacement={r['bos_displacement_atr']} | "
+              f"BOSToCloseEntry={r['bos_to_close_entry']}")
 
-    print("\n" + "=" * 70)
+    disp_vals = [r["bos_displacement_atr"] for r in records]
+    entry_vals = [r["bos_to_close_entry"] for r in records]
+    pre_vals = [r["pre_bos_extension"] for r in records]
+
+    if disp_vals:
+        print(f"\nBOS Displacement (خود کندل): Mean={sum(disp_vals)/len(disp_vals):.2f} | Max={max(disp_vals):.2f} | Min={min(disp_vals):.2f}")
+    if entry_vals:
+        print(f"BOS-to-Close Entry Extension: Mean={sum(entry_vals)/len(entry_vals):.2f} | Max={max(entry_vals):.2f} | Min={min(entry_vals):.2f}")
+    if pre_vals:
+        print(f"Pre-BOS Extension: Mean={sum(pre_vals)/len(pre_vals):.2f} | Max={max(pre_vals):.2f} | Min={min(pre_vals):.2f}")
+
+    print(f"\nنسبت میانگین BOS_Displacement به BOS_to_Close_Entry: "
+          f"{(sum(disp_vals)/len(disp_vals)) / (sum(entry_vals)/len(entry_vals)) if entry_vals and sum(entry_vals) else 'N/A':.2f}"
+          if disp_vals and entry_vals else "")
+    print("=" * 70)
