@@ -870,5 +870,22 @@
     "entry_time": "2026-08-26T02:00:00+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ZEC_1787847803",
+    "symbol": "ZEC",
+    "coin_id": "zcash",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 810.5,
+    "sl": 805.3359665925365,
+    "tp1": 822.0258737277755,
+    "tp2": 846.0943158932358,
+    "signal_time": "2026-08-27T16:23:23.694664+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
