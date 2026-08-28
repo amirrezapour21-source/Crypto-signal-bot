@@ -882,11 +882,11 @@
     "tp1": 822.0258737277755,
     "tp2": 846.0943158932358,
     "signal_time": "2026-08-27T16:23:23.694664+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-27T22:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-28T02:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "SOL_1787876418",
