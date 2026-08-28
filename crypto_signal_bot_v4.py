@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5s: Target Pool Architecture Audit (shadow only)
+Crypto Signal Bot V4 — Phase 5t: Fix Look-Ahead Bias in Target Pool + Re-audit
 """
 
 import requests
@@ -21,7 +21,8 @@ TEST_SYMBOLS = [
 LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
-CLUSTER_THRESHOLD_ATR = 0.5  # دو Swing نزدیک‌تر از این مقدار (بر حسب ATR) یک Cluster محسوب می‌شن
+MIN_RR = 1.5
+CLUSTER_THRESHOLD_ATR = 0.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -245,52 +246,35 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
-def analyze_target_pool(target_pool, entry_price, sl, direction, idx, atr):
-    """
-    برای هر Swing در pool، اطلاعات کامل Audit رو استخراج می‌کنه:
-    فاصله از Entry/SL بر حسب ATR، سن (bars_since)، آیا قبل یا بعد از
-    BOS تشکیل شده، و آیا با Swing های مجاور Cluster تشکیل می‌ده.
-    هیچ فیلتر جدیدی اعمال نمی‌شه - فقط داده برای تحلیل جمع می‌شه.
-    """
-    sorted_pool = sorted(target_pool, key=lambda s: s["index"])
-    risk = abs(entry_price - sl)
-
-    results = []
-    for i, s in enumerate(sorted_pool):
-        dist_from_entry_atr = abs(s["price"] - entry_price) / atr if atr else None
-        rr = abs(s["price"] - entry_price) / risk if risk else None
-        bars_since_swing = idx - s["index"]
-        formed_before_bos = s["index"] < idx
-
-        # Cluster check: آیا نزدیک‌ترین همسایه (قیمتی) در همون pool، فاصله‌اش کمتر از آستانه است؟
-        neighbor_distances = []
-        for j, other in enumerate(sorted_pool):
-            if i == j:
-                continue
-            d = abs(other["price"] - s["price"]) / atr if atr else None
-            if d is not None:
-                neighbor_distances.append(d)
-        min_neighbor_dist = min(neighbor_distances) if neighbor_distances else None
-        in_cluster = min_neighbor_dist is not None and min_neighbor_dist < CLUSTER_THRESHOLD_ATR
-
-        results.append({
-            "swing_index": s["index"], "price": s["price"],
-            "dist_from_entry_atr": round(dist_from_entry_atr, 2) if dist_from_entry_atr else None,
-            "rr": round(rr, 2) if rr else None,
-            "bars_since_swing": bars_since_swing,
-            "formed_before_bos": formed_before_bos,
-            "in_cluster": in_cluster,
-            "min_neighbor_dist_atr": round(min_neighbor_dist, 2) if min_neighbor_dist else None,
-        })
-    return results
+def median(values):
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 0:
+        return (s[mid - 1] + s[mid]) / 2
+    return s[mid]
 
 
 if __name__ == "__main__":
-    print("PHASE: 5s")
-    print("STATUS: EXECUTING")
+    print("PHASE: 5t")
+    print("STATUS: EXECUTING - Look-Ahead Bias Fix in Target Pool")
     print("=" * 70)
+    print("""
+BUG FOUND (Phase 5s): target_pool در نسخه‌های قبلی فقط با شرط
+"s['price'] > entry_price" (یا < برای bearish) فیلتر می‌شد، بدون
+شرط "s['index'] < idx". این یعنی Swing هایی که بعد از خود BOS
+(در آینده نسبت به لحظه تصمیم‌گیری) تشکیل شدن هم وارد Target Pool
+می‌شدن - این دقیقاً Look-Ahead Bias است که Spec صریحاً منع کرده.
+نمونه TIA-USDT: swing_idx=209 با bars_since=-17 (یعنی 17 کندل
+BAAD از BOS) با RR=11.07 وارد pool شده بود - این عدد غیرواقعی
+دقیقاً به همین دلیل بود.
 
-    all_candidates_pools = []
+FIX: اضافه شدن شرط s['index'] < idx به فیلتر target_pool.
+""")
+
+    all_candidates = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -320,12 +304,14 @@ if __name__ == "__main__":
                 continue
 
             entry_price = bos["close"]
+
+            # FIX: اضافه شدن s["index"] < idx (فقط Swing های قبل از BOS مجازند)
             if direction == "bullish":
                 relevant_sl = [s for s in structure["swing_lows"] if s["index"] < idx]
-                target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price]
+                target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
             else:
                 relevant_sl = [s for s in structure["swing_highs"] if s["index"] < idx]
-                target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price]
+                target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
 
             if not relevant_sl or not target_pool:
                 continue
@@ -333,44 +319,29 @@ if __name__ == "__main__":
             if not sl_distance_ok(entry_price, sl):
                 continue
 
-            atr = avg_range.iloc[idx]
-            if pd.isna(atr) or atr == 0:
-                continue
+            risk = abs(entry_price - sl)
+            sorted_pool = sorted(target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
+            tp_nearest = sorted_pool[0]["price"]
+            tp_farthest = sorted_pool[-1]["price"]
+            rr_nearest = round(abs(tp_nearest - entry_price) / risk, 2) if risk else None
+            rr_farthest = round(abs(tp_farthest - entry_price) / risk, 2) if risk else None
 
-            pool_analysis = analyze_target_pool(target_pool, entry_price, sl, direction, idx, atr)
-            all_candidates_pools.append({
+            all_candidates.append({
                 "symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
-                "pool_analysis": pool_analysis,
+                "pool_size_after_fix": len(target_pool), "rr_nearest": rr_nearest, "rr_farthest": rr_farthest,
             })
         time.sleep(0.6)
 
-    print(f"\nTotal candidates with valid pool: {len(all_candidates_pools)}\n")
+    print(f"\nCandidates reaching Entry+SL (after look-ahead fix): {len(all_candidates)}\n")
+    for c in all_candidates:
+        print(f"{c['symbol']} | {c['direction']} | pool_size={c['pool_size_after_fix']} | "
+              f"RR_nearest={c['rr_nearest']} | RR_farthest={c['rr_farthest']}")
 
-    total_swings = 0
-    total_clustered = 0
-    total_before_bos = 0
-    all_rr = []
+    rr_n = [c["rr_nearest"] for c in all_candidates if c["rr_nearest"] is not None]
+    rr_f = [c["rr_farthest"] for c in all_candidates if c["rr_farthest"] is not None]
+    pass_n = sum(1 for v in rr_n if v >= MIN_RR)
+    pass_f = sum(1 for v in rr_f if v >= MIN_RR)
 
-    for cand in all_candidates_pools:
-        print(f"\n=== {cand['symbol']} | {cand['direction']} | Entry={cand['entry']:.6f} | SL={cand['sl']:.6f} ===")
-        for s in cand["pool_analysis"]:
-            total_swings += 1
-            if s["in_cluster"]:
-                total_clustered += 1
-            if s["formed_before_bos"]:
-                total_before_bos += 1
-            if s["rr"] is not None:
-                all_rr.append(s["rr"])
-            print(f"  swing_idx={s['swing_index']} | price={s['price']:.6f} | "
-                  f"dist_from_entry_atr={s['dist_from_entry_atr']} | RR={s['rr']} | "
-                  f"bars_since={s['bars_since_swing']} | before_bos={s['formed_before_bos']} | "
-                  f"in_cluster={s['in_cluster']} (nearest_neighbor={s['min_neighbor_dist_atr']} ATR)")
-
-    print(f"\n{'=' * 70}")
-    print(f"TOTAL SWINGS IN ALL POOLS: {total_swings}")
-    print(f"SWINGS IN CLUSTER (neighbor < {CLUSTER_THRESHOLD_ATR} ATR): {total_clustered} ({round(total_clustered/total_swings*100,1) if total_swings else 0}%)")
-    print(f"SWINGS FORMED BEFORE BOS: {total_before_bos} ({round(total_before_bos/total_swings*100,1) if total_swings else 0}%)")
-    if all_rr:
-        sorted_rr = sorted(all_rr)
-        print(f"RR distribution across ALL pool swings: Min={min(all_rr):.2f} | Median={sorted_rr[len(sorted_rr)//2]:.2f} | Max={max(all_rr):.2f}")
+    print(f"\nNEAREST: PassRate={pass_n}/{len(rr_n)} | Median RR={median(rr_n)}")
+    print(f"FARTHEST: PassRate={pass_f}/{len(rr_f)} | Median RR={median(rr_f)} | Max={max(rr_f) if rr_f else None}")
     print("=" * 70)
