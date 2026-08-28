@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5q: TP/Liquidity Model Audit (shadow only, no production change)
+Crypto Signal Bot V4 — Phase 5r: TP Model Data Collection + Full Rejection Funnel
 """
 
 import requests
@@ -14,9 +14,11 @@ TEST_SYMBOLS = [
     "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT",
     "SUI-USDT", "INJ-USDT", "TIA-USDT", "SEI-USDT", "FIL-USDT",
     "ATOM-USDT", "LTC-USDT", "ETC-USDT", "TRX-USDT", "ICP-USDT",
-    "AAVE-USDT", "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT", "GRT-USDT"
+    "AAVE-USDT", "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT", "GRT-USDT",
+    "ALGO-USDT", "VET-USDT", "HBAR-USDT", "EGLD-USDT", "XLM-USDT",
+    "THETA-USDT", "SAND-USDT", "MANA-USDT", "AXS-USDT", "CHZ-USDT"
 ]
-LOOKBACK_RECENT = 40
+LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
 MIN_RR = 1.5
@@ -67,7 +69,7 @@ def fetch_kucoin_candles(symbol, interval_key, end_at=None):
     return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
 
-def get_ohlcv_v4(symbol, interval_key, total_candles=200):
+def get_ohlcv_v4(symbol, interval_key, total_candles=250):
     all_dfs = []
     end_at = None
     remaining = total_candles
@@ -78,7 +80,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=200):
         all_dfs.append(df)
         remaining -= len(df)
         end_at = int(df["time"].min()) - 1
-        time.sleep(0.3)
+        time.sleep(0.25)
         if len(df) < 100:
             break
     if not all_dfs:
@@ -243,8 +245,19 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
+def median(values):
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 0:
+        return (s[mid - 1] + s[mid]) / 2
+    return s[mid]
+
+
 if __name__ == "__main__":
-    print("PHASE: 5q")
+    print("PHASE: 5r")
     print("STATUS: EXECUTING")
     print("=" * 70)
 
@@ -252,11 +265,11 @@ if __name__ == "__main__":
               "ft_ok": 0, "reject_ft": 0, "antichase_ok": 0, "reject_antichase": 0,
               "sl_ok": 0, "reject_sl": 0}
 
-    entry_stage_candidates = []
+    candidates = []
 
     for symbol in TEST_SYMBOLS:
-        df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
-        if df4h is None or len(df4h) < 60:
+        df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
+        if df4h is None or len(df4h) < 80:
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
         structure = classify_market_structure(df4h)
@@ -311,42 +324,44 @@ if __name__ == "__main__":
             funnel["sl_ok"] += 1
 
             risk = abs(entry_price - sl)
+            if not target_pool or risk == 0:
+                continue
 
-            # Model A: Nearest structural swing (current production logic)
-            if target_pool:
-                sorted_pool = sorted(target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-                tp_nearest = sorted_pool[0]["price"]
-                tp_farthest = sorted_pool[-1]["price"]
-                tp_next = sorted_pool[1]["price"] if len(sorted_pool) > 1 else tp_farthest
-            else:
-                tp_nearest = tp_next = tp_farthest = None
+            sorted_pool = sorted(target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
+            tp_nearest = sorted_pool[0]["price"]
+            tp_next = sorted_pool[1]["price"] if len(sorted_pool) > 1 else None
+            tp_farthest = sorted_pool[-1]["price"]
 
-            def rr_of(tp):
-                if tp is None or risk == 0:
-                    return None
-                return round(abs(tp - entry_price) / risk, 2)
+            rr_nearest = round(abs(tp_nearest - entry_price) / risk, 2)
+            rr_next = round(abs(tp_next - entry_price) / risk, 2) if tp_next else None
+            rr_farthest = round(abs(tp_farthest - entry_price) / risk, 2)
 
-            entry_stage_candidates.append({
-                "symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl, "risk": risk,
-                "rr_nearest": rr_of(tp_nearest), "rr_next": rr_of(tp_next), "rr_farthest": rr_of(tp_farthest),
-                "pool_size": len(target_pool),
+            candidates.append({
+                "symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
+                "pool_size": len(target_pool), "rr_nearest": rr_nearest, "rr_next": rr_next,
+                "rr_farthest": rr_farthest,
             })
-        time.sleep(1)
+        time.sleep(0.6)
 
     print("\nFUNNEL COUNTS:")
     for k, v in funnel.items():
-        print(f"  {k}: {v}")
+        pct = round(v / funnel["total_bos"] * 100, 1) if funnel["total_bos"] else 0
+        print(f"  {k}: {v} ({pct}%)")
 
-    print(f"\nCANDIDATES REACHING ENTRY+SL STAGE: {len(entry_stage_candidates)}\n")
-    for c in entry_stage_candidates:
-        print(f"{c['symbol']} | {c['direction']} | Entry={c['entry']:.6f} | SL={c['sl']:.6f} | pool={c['pool_size']} | "
-              f"RR(nearest)={c['rr_nearest']} | RR(next)={c['rr_next']} | RR(farthest)={c['rr_farthest']}")
+    print(f"\nCANDIDATES REACHING ENTRY+SL STAGE: {len(candidates)}\n")
+    for c in candidates:
+        print(f"{c['symbol']} | {c['direction']} | pool={c['pool_size']} | "
+              f"RR_nearest={c['rr_nearest']} | RR_next={c['rr_next']} | RR_farthest={c['rr_farthest']}")
 
-    pass_nearest = sum(1 for c in entry_stage_candidates if c["rr_nearest"] and c["rr_nearest"] >= MIN_RR)
-    pass_next = sum(1 for c in entry_stage_candidates if c["rr_next"] and c["rr_next"] >= MIN_RR)
-    pass_farthest = sum(1 for c in entry_stage_candidates if c["rr_farthest"] and c["rr_farthest"] >= MIN_RR)
+    rr_nearest_vals = [c["rr_nearest"] for c in candidates]
+    rr_next_vals = [c["rr_next"] for c in candidates if c["rr_next"] is not None]
+    rr_farthest_vals = [c["rr_farthest"] for c in candidates]
 
-    print(f"\nPASS RR>=1.5 with Nearest Swing TP (current production): {pass_nearest}/{len(entry_stage_candidates)}")
-    print(f"PASS RR>=1.5 with Next Structural Swing TP (shadow): {pass_next}/{len(entry_stage_candidates)}")
-    print(f"PASS RR>=1.5 with Farthest Swing in range TP (shadow): {pass_farthest}/{len(entry_stage_candidates)}")
+    pass_nearest = sum(1 for v in rr_nearest_vals if v >= MIN_RR)
+    pass_next = sum(1 for v in rr_next_vals if v >= MIN_RR)
+    pass_farthest = sum(1 for v in rr_farthest_vals if v >= MIN_RR)
+
+    print(f"\n--- NEAREST --- PassRate={pass_nearest}/{len(rr_nearest_vals)} | Median RR={median(rr_nearest_vals)}")
+    print(f"--- NEXT --- PassRate={pass_next}/{len(rr_next_vals)} | Median RR={median(rr_next_vals)}")
+    print(f"--- FARTHEST --- PassRate={pass_farthest}/{len(rr_farthest_vals)} | Median RR={median(rr_farthest_vals)}")
     print("=" * 70)
