@@ -1,19 +1,20 @@
 """
-Crypto Signal Bot V4 — Phase 5m: Full Pipeline with Fresh-BOS Fix (Production Candidate)
+Crypto Signal Bot V4 — Phase 5n: Debug SL/TP/RR rejection + Expand symbol set
 """
 
 import requests
 import pandas as pd
 import time
-import json
-import os
 
 KUCOIN_BASE = "https://api.kucoin.com/api/v1/market/candles"
 KUCOIN_INTERVALS = {"4h": "4hour", "1d": "1day"}
 TEST_SYMBOLS = [
     "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
     "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT",
-    "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT"
+    "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT",
+    "SUI-USDT", "INJ-USDT", "TIA-USDT", "SEI-USDT", "FIL-USDT",
+    "ATOM-USDT", "LTC-USDT", "ETC-USDT", "TRX-USDT", "ICP-USDT",
+    "AAVE-USDT", "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT", "GRT-USDT"
 ]
 LOOKBACK_RECENT = 40
 MAX_EXTENSION_ATR = 2.5
@@ -76,7 +77,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=200):
         all_dfs.append(df)
         remaining -= len(df)
         end_at = int(df["time"].min()) - 1
-        time.sleep(0.4)
+        time.sleep(0.35)
         if len(df) < 100:
             break
     if not all_dfs:
@@ -246,12 +247,11 @@ def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_a
     return extension_atr <= max_extension_atr, extension_atr
 
 
-def compute_sl_tp(df, idx, direction, structure, entry_price):
-    """SL بر اساس آخرین Swing مخالف جهت + Buffer، TP بر اساس ساختار موجود"""
+def compute_sl_tp_debug(df, idx, direction, structure, entry_price):
     if direction == "bullish":
         relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
         if not relevant:
-            return None, None, None
+            return None, None, None, "no_swing_low_for_sl"
         sl = relevant[-1]["price"] * 0.997
         opp = [s for s in structure["swing_highs"] if s["price"] > entry_price]
         if opp:
@@ -263,7 +263,7 @@ def compute_sl_tp(df, idx, direction, structure, entry_price):
     else:
         relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
         if not relevant:
-            return None, None, None
+            return None, None, None, "no_swing_high_for_sl"
         sl = relevant[-1]["price"] * 1.003
         opp = [s for s in structure["swing_lows"] if s["price"] < entry_price]
         if opp:
@@ -272,7 +272,7 @@ def compute_sl_tp(df, idx, direction, structure, entry_price):
             risk = sl - entry_price
             tp1 = entry_price - risk * 2
         tp2 = entry_price - (entry_price - tp1) * 1.6
-    return sl, tp1, tp2
+    return sl, tp1, tp2, "ok"
 
 
 def sl_distance_ok(entry, sl):
@@ -281,8 +281,8 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
-def scan_symbol_full(symbol):
-    log = {"symbol": symbol, "setups": []}
+def scan_symbol_debug(symbol):
+    log = {"symbol": symbol, "setups": [], "candidates": []}
     df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
     if df4h is None or len(df4h) < 60:
         log["error"] = "4h_data_unavailable"
@@ -291,8 +291,6 @@ def scan_symbol_full(symbol):
     structure = classify_market_structure(df4h)
     bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
     daily_regime = get_daily_regime(symbol)
-    log["daily_regime"] = daily_regime
-    log["h4_regime"] = structure["regime"]
     avg_body = compute_avg_body(df4h)
     avg_volume = compute_avg_volume(df4h)
     avg_range = compute_avg_range(df4h)
@@ -301,7 +299,7 @@ def scan_symbol_full(symbol):
         idx = bos["index"]
         direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
 
-        allowed, _ = global_regime_filter(daily_regime, direction)
+        allowed, reason = global_regime_filter(daily_regime, direction)
         if not allowed:
             continue
         if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
@@ -314,56 +312,64 @@ def scan_symbol_full(symbol):
             continue
 
         entry_price = bos["close"]
-        sl, tp1, tp2 = compute_sl_tp(df4h, idx, direction, structure, entry_price)
-        if sl is None or not sl_distance_ok(entry_price, sl):
+        sl, tp1, tp2, sl_reason = compute_sl_tp_debug(df4h, idx, direction, structure, entry_price)
+
+        cand = {"symbol": symbol, "direction": direction, "entry": entry_price,
+                "sl": sl, "tp1": tp1, "tp2": tp2, "sl_reason": sl_reason, "ext": ext}
+
+        if sl is None:
+            cand["final"] = f"REJECT: {sl_reason}"
+            log["candidates"].append(cand)
+            continue
+        if not sl_distance_ok(entry_price, sl):
+            dist_pct = abs(entry_price - sl) / entry_price * 100
+            cand["final"] = f"REJECT: sl_too_close ({dist_pct:.3f}%)"
+            log["candidates"].append(cand)
             continue
         risk = abs(entry_price - sl)
         reward1 = abs(tp1 - entry_price)
         if risk <= 0 or reward1 <= 0:
+            cand["final"] = "REJECT: invalid_risk_reward_calc"
+            log["candidates"].append(cand)
             continue
         rr = reward1 / risk
+        cand["rr"] = round(rr, 2)
         if rr < 1.5:
+            cand["final"] = f"REJECT: rr_too_low ({rr:.2f})"
+            log["candidates"].append(cand)
             continue
 
         compression_ok, _ = detect_compression(df4h, idx)
         path = "A" if compression_ok else "B"
-
-        log["setups"].append({
-            "time": str(bos["time"]), "direction": "LONG" if direction == "bullish" else "SHORT",
-            "path": path, "entry": round(entry_price, 6), "sl": round(sl, 6),
-            "tp1": round(tp1, 6), "tp2": round(tp2, 6), "rr": round(rr, 2),
-            "extension_atr": round(ext, 2), "daily_regime": daily_regime, "h4_regime": structure["regime"],
-        })
+        cand["final"] = f"SETUP PATH {path}"
+        log["candidates"].append(cand)
+        log["setups"].append(cand)
     return log
 
 
 if __name__ == "__main__":
-    print("PHASE: 5m")
+    print("PHASE: 5n")
     print("STATUS: EXECUTING")
     print("=" * 70)
 
     total_setups = 0
-    all_setups = []
+    total_candidates = 0
 
     for symbol in TEST_SYMBOLS:
-        result = scan_symbol_full(symbol)
+        result = scan_symbol_debug(symbol)
         if "error" in result:
-            print(f"\n{symbol} | ERROR")
             continue
-        print(f"\n{symbol} | Daily={result['daily_regime']} | 4H={result['h4_regime']}")
-        for s in result["setups"]:
-            total_setups += 1
-            s["symbol"] = symbol
-            all_setups.append(s)
-            print(f"  SETUP PATH {s['path']} | {s['direction']} | Entry={s['entry']} | SL={s['sl']} | "
-                  f"TP1={s['tp1']} | TP2={s['tp2']} | R:R={s['rr']} | Ext={s['extension_atr']}")
-        if not result["setups"]:
-            print("  (no valid setup)")
+        if result["candidates"]:
+            print(f"\n{symbol}:")
+            for c in result["candidates"]:
+                total_candidates += 1
+                print(f"  {c['direction']} | Entry={c['entry']:.6f} | SL={c.get('sl')} | "
+                      f"TP1={c.get('tp1')} | RR={c.get('rr')} | Ext={c.get('ext')} | {c['final']}")
+                if "SETUP" in c["final"]:
+                    total_setups += 1
         time.sleep(1)
 
     print("\n" + "=" * 70)
-    print(f"WHAT WAS TESTED: Full Pipeline (BOS-fresh -> Daily -> Displacement -> FollowThru -> AntiChase -> SL/TP/RR)")
-    print(f"FINDINGS: {total_setups} Setup نهایی معتبر از 14 نماد")
-    print(f"DECISION: در صورت وجود Setup، این Pipeline به‌عنوان V4 Production Candidate ثبت می‌شود")
-    print(f"NEXT ACTION: اگر Setup>0، ادامه به Full Backtest (Phase 6). اگر 0، ادامه Audit با نمادهای بیشتر")
+    print(f"WHAT WAS TESTED: Full pipeline debug on {len(TEST_SYMBOLS)} symbols, with SL/TP rejection reasons visible")
+    print(f"FINDINGS: {total_candidates} candidates reached SL/TP stage, {total_setups} final valid setups")
     print("=" * 70)
