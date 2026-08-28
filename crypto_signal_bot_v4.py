@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5o: Full-chain rejection funnel counter
+Crypto Signal Bot V4 — Phase 5p: SL/TP debug for the single surviving candidate
 """
 
 import requests
@@ -8,16 +8,10 @@ import time
 
 KUCOIN_BASE = "https://api.kucoin.com/api/v1/market/candles"
 KUCOIN_INTERVALS = {"4h": "4hour", "1d": "1day"}
-TEST_SYMBOLS = [
-    "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
-    "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT",
-    "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT",
-    "SUI-USDT", "INJ-USDT", "TIA-USDT", "SEI-USDT", "FIL-USDT",
-    "ATOM-USDT", "LTC-USDT", "ETC-USDT", "TRX-USDT", "ICP-USDT",
-    "AAVE-USDT", "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT", "GRT-USDT"
-]
+TEST_SYMBOLS = ["OP-USDT"]
 LOOKBACK_RECENT = 40
 MAX_EXTENSION_ATR = 2.5
+MIN_SL_DISTANCE_PCT = 0.005
 
 
 def safe_get(url, params=None, retries=3):
@@ -76,7 +70,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=200):
         all_dfs.append(df)
         remaining -= len(df)
         end_at = int(df["time"].min()) - 1
-        time.sleep(0.35)
+        time.sleep(0.4)
         if len(df) < 100:
             break
     if not all_dfs:
@@ -152,27 +146,6 @@ def detect_bos_fresh_only(df, swing_highs, swing_lows, lookback_candles=LOOKBACK
     return events
 
 
-def get_daily_regime(symbol):
-    df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
-    if df_daily is None or len(df_daily) < 30:
-        return None
-    df_daily = drop_unclosed_candle(df_daily, "1d")
-    structure = classify_market_structure(df_daily)
-    mapping = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
-    return mapping[structure["regime"]]
-
-
-def global_regime_filter(daily_regime, requested_direction):
-    if daily_regime is None:
-        return False, "daily_unavailable"
-    direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-    if daily_regime == "BULLISH" and direction_regime == "BEARISH":
-        return False, "daily_bullish_short_forbidden"
-    if daily_regime == "BEARISH" and direction_regime == "BULLISH":
-        return False, "daily_bearish_long_forbidden"
-    return True, "allowed"
-
-
 def compute_avg_body(df, lookback=20):
     return (df["close"] - df["open"]).abs().rolling(lookback).mean()
 
@@ -236,68 +209,65 @@ def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_a
 
 
 if __name__ == "__main__":
-    print("PHASE: 5o")
-    print("STATUS: EXECUTING")
+    print("PHASE: 5p")
+    print("STATUS: EXECUTING - OP-USDT deep trace")
     print("=" * 70)
 
-    funnel = {
-        "total_bos": 0, "reject_regime_unavailable": 0, "reject_daily": 0,
-        "displacement_ok": 0, "reject_displacement": 0,
-        "ft_none": 0, "reject_ft": 0, "ft_ok": 0,
-        "reject_antichase": 0, "antichase_ok": 0,
-    }
+    df4h = get_ohlcv_v4("OP-USDT", "4h", total_candles=200)
+    df4h = drop_unclosed_candle(df4h, "4h")
+    structure = classify_market_structure(df4h)
+    bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
+    avg_body = compute_avg_body(df4h)
+    avg_volume = compute_avg_volume(df4h)
+    avg_range = compute_avg_range(df4h)
 
-    for symbol in TEST_SYMBOLS:
-        df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
-        if df4h is None or len(df4h) < 60:
-            continue
-        df4h = drop_unclosed_candle(df4h, "4h")
-        structure = classify_market_structure(df4h)
-        bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
-        daily_regime = get_daily_regime(symbol)
-        avg_body = compute_avg_body(df4h)
-        avg_volume = compute_avg_volume(df4h)
-        avg_range = compute_avg_range(df4h)
+    print(f"Total candles: {len(df4h)}")
+    print(f"4H Regime: {structure['regime']}")
+    print(f"Swing Highs: {len(structure['swing_highs'])} | Swing Lows: {len(structure['swing_lows'])}")
+    print(f"Fresh BOS events: {len(bos_events)}\n")
 
-        for bos in bos_events:
-            funnel["total_bos"] += 1
-            idx = bos["index"]
-            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+    for bos in bos_events:
+        idx = bos["index"]
+        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+        disp = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
+        ft = detect_follow_through(df4h, idx, direction)
+        ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure) if not pd.isna(avg_range.iloc[idx]) else (None, None)
 
-            allowed, reason = global_regime_filter(daily_regime, direction)
-            if not allowed:
-                if reason == "daily_unavailable":
-                    funnel["reject_regime_unavailable"] += 1
+        print(f"BOS idx={idx} | {direction} | time={bos['time']} | close={bos['close']:.6f} | "
+              f"broken_level={bos['broken_level']:.6f} | Disp={disp} | FT={ft} | AC={ac_ok}({ext})")
+
+        if direction == "bearish" and disp and ft and ac_ok:
+            print("\n  --- TRACING SL/TP FOR THIS CANDIDATE ---")
+            entry_price = bos["close"]
+            relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+            print(f"  Relevant swing_highs before idx={idx}: {len(relevant)}")
+            if relevant:
+                sl = relevant[-1]["price"] * 1.003
+                print(f"  Nearest swing_high used for SL: index={relevant[-1]['index']}, price={relevant[-1]['price']:.6f}")
+                print(f"  Computed SL = {sl:.6f}")
+                sl_dist_pct = abs(entry_price - sl) / entry_price * 100
+                print(f"  SL distance from entry: {sl_dist_pct:.4f}%  (min required: {MIN_SL_DISTANCE_PCT*100}%)")
+
+                opp = [s for s in structure["swing_lows"] if s["price"] < entry_price]
+                print(f"  Swing_lows below entry_price ({entry_price:.6f}): {len(opp)}")
+                if opp:
+                    tp1 = sorted(opp, key=lambda s: s["price"], reverse=True)[0]["price"]
+                    print(f"  TP1 (nearest swing_low below entry) = {tp1:.6f}")
                 else:
-                    funnel["reject_daily"] += 1
-                continue
+                    risk = sl - entry_price
+                    tp1 = entry_price - risk * 2
+                    print(f"  No swing_low below entry -> fallback TP1 = {tp1:.6f} (2R fallback)")
 
-            if detect_displacement(df4h, idx, avg_body, avg_volume, direction):
-                funnel["displacement_ok"] += 1
+                risk = abs(entry_price - sl)
+                reward1 = abs(tp1 - entry_price)
+                print(f"  Risk={risk:.6f} | Reward1={reward1:.6f}")
+                if risk > 0:
+                    rr = reward1 / risk
+                    print(f"  R:R = {rr:.2f}  (min required: 1.5)")
+                else:
+                    print("  Risk = 0, invalid")
             else:
-                funnel["reject_displacement"] += 1
-                continue
+                print("  NO relevant swing_high found before this BOS -> SL cannot be computed -> REJECT")
+        print()
 
-            ft = detect_follow_through(df4h, idx, direction)
-            if ft is None:
-                funnel["ft_none"] += 1
-                continue
-            if not ft:
-                funnel["reject_ft"] += 1
-                continue
-            funnel["ft_ok"] += 1
-
-            ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
-            if not ac_ok:
-                funnel["reject_antichase"] += 1
-                continue
-            funnel["antichase_ok"] += 1
-            print(f"REACHED_FINAL_STAGE | {symbol} | {direction} | ext={ext}")
-
-        time.sleep(1)
-
-    print("\n" + "=" * 70)
-    print("FUNNEL COUNTS:")
-    for k, v in funnel.items():
-        print(f"  {k}: {v}")
     print("=" * 70)
