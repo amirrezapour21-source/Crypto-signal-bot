@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5r: TP Model Data Collection + Full Rejection Funnel
+Crypto Signal Bot V4 — Phase 5s: Target Pool Architecture Audit (shadow only)
 """
 
 import requests
@@ -21,7 +21,7 @@ TEST_SYMBOLS = [
 LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
-MIN_RR = 1.5
+CLUSTER_THRESHOLD_ATR = 0.5  # دو Swing نزدیک‌تر از این مقدار (بر حسب ATR) یک Cluster محسوب می‌شن
 
 
 def safe_get(url, params=None, retries=3):
@@ -245,27 +245,52 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
-def median(values):
-    if not values:
-        return None
-    s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    if n % 2 == 0:
-        return (s[mid - 1] + s[mid]) / 2
-    return s[mid]
+def analyze_target_pool(target_pool, entry_price, sl, direction, idx, atr):
+    """
+    برای هر Swing در pool، اطلاعات کامل Audit رو استخراج می‌کنه:
+    فاصله از Entry/SL بر حسب ATR، سن (bars_since)، آیا قبل یا بعد از
+    BOS تشکیل شده، و آیا با Swing های مجاور Cluster تشکیل می‌ده.
+    هیچ فیلتر جدیدی اعمال نمی‌شه - فقط داده برای تحلیل جمع می‌شه.
+    """
+    sorted_pool = sorted(target_pool, key=lambda s: s["index"])
+    risk = abs(entry_price - sl)
+
+    results = []
+    for i, s in enumerate(sorted_pool):
+        dist_from_entry_atr = abs(s["price"] - entry_price) / atr if atr else None
+        rr = abs(s["price"] - entry_price) / risk if risk else None
+        bars_since_swing = idx - s["index"]
+        formed_before_bos = s["index"] < idx
+
+        # Cluster check: آیا نزدیک‌ترین همسایه (قیمتی) در همون pool، فاصله‌اش کمتر از آستانه است؟
+        neighbor_distances = []
+        for j, other in enumerate(sorted_pool):
+            if i == j:
+                continue
+            d = abs(other["price"] - s["price"]) / atr if atr else None
+            if d is not None:
+                neighbor_distances.append(d)
+        min_neighbor_dist = min(neighbor_distances) if neighbor_distances else None
+        in_cluster = min_neighbor_dist is not None and min_neighbor_dist < CLUSTER_THRESHOLD_ATR
+
+        results.append({
+            "swing_index": s["index"], "price": s["price"],
+            "dist_from_entry_atr": round(dist_from_entry_atr, 2) if dist_from_entry_atr else None,
+            "rr": round(rr, 2) if rr else None,
+            "bars_since_swing": bars_since_swing,
+            "formed_before_bos": formed_before_bos,
+            "in_cluster": in_cluster,
+            "min_neighbor_dist_atr": round(min_neighbor_dist, 2) if min_neighbor_dist else None,
+        })
+    return results
 
 
 if __name__ == "__main__":
-    print("PHASE: 5r")
+    print("PHASE: 5s")
     print("STATUS: EXECUTING")
     print("=" * 70)
 
-    funnel = {"total_bos": 0, "reject_daily": 0, "displacement_ok": 0, "reject_displacement": 0,
-              "ft_ok": 0, "reject_ft": 0, "antichase_ok": 0, "reject_antichase": 0,
-              "sl_ok": 0, "reject_sl": 0}
-
-    candidates = []
+    all_candidates_pools = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -280,31 +305,19 @@ if __name__ == "__main__":
         avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
-            funnel["total_bos"] += 1
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
 
             if not global_regime_filter(daily_regime, direction):
-                funnel["reject_daily"] += 1
                 continue
-
-            if detect_displacement(df4h, idx, avg_body, avg_volume, direction):
-                funnel["displacement_ok"] += 1
-            else:
-                funnel["reject_displacement"] += 1
+            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
                 continue
-
             ft = detect_follow_through(df4h, idx, direction)
             if ft is None or not ft:
-                funnel["reject_ft"] += 1
                 continue
-            funnel["ft_ok"] += 1
-
             ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
             if not ac_ok:
-                funnel["reject_antichase"] += 1
                 continue
-            funnel["antichase_ok"] += 1
 
             entry_price = bos["close"]
             if direction == "bullish":
@@ -314,54 +327,50 @@ if __name__ == "__main__":
                 relevant_sl = [s for s in structure["swing_highs"] if s["index"] < idx]
                 target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price]
 
-            if not relevant_sl:
-                funnel["reject_sl"] += 1
+            if not relevant_sl or not target_pool:
                 continue
             sl = relevant_sl[-1]["price"] * (1.003 if direction == "bearish" else 0.997)
             if not sl_distance_ok(entry_price, sl):
-                funnel["reject_sl"] += 1
-                continue
-            funnel["sl_ok"] += 1
-
-            risk = abs(entry_price - sl)
-            if not target_pool or risk == 0:
                 continue
 
-            sorted_pool = sorted(target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-            tp_nearest = sorted_pool[0]["price"]
-            tp_next = sorted_pool[1]["price"] if len(sorted_pool) > 1 else None
-            tp_farthest = sorted_pool[-1]["price"]
+            atr = avg_range.iloc[idx]
+            if pd.isna(atr) or atr == 0:
+                continue
 
-            rr_nearest = round(abs(tp_nearest - entry_price) / risk, 2)
-            rr_next = round(abs(tp_next - entry_price) / risk, 2) if tp_next else None
-            rr_farthest = round(abs(tp_farthest - entry_price) / risk, 2)
-
-            candidates.append({
+            pool_analysis = analyze_target_pool(target_pool, entry_price, sl, direction, idx, atr)
+            all_candidates_pools.append({
                 "symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
-                "pool_size": len(target_pool), "rr_nearest": rr_nearest, "rr_next": rr_next,
-                "rr_farthest": rr_farthest,
+                "pool_analysis": pool_analysis,
             })
         time.sleep(0.6)
 
-    print("\nFUNNEL COUNTS:")
-    for k, v in funnel.items():
-        pct = round(v / funnel["total_bos"] * 100, 1) if funnel["total_bos"] else 0
-        print(f"  {k}: {v} ({pct}%)")
+    print(f"\nTotal candidates with valid pool: {len(all_candidates_pools)}\n")
 
-    print(f"\nCANDIDATES REACHING ENTRY+SL STAGE: {len(candidates)}\n")
-    for c in candidates:
-        print(f"{c['symbol']} | {c['direction']} | pool={c['pool_size']} | "
-              f"RR_nearest={c['rr_nearest']} | RR_next={c['rr_next']} | RR_farthest={c['rr_farthest']}")
+    total_swings = 0
+    total_clustered = 0
+    total_before_bos = 0
+    all_rr = []
 
-    rr_nearest_vals = [c["rr_nearest"] for c in candidates]
-    rr_next_vals = [c["rr_next"] for c in candidates if c["rr_next"] is not None]
-    rr_farthest_vals = [c["rr_farthest"] for c in candidates]
+    for cand in all_candidates_pools:
+        print(f"\n=== {cand['symbol']} | {cand['direction']} | Entry={cand['entry']:.6f} | SL={cand['sl']:.6f} ===")
+        for s in cand["pool_analysis"]:
+            total_swings += 1
+            if s["in_cluster"]:
+                total_clustered += 1
+            if s["formed_before_bos"]:
+                total_before_bos += 1
+            if s["rr"] is not None:
+                all_rr.append(s["rr"])
+            print(f"  swing_idx={s['swing_index']} | price={s['price']:.6f} | "
+                  f"dist_from_entry_atr={s['dist_from_entry_atr']} | RR={s['rr']} | "
+                  f"bars_since={s['bars_since_swing']} | before_bos={s['formed_before_bos']} | "
+                  f"in_cluster={s['in_cluster']} (nearest_neighbor={s['min_neighbor_dist_atr']} ATR)")
 
-    pass_nearest = sum(1 for v in rr_nearest_vals if v >= MIN_RR)
-    pass_next = sum(1 for v in rr_next_vals if v >= MIN_RR)
-    pass_farthest = sum(1 for v in rr_farthest_vals if v >= MIN_RR)
-
-    print(f"\n--- NEAREST --- PassRate={pass_nearest}/{len(rr_nearest_vals)} | Median RR={median(rr_nearest_vals)}")
-    print(f"--- NEXT --- PassRate={pass_next}/{len(rr_next_vals)} | Median RR={median(rr_next_vals)}")
-    print(f"--- FARTHEST --- PassRate={pass_farthest}/{len(rr_farthest_vals)} | Median RR={median(rr_farthest_vals)}")
+    print(f"\n{'=' * 70}")
+    print(f"TOTAL SWINGS IN ALL POOLS: {total_swings}")
+    print(f"SWINGS IN CLUSTER (neighbor < {CLUSTER_THRESHOLD_ATR} ATR): {total_clustered} ({round(total_clustered/total_swings*100,1) if total_swings else 0}%)")
+    print(f"SWINGS FORMED BEFORE BOS: {total_before_bos} ({round(total_before_bos/total_swings*100,1) if total_swings else 0}%)")
+    if all_rr:
+        sorted_rr = sorted(all_rr)
+        print(f"RR distribution across ALL pool swings: Min={min(all_rr):.2f} | Median={sorted_rr[len(sorted_rr)//2]:.2f} | Max={max(all_rr):.2f}")
     print("=" * 70)
