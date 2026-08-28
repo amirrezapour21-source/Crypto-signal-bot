@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5n: Debug SL/TP/RR rejection + Expand symbol set
+Crypto Signal Bot V4 — Phase 5o: Full-chain rejection funnel counter
 """
 
 import requests
@@ -18,7 +18,6 @@ TEST_SYMBOLS = [
 ]
 LOOKBACK_RECENT = 40
 MAX_EXTENSION_ATR = 2.5
-MIN_SL_DISTANCE_PCT = 0.005
 
 
 def safe_get(url, params=None, retries=3):
@@ -165,7 +164,7 @@ def get_daily_regime(symbol):
 
 def global_regime_filter(daily_regime, requested_direction):
     if daily_regime is None:
-        return False, "daily_regime_unavailable"
+        return False, "daily_unavailable"
     direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
     if daily_regime == "BULLISH" and direction_regime == "BEARISH":
         return False, "daily_bullish_short_forbidden"
@@ -184,17 +183,6 @@ def compute_avg_volume(df, lookback=20):
 
 def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
-
-
-def detect_compression(df, idx, lookback=20, threshold=0.75):
-    if idx < lookback * 2:
-        return False, None
-    recent_range = (df["high"] - df["low"]).iloc[idx-lookback:idx].mean()
-    longer_range = (df["high"] - df["low"]).iloc[idx-lookback*2:idx].mean()
-    if longer_range == 0:
-        return False, None
-    ratio = recent_range / longer_range
-    return ratio < threshold, ratio
 
 
 def detect_displacement(df, idx, avg_body, avg_volume, direction,
@@ -247,129 +235,69 @@ def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_a
     return extension_atr <= max_extension_atr, extension_atr
 
 
-def compute_sl_tp_debug(df, idx, direction, structure, entry_price):
-    if direction == "bullish":
-        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
-        if not relevant:
-            return None, None, None, "no_swing_low_for_sl"
-        sl = relevant[-1]["price"] * 0.997
-        opp = [s for s in structure["swing_highs"] if s["price"] > entry_price]
-        if opp:
-            tp1 = sorted(opp, key=lambda s: s["price"])[0]["price"]
-        else:
-            risk = entry_price - sl
-            tp1 = entry_price + risk * 2
-        tp2 = entry_price + (tp1 - entry_price) * 1.6
-    else:
-        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
-        if not relevant:
-            return None, None, None, "no_swing_high_for_sl"
-        sl = relevant[-1]["price"] * 1.003
-        opp = [s for s in structure["swing_lows"] if s["price"] < entry_price]
-        if opp:
-            tp1 = sorted(opp, key=lambda s: s["price"], reverse=True)[0]["price"]
-        else:
-            risk = sl - entry_price
-            tp1 = entry_price - risk * 2
-        tp2 = entry_price - (entry_price - tp1) * 1.6
-    return sl, tp1, tp2, "ok"
-
-
-def sl_distance_ok(entry, sl):
-    if entry == 0:
-        return False
-    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
-
-
-def scan_symbol_debug(symbol):
-    log = {"symbol": symbol, "setups": [], "candidates": []}
-    df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
-    if df4h is None or len(df4h) < 60:
-        log["error"] = "4h_data_unavailable"
-        return log
-    df4h = drop_unclosed_candle(df4h, "4h")
-    structure = classify_market_structure(df4h)
-    bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
-    daily_regime = get_daily_regime(symbol)
-    avg_body = compute_avg_body(df4h)
-    avg_volume = compute_avg_volume(df4h)
-    avg_range = compute_avg_range(df4h)
-
-    for bos in bos_events:
-        idx = bos["index"]
-        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-
-        allowed, reason = global_regime_filter(daily_regime, direction)
-        if not allowed:
-            continue
-        if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
-            continue
-        ft = detect_follow_through(df4h, idx, direction)
-        if ft is None or not ft:
-            continue
-        ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
-        if not ac_ok:
-            continue
-
-        entry_price = bos["close"]
-        sl, tp1, tp2, sl_reason = compute_sl_tp_debug(df4h, idx, direction, structure, entry_price)
-
-        cand = {"symbol": symbol, "direction": direction, "entry": entry_price,
-                "sl": sl, "tp1": tp1, "tp2": tp2, "sl_reason": sl_reason, "ext": ext}
-
-        if sl is None:
-            cand["final"] = f"REJECT: {sl_reason}"
-            log["candidates"].append(cand)
-            continue
-        if not sl_distance_ok(entry_price, sl):
-            dist_pct = abs(entry_price - sl) / entry_price * 100
-            cand["final"] = f"REJECT: sl_too_close ({dist_pct:.3f}%)"
-            log["candidates"].append(cand)
-            continue
-        risk = abs(entry_price - sl)
-        reward1 = abs(tp1 - entry_price)
-        if risk <= 0 or reward1 <= 0:
-            cand["final"] = "REJECT: invalid_risk_reward_calc"
-            log["candidates"].append(cand)
-            continue
-        rr = reward1 / risk
-        cand["rr"] = round(rr, 2)
-        if rr < 1.5:
-            cand["final"] = f"REJECT: rr_too_low ({rr:.2f})"
-            log["candidates"].append(cand)
-            continue
-
-        compression_ok, _ = detect_compression(df4h, idx)
-        path = "A" if compression_ok else "B"
-        cand["final"] = f"SETUP PATH {path}"
-        log["candidates"].append(cand)
-        log["setups"].append(cand)
-    return log
-
-
 if __name__ == "__main__":
-    print("PHASE: 5n")
+    print("PHASE: 5o")
     print("STATUS: EXECUTING")
     print("=" * 70)
 
-    total_setups = 0
-    total_candidates = 0
+    funnel = {
+        "total_bos": 0, "reject_regime_unavailable": 0, "reject_daily": 0,
+        "displacement_ok": 0, "reject_displacement": 0,
+        "ft_none": 0, "reject_ft": 0, "ft_ok": 0,
+        "reject_antichase": 0, "antichase_ok": 0,
+    }
 
     for symbol in TEST_SYMBOLS:
-        result = scan_symbol_debug(symbol)
-        if "error" in result:
+        df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
+        if df4h is None or len(df4h) < 60:
             continue
-        if result["candidates"]:
-            print(f"\n{symbol}:")
-            for c in result["candidates"]:
-                total_candidates += 1
-                print(f"  {c['direction']} | Entry={c['entry']:.6f} | SL={c.get('sl')} | "
-                      f"TP1={c.get('tp1')} | RR={c.get('rr')} | Ext={c.get('ext')} | {c['final']}")
-                if "SETUP" in c["final"]:
-                    total_setups += 1
+        df4h = drop_unclosed_candle(df4h, "4h")
+        structure = classify_market_structure(df4h)
+        bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
+        daily_regime = get_daily_regime(symbol)
+        avg_body = compute_avg_body(df4h)
+        avg_volume = compute_avg_volume(df4h)
+        avg_range = compute_avg_range(df4h)
+
+        for bos in bos_events:
+            funnel["total_bos"] += 1
+            idx = bos["index"]
+            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+
+            allowed, reason = global_regime_filter(daily_regime, direction)
+            if not allowed:
+                if reason == "daily_unavailable":
+                    funnel["reject_regime_unavailable"] += 1
+                else:
+                    funnel["reject_daily"] += 1
+                continue
+
+            if detect_displacement(df4h, idx, avg_body, avg_volume, direction):
+                funnel["displacement_ok"] += 1
+            else:
+                funnel["reject_displacement"] += 1
+                continue
+
+            ft = detect_follow_through(df4h, idx, direction)
+            if ft is None:
+                funnel["ft_none"] += 1
+                continue
+            if not ft:
+                funnel["reject_ft"] += 1
+                continue
+            funnel["ft_ok"] += 1
+
+            ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
+            if not ac_ok:
+                funnel["reject_antichase"] += 1
+                continue
+            funnel["antichase_ok"] += 1
+            print(f"REACHED_FINAL_STAGE | {symbol} | {direction} | ext={ext}")
+
         time.sleep(1)
 
     print("\n" + "=" * 70)
-    print(f"WHAT WAS TESTED: Full pipeline debug on {len(TEST_SYMBOLS)} symbols, with SL/TP rejection reasons visible")
-    print(f"FINDINGS: {total_candidates} candidates reached SL/TP stage, {total_setups} final valid setups")
+    print("FUNNEL COUNTS:")
+    for k, v in funnel.items():
+        print(f"  {k}: {v}")
     print("=" * 70)
