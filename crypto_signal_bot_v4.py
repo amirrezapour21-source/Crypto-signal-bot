@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5k: Fix detect_bos duplicate emission (Fresh BOS only)
+Crypto Signal Bot V4 — Phase 5l: Extension Audit on Fresh-BOS dataset
 """
 
 import requests
@@ -126,62 +126,27 @@ def classify_market_structure(df, left=3, right=3):
 
 
 def detect_bos_fresh_only(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
-    """
-    نسخه اصلاح‌شده (Phase 5k): فقط اولین کندلی که یه سطح رو می‌شکنه
-    به‌عنوان BOS ثبت می‌شه (Fresh Break). قبلاً هر کندل بعدی که بالای
-    همون سطح می‌موند هم دوباره BOS ثبت می‌شد که باعث می‌شد BOS های
-    "دیر" (چند کندل بعد از شکست واقعی) وارد سیستم بشن و Extension
-    بزرگ به‌طور مصنوعی افزایش پیدا کنه.
-    قانون جدید: هر broken_level فقط یک‌بار می‌تونه BOS تولید کنه؛ بعد
-    از اون، باید یه Swing جدید (بالاتر/پایین‌تر) شکل بگیره تا BOS بعدی
-    معتبر باشه.
-    """
     events = []
     recent_start = max(0, len(df) - lookback_candles)
     last_broken_high = None
     last_broken_low = None
-
     for i in range(recent_start, len(df)):
         close_price = df["close"].iloc[i]
         relevant_highs = [s for s in swing_highs if s["index"] < i]
         relevant_lows = [s for s in swing_lows if s["index"] < i]
-
         if relevant_highs:
             level = relevant_highs[-1]["price"]
             if close_price > level and level != last_broken_high:
                 events.append({"type": "bullish_bos", "index": i, "time": df["dt"].iloc[i],
                               "close": close_price, "broken_level": level})
                 last_broken_high = level
-
         if relevant_lows:
             level = relevant_lows[-1]["price"]
             if close_price < level and level != last_broken_low:
                 events.append({"type": "bearish_bos", "index": i, "time": df["dt"].iloc[i],
                               "close": close_price, "broken_level": level})
                 last_broken_low = level
-
     return events
-
-
-def get_daily_regime(symbol):
-    df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
-    if df_daily is None or len(df_daily) < 30:
-        return None
-    df_daily = drop_unclosed_candle(df_daily, "1d")
-    structure = classify_market_structure(df_daily)
-    mapping = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
-    return mapping[structure["regime"]]
-
-
-def global_regime_filter(daily_regime, requested_direction):
-    if daily_regime is None:
-        return False, "daily_regime_unavailable"
-    direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-    if daily_regime == "BULLISH" and direction_regime == "BEARISH":
-        return False, "daily_bullish_short_forbidden"
-    if daily_regime == "BEARISH" and direction_regime == "BULLISH":
-        return False, "daily_bearish_long_forbidden"
-    return True, "allowed"
 
 
 def compute_avg_body(df, lookback=20):
@@ -194,17 +159,6 @@ def compute_avg_volume(df, lookback=20):
 
 def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
-
-
-def detect_compression(df, idx, lookback=20, threshold=0.75):
-    if idx < lookback * 2:
-        return False, None
-    recent_range = (df["high"] - df["low"]).iloc[idx-lookback:idx].mean()
-    longer_range = (df["high"] - df["low"]).iloc[idx-lookback*2:idx].mean()
-    if longer_range == 0:
-        return False, None
-    ratio = recent_range / longer_range
-    return ratio < threshold, ratio
 
 
 def detect_displacement(df, idx, avg_body, avg_volume, direction,
@@ -226,133 +180,63 @@ def detect_displacement(df, idx, avg_body, avg_volume, direction,
     return body_ok and volume_ok and close_ok
 
 
-def detect_follow_through(df, breakout_idx, direction, candles_after=2):
-    end_idx = min(breakout_idx + candles_after + 1, len(df))
-    if end_idx <= breakout_idx + 1:
-        return None
-    breakout_close = df["close"].iloc[breakout_idx]
-    after = df.iloc[breakout_idx+1:end_idx]
-    if direction == "bullish":
-        return bool((after["close"] > breakout_close).any())
-    return bool((after["close"] < breakout_close).any())
-
-
-def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
+def extension_at_bos(df, idx, direction, avg_range, structure):
     if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
-        return False, None
+        return None
     current_price = df["close"].iloc[idx]
     if direction == "bullish":
         relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
-        if not relevant:
-            return False, None
-        origin_price = relevant[-1]["price"]
-        extension = current_price - origin_price
     else:
         relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
-        if not relevant:
-            return False, None
-        origin_price = relevant[-1]["price"]
+    if not relevant:
+        return None
+    origin_price = relevant[-1]["price"]
+    if direction == "bullish":
+        extension = current_price - origin_price
+    else:
         extension = origin_price - current_price
-    extension_atr = extension / avg_range.iloc[idx]
-    return extension_atr <= max_extension_atr, extension_atr
-
-
-def run_regime_filter_unit_tests():
-    tests = []
-    allowed, _ = global_regime_filter("BULLISH", "bearish")
-    tests.append(("DailyBullish_ShortBOS_MUST_REJECT", not allowed))
-    allowed, _ = global_regime_filter("BEARISH", "bullish")
-    tests.append(("DailyBearish_LongBOS_MUST_REJECT", not allowed))
-    allowed, _ = global_regime_filter("BULLISH", "bullish")
-    tests.append(("DailyBullish_LongBOS_MUST_ALLOW", allowed))
-    allowed, _ = global_regime_filter("BEARISH", "bearish")
-    tests.append(("DailyBearish_ShortBOS_MUST_ALLOW", allowed))
-    return tests
-
-
-def scan_symbol(symbol):
-    log = {"symbol": symbol, "setups": [], "bos_count_old": 0, "bos_count_new": 0}
-    df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
-    if df4h is None or len(df4h) < 60:
-        log["error"] = "4h_data_unavailable"
-        return log
-    df4h = drop_unclosed_candle(df4h, "4h")
-    structure = classify_market_structure(df4h)
-
-    bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
-    log["bos_count_new"] = len(bos_events)
-
-    daily_regime = get_daily_regime(symbol)
-    log["daily_regime"] = daily_regime
-    log["h4_regime"] = structure["regime"]
-    avg_body = compute_avg_body(df4h)
-    avg_volume = compute_avg_volume(df4h)
-    avg_range = compute_avg_range(df4h)
-
-    for bos in bos_events:
-        idx = bos["index"]
-        direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-
-        allowed, _ = global_regime_filter(daily_regime, direction)
-        if not allowed:
-            continue
-
-        displacement_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
-        if not displacement_ok:
-            continue
-        follow_through_ok = detect_follow_through(df4h, idx, direction)
-        if follow_through_ok is None or not follow_through_ok:
-            continue
-        anti_chasing_ok, extension_atr = check_anti_chasing(df4h, idx, direction, avg_range, structure)
-        if not anti_chasing_ok:
-            continue
-        compression_ok, _ = detect_compression(df4h, idx)
-        path = "A" if compression_ok else "B"
-
-        log["setups"].append({
-            "time": bos["time"], "direction": direction, "path": path,
-            "close": bos["close"], "extension_atr": round(extension_atr, 2),
-            "daily_regime": daily_regime, "h4_regime": structure["regime"],
-        })
-    return log
+    return extension / avg_range.iloc[idx]
 
 
 if __name__ == "__main__":
-    print("PHASE: 5k")
+    print("PHASE: 5l")
     print("STATUS: EXECUTING")
     print("=" * 70)
 
-    print("\n--- Regression: Unit Tests ---")
-    all_passed = True
-    for name, passed in run_regime_filter_unit_tests():
-        status = "PASS" if passed else "FAIL"
-        if not passed:
-            all_passed = False
-        print(f"{status} | {name}")
-    print(f"Unit Tests: {'ALL PASS' if all_passed else 'FAILED'}")
-
-    print("\n--- Multi-Symbol Scan with Fresh-BOS-Only Fix ---")
-    total_setups = 0
-    total_bos = 0
-
+    records = []
     for symbol in TEST_SYMBOLS:
-        result = scan_symbol(symbol)
-        if "error" in result:
-            print(f"\n{symbol} | ERROR")
+        df4h = get_ohlcv_v4(symbol, "4h", total_candles=200)
+        if df4h is None or len(df4h) < 60:
             continue
-        total_bos += result["bos_count_new"]
-        print(f"\n{symbol} | Daily={result['daily_regime']} | 4H={result['h4_regime']} | Fresh_BOS_count={result['bos_count_new']}")
-        for s in result["setups"]:
-            total_setups += 1
-            print(f"  SETUP PATH {s['path']} | {s['direction']} | {s['time']} | close={s['close']:.4f} | ext={s['extension_atr']}")
+        df4h = drop_unclosed_candle(df4h, "4h")
+        structure = classify_market_structure(df4h)
+        bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
+        avg_body = compute_avg_body(df4h)
+        avg_volume = compute_avg_volume(df4h)
+        avg_range = compute_avg_range(df4h)
+
+        for bos in bos_events:
+            idx = bos["index"]
+            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
+            disp_ok = detect_displacement(df4h, idx, avg_body, avg_volume, direction)
+            ext = extension_at_bos(df4h, idx, direction, avg_range, structure)
+            records.append({
+                "symbol": symbol, "direction": direction, "displacement_ok": disp_ok,
+                "extension_atr": round(ext, 2) if ext is not None else None,
+            })
         time.sleep(1)
 
-    print("\n" + "=" * 70)
-    print(f"WHAT WAS TESTED: detect_bos با فیلتر Fresh-Break-Only (هر level فقط یک‌بار BOS تولید می‌کنه)")
-    print(f"FINDINGS: کل Fresh BOS شناسایی‌شده در 14 نماد: {total_bos} (قبلاً با روش قدیمی روی همین بازه ~229 بود)")
-    print(f"ROOT CAUSE: detect_bos قدیمی هر کندلی که بالای یه سطح می‌موند رو دوباره BOS حساب می‌کرد، نه فقط اولین شکست")
-    print(f"DECISION: تغییر منطق BOS به Fresh-Break-Only (بدون تغییر هیچ Threshold ای)")
-    print(f"CHANGES MADE: تابع detect_bos_fresh_only جایگزین detect_bos شد")
-    print(f"TEST RESULTS: SETUP نهایی معتبر = {total_setups}")
-    print(f"REGRESSION STATUS: {'ALL PASS' if all_passed else 'FAILED'}")
+    print(f"\nکل Fresh BOS: {len(records)}\n")
+    for r in records:
+        print(f"{r['symbol']} | {r['direction']} | Displacement={r['displacement_ok']} | Ext={r['extension_atr']}")
+
+    disp_passed = [r for r in records if r["displacement_ok"]]
+    ext_values = [r["extension_atr"] for r in disp_passed if r["extension_atr"] is not None]
+    pass_le_25 = sum(1 for e in ext_values if e <= MAX_EXTENSION_ATR)
+
+    print(f"\nDisplacement passed: {len(disp_passed)} از {len(records)}")
+    if ext_values:
+        sorted_e = sorted(ext_values)
+        print(f"Extension - Mean={sum(ext_values)/len(ext_values):.2f} | Median={sorted_e[len(sorted_e)//2]:.2f} | Min={min(ext_values):.2f} | Max={max(ext_values):.2f}")
+    print(f"Pass Extension<=2.5: {pass_le_25} از {len(ext_values)}")
     print("=" * 70)
