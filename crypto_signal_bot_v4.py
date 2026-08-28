@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5t: Fix Look-Ahead Bias in Target Pool + Re-audit
+Crypto Signal Bot V4 — Phase 5u: Liquidity / Structural Target Audit (shadow only)
 """
 
 import requests
@@ -21,8 +21,8 @@ TEST_SYMBOLS = [
 LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
-MIN_RR = 1.5
-CLUSTER_THRESHOLD_ATR = 0.5
+EQUAL_LEVEL_TOLERANCE_ATR = 0.15  # دو Swing با فاصله کمتر از این، "Equal High/Low" محسوب می‌شن
+NOISE_CLUSTER_THRESHOLD_ATR = 0.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -246,41 +246,73 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
-def median(values):
-    if not values:
-        return None
-    s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    if n % 2 == 0:
-        return (s[mid - 1] + s[mid]) / 2
-    return s[mid]
+def find_equal_levels(swings, atr, tolerance_atr=EQUAL_LEVEL_TOLERANCE_ATR):
+    """
+    Equal High/Low بدون Look-Ahead: دو یا چند Swing (از همون نوع) که
+    قیمتشون در فاصله کمتر از tolerance_atr از هم باشه، یه گروه Equal
+    Level محسوب می‌شن. این می‌تونه نشونه یه ناحیه Liquidity واقعی
+    باشه (چون بازار چندبار به یه سطح مشخص واکنش نشون داده).
+    """
+    if atr is None or atr == 0 or not swings:
+        return []
+    sorted_swings = sorted(swings, key=lambda s: s["price"])
+    groups = []
+    current_group = [sorted_swings[0]]
+    for s in sorted_swings[1:]:
+        if abs(s["price"] - current_group[-1]["price"]) / atr <= tolerance_atr:
+            current_group.append(s)
+        else:
+            groups.append(current_group)
+            current_group = [s]
+    groups.append(current_group)
+    return [g for g in groups if len(g) >= 2]
+
+
+def classify_target(swing, all_pool, atr, entry_index):
+    """
+    Classification بر پایه معیارهای موجود در داده فعلی (بدون Look-Ahead،
+    بدون اختراع معیار جدید صرفاً برای بهبود R:R):
+    - Strong: بخشی از یه Equal-Level group (>=2 لمس نزدیک به هم) -> نشونه واکنش تکرارشونده بازار
+    - Potential: Swing مجزا (نه در cluster انبوه) و به‌اندازه کافی قدیمی/معتبر
+    - Weak/Noise: بخشی از یه Cluster متراکم (فاصله خیلی کم با همسایه، اما نه دقیقاً Equal Level)
+    - Unknown: داده کافی برای تشخیص نیست
+    """
+    if atr is None or atr == 0:
+        return "UNKNOWN"
+
+    neighbor_distances = [abs(other["price"] - swing["price"]) / atr
+                           for other in all_pool if other["index"] != swing["index"]]
+    min_dist = min(neighbor_distances) if neighbor_distances else None
+
+    if min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR:
+        return "A_STRONG (equal-level group)"
+    if min_dist is not None and min_dist <= NOISE_CLUSTER_THRESHOLD_ATR:
+        return "C_WEAK (dense cluster / noise)"
+    if min_dist is not None:
+        return "B_POTENTIAL (isolated swing)"
+    return "D_UNKNOWN"
 
 
 if __name__ == "__main__":
-    print("PHASE: 5t")
-    print("STATUS: EXECUTING - Look-Ahead Bias Fix in Target Pool")
+    print("PHASE: 5u")
+    print("STATUS: EXECUTING")
     print("=" * 70)
-    print("""
-BUG FOUND (Phase 5s): target_pool در نسخه‌های قبلی فقط با شرط
-"s['price'] > entry_price" (یا < برای bearish) فیلتر می‌شد، بدون
-شرط "s['index'] < idx". این یعنی Swing هایی که بعد از خود BOS
-(در آینده نسبت به لحظه تصمیم‌گیری) تشکیل شدن هم وارد Target Pool
-می‌شدن - این دقیقاً Look-Ahead Bias است که Spec صریحاً منع کرده.
-نمونه TIA-USDT: swing_idx=209 با bars_since=-17 (یعنی 17 کندل
-BAAD از BOS) با RR=11.07 وارد pool شده بود - این عدد غیرواقعی
-دقیقاً به همین دلیل بود.
 
-FIX: اضافه شدن شرط s['index'] < idx به فیلتر target_pool.
-""")
+    funnel = {"total_bos": 0, "reject_daily": 0, "displacement_ok": 0, "reject_displacement": 0,
+              "ft_ok": 0, "reject_ft": 0, "antichase_ok": 0, "reject_antichase": 0, "sl_ok": 0}
 
     all_candidates = []
+    volume_data_available = None
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
         if df4h is None or len(df4h) < 80:
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
+
+        if volume_data_available is None:
+            volume_data_available = bool((df4h["volume"] > 0).any())
+
         structure = classify_market_structure(df4h)
         bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
         daily_regime = get_daily_regime(symbol)
@@ -289,23 +321,30 @@ FIX: اضافه شدن شرط s['index'] < idx به فیلتر target_pool.
         avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
+            funnel["total_bos"] += 1
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
 
             if not global_regime_filter(daily_regime, direction):
+                funnel["reject_daily"] += 1
                 continue
-            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
+            if detect_displacement(df4h, idx, avg_body, avg_volume, direction):
+                funnel["displacement_ok"] += 1
+            else:
+                funnel["reject_displacement"] += 1
                 continue
             ft = detect_follow_through(df4h, idx, direction)
             if ft is None or not ft:
+                funnel["reject_ft"] += 1
                 continue
+            funnel["ft_ok"] += 1
             ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
             if not ac_ok:
+                funnel["reject_antichase"] += 1
                 continue
+            funnel["antichase_ok"] += 1
 
             entry_price = bos["close"]
-
-            # FIX: اضافه شدن s["index"] < idx (فقط Swing های قبل از BOS مجازند)
             if direction == "bullish":
                 relevant_sl = [s for s in structure["swing_lows"] if s["index"] < idx]
                 target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
@@ -318,30 +357,48 @@ FIX: اضافه شدن شرط s['index'] < idx به فیلتر target_pool.
             sl = relevant_sl[-1]["price"] * (1.003 if direction == "bearish" else 0.997)
             if not sl_distance_ok(entry_price, sl):
                 continue
+            funnel["sl_ok"] += 1
 
-            risk = abs(entry_price - sl)
-            sorted_pool = sorted(target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-            tp_nearest = sorted_pool[0]["price"]
-            tp_farthest = sorted_pool[-1]["price"]
-            rr_nearest = round(abs(tp_nearest - entry_price) / risk, 2) if risk else None
-            rr_farthest = round(abs(tp_farthest - entry_price) / risk, 2) if risk else None
+            atr = avg_range.iloc[idx]
+            equal_groups = find_equal_levels(target_pool, atr)
+
+            classified = []
+            for s in target_pool:
+                cls = classify_target(s, target_pool, atr, idx)
+                classified.append({"price": s["price"], "index": s["index"], "classification": cls})
 
             all_candidates.append({
                 "symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
-                "pool_size_after_fix": len(target_pool), "rr_nearest": rr_nearest, "rr_farthest": rr_farthest,
+                "pool_size": len(target_pool), "equal_level_groups": len(equal_groups),
+                "classified_targets": classified,
             })
         time.sleep(0.6)
 
-    print(f"\nCandidates reaching Entry+SL (after look-ahead fix): {len(all_candidates)}\n")
-    for c in all_candidates:
-        print(f"{c['symbol']} | {c['direction']} | pool_size={c['pool_size_after_fix']} | "
-              f"RR_nearest={c['rr_nearest']} | RR_farthest={c['rr_farthest']}")
+    print(f"\nDATA AVAILABLE: Volume column present and non-zero: {volume_data_available}")
+    print(f"\nFUNNEL:")
+    for k, v in funnel.items():
+        print(f"  {k}: {v}")
 
-    rr_n = [c["rr_nearest"] for c in all_candidates if c["rr_nearest"] is not None]
-    rr_f = [c["rr_farthest"] for c in all_candidates if c["rr_farthest"] is not None]
-    pass_n = sum(1 for v in rr_n if v >= MIN_RR)
-    pass_f = sum(1 for v in rr_f if v >= MIN_RR)
+    print(f"\nCANDIDATES: {len(all_candidates)}\n")
 
-    print(f"\nNEAREST: PassRate={pass_n}/{len(rr_n)} | Median RR={median(rr_n)}")
-    print(f"FARTHEST: PassRate={pass_f}/{len(rr_f)} | Median RR={median(rr_f)} | Max={max(rr_f) if rr_f else None}")
+    total_a = total_b = total_c = total_d = 0
+    for cand in all_candidates:
+        print(f"\n=== {cand['symbol']} | {cand['direction']} | Entry={cand['entry']:.6f} | "
+              f"Equal-Level Groups Found={cand['equal_level_groups']} ===")
+        for t in cand["classified_targets"]:
+            print(f"  price={t['price']:.6f} | idx={t['index']} | class={t['classification']}")
+            if t["classification"].startswith("A"):
+                total_a += 1
+            elif t["classification"].startswith("B"):
+                total_b += 1
+            elif t["classification"].startswith("C"):
+                total_c += 1
+            else:
+                total_d += 1
+
+    print(f"\n{'=' * 70}")
+    print(f"STRONG (A - equal-level group): {total_a}")
+    print(f"POTENTIAL (B - isolated swing): {total_b}")
+    print(f"WEAK/NOISE (C - dense cluster): {total_c}")
+    print(f"UNKNOWN (D): {total_d}")
     print("=" * 70)
