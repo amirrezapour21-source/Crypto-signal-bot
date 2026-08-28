@@ -814,11 +814,11 @@
     "tp1": 0.059659241848000956,
     "tp2": 0.059735591988237705,
     "signal_time": "2026-08-24T17:20:21.820459+00:00",
-    "status": "OPEN",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-08-24T23:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-27T21:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "WBT_1787595522",
@@ -848,9 +848,9 @@
     "tp1": 12.50152363730958,
     "tp2": 12.751554110055771,
     "signal_time": "2026-08-25T09:20:12.239584+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-08-27T09:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -882,9 +882,9 @@
     "tp1": 822.0258737277755,
     "tp2": 846.0943158932358,
     "signal_time": "2026-08-27T16:23:23.694664+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-08-27T22:00:00+00:00",
     "closed_time": null,
     "result": null
   },
