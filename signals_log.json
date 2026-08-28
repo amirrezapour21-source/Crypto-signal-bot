@@ -780,11 +780,11 @@
     "tp1": 0.2015758129086619,
     "tp2": 0.17181361025798467,
     "signal_time": "2026-08-22T01:53:10.117747+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-08-22T09:00:00+00:00",
     "closed_time": null,
-    "result": null
+    "result": "WIN (TP1)"
   },
   {
     "id": "PEPE_1787386559",
@@ -848,11 +848,11 @@
     "tp1": 12.50152363730958,
     "tp2": 12.751554110055771,
     "signal_time": "2026-08-25T09:20:12.239584+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-27T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-28T19:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ONDO_1787701811",
@@ -865,11 +865,11 @@
     "tp1": 0.37710283559851826,
     "tp2": 0.38544681323216,
     "signal_time": "2026-08-25T23:50:11.594801+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-26T02:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-08-26T10:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ZEC_1787847803",
