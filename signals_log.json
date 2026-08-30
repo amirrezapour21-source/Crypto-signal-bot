@@ -921,5 +921,22 @@
     "entry_time": "2026-08-29T02:00:00+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "UNI_1788124634",
+    "symbol": "UNI",
+    "coin_id": "uniswap",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 5.2812372032246575,
+    "sl": 5.496686101188635,
+    "tp1": 4.810979089593925,
+    "tp2": 4.179694712664449,
+    "signal_time": "2026-08-30T21:17:14.447430+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
