@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5v: SL Model Audit (Shadow Only, expanded symbol set)
+Crypto Signal Bot V4 — Phase 5w: Bottleneck Audit (Displacement + Anti-Chasing)
 """
 
 import requests
@@ -22,10 +22,6 @@ TEST_SYMBOLS = [
 ]
 LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
-MIN_SL_DISTANCE_PCT = 0.005
-MIN_RR = 1.5
-EQUAL_LEVEL_TOLERANCE_ATR = 0.15
-NOISE_CLUSTER_THRESHOLD_ATR = 0.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -193,23 +189,27 @@ def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
 
 
-def detect_displacement(df, idx, avg_body, avg_volume, direction,
-                          body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
+def displacement_details(df, idx, avg_body, avg_volume, direction,
+                           body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
     if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
-        return False
+        return None
     row = df.iloc[idx]
     body_size = abs(row["close"] - row["open"])
     candle_range = row["high"] - row["low"]
     if candle_range == 0:
-        return False
-    body_ok = body_size >= body_multiplier * avg_body.iloc[idx]
-    volume_ok = row["volume"] >= volume_multiplier * avg_volume.iloc[idx]
+        return None
+    body_ratio = body_size / avg_body.iloc[idx]
+    volume_ratio = row["volume"] / avg_volume.iloc[idx]
     if direction == "bullish":
         close_position = (row["close"] - row["low"]) / candle_range
     else:
         close_position = (row["high"] - row["close"]) / candle_range
+    body_ok = body_ratio >= body_multiplier
+    volume_ok = volume_ratio >= volume_multiplier
     close_ok = close_position >= (1 - close_position_pct)
-    return body_ok and volume_ok and close_ok
+    return {"body_ratio": body_ratio, "body_ok": body_ok, "volume_ratio": volume_ratio,
+            "volume_ok": volume_ok, "close_position": close_position, "close_ok": close_ok,
+            "overall_pass": body_ok and volume_ok and close_ok}
 
 
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
@@ -223,125 +223,64 @@ def detect_follow_through(df, breakout_idx, direction, candles_after=2):
     return bool((after["close"] < breakout_close).any())
 
 
-def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
+def anti_chasing_details(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
     if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
-        return False, None
+        return None
     current_price = df["close"].iloc[idx]
     if direction == "bullish":
         relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
-        if not relevant:
-            return False, None
-        origin_price = relevant[-1]["price"]
-        extension = current_price - origin_price
     else:
         relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
-        if not relevant:
-            return False, None
-        origin_price = relevant[-1]["price"]
+    if not relevant:
+        return None
+    origin_price = relevant[-1]["price"]
+    if direction == "bullish":
+        extension = current_price - origin_price
+    else:
         extension = origin_price - current_price
     extension_atr = extension / avg_range.iloc[idx]
-    return extension_atr <= max_extension_atr, extension_atr
+    return {"extension_atr": extension_atr, "pass": extension_atr <= max_extension_atr}
 
 
-def find_equal_levels(swings, atr, tolerance_atr=EQUAL_LEVEL_TOLERANCE_ATR):
-    if atr is None or atr == 0 or not swings:
-        return []
-    sorted_swings = sorted(swings, key=lambda s: s["price"])
-    groups = []
-    current_group = [sorted_swings[0]]
-    for s in sorted_swings[1:]:
-        if abs(s["price"] - current_group[-1]["price"]) / atr <= tolerance_atr:
-            current_group.append(s)
-        else:
-            groups.append(current_group)
-            current_group = [s]
-    groups.append(current_group)
-    return [g for g in groups if len(g) >= 2]
-
-
-def is_structurally_strong(swing, pool, atr):
-    if atr is None or atr == 0:
-        return False
-    neighbor_distances = [abs(other["price"] - swing["price"]) / atr
-                           for other in pool if other["index"] != swing["index"]]
-    min_dist = min(neighbor_distances) if neighbor_distances else None
-    return min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR
-
-
-def median(values):
+def percentile(values, p):
     if not values:
         return None
     s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    if n % 2 == 0:
-        return (s[mid - 1] + s[mid]) / 2
-    return s[mid]
+    k = (len(s) - 1) * p
+    f = int(k)
+    c = f + 1 if f + 1 < len(s) else f
+    if f == c:
+        return s[f]
+    return s[f] + (s[c] - s[f]) * (k - f)
 
 
-def compute_sl_models(direction, idx, entry_price, structure, atr, df, bos_broken_level):
-    """
-    چهار مدل SL رو محاسبه می‌کنه (Shadow-only، همه فقط بر اساس داده
-    قبل از idx، بدون Look-Ahead):
-
-    A) Baseline: نزدیک‌ترین Swing مخالف + Buffer فعلی
-    B) Structural: نزدیک‌ترین Swing مخالف که STRONG (Equal-Level) باشه،
-       نه هر Swing (رد کردن Swing های Weak/Noise به‌عنوان SL Reference)
-    C) Invalidation: سطحی که شکستنش یعنی کل فرضیه BOS باطل می‌شه - این
-       رو معادل خود broken_level (سطحی که BOS رو تعریف کرده) در نظر
-       می‌گیریم، چون اگه قیمت به اون برگرده، یعنی BOS دیگه معتبر نیست.
-    D) ATR-aware Structural: مثل C اما با یه Buffer مبتنی بر ATR
-       (0.25 ATR) به‌جای درصد ثابت.
-    """
-    if direction == "bullish":
-        opp_swings = [s for s in structure["swing_lows"] if s["index"] < idx]
-    else:
-        opp_swings = [s for s in structure["swing_highs"] if s["index"] < idx]
-    if not opp_swings:
-        return None
-
-    buffer_pct = 1.003 if direction == "bearish" else 0.997
-    nearest_opp = opp_swings[-1]
-
-    # A) Baseline
-    sl_a = nearest_opp["price"] * buffer_pct
-
-    # B) Structural (فقط بین Swing های STRONG جستجو کن)
-    strong_opp = [s for s in opp_swings if is_structurally_strong(s, opp_swings, atr)]
-    if strong_opp:
-        strong_sorted = sorted(strong_opp, key=lambda s: s["index"])
-        sl_b = strong_sorted[-1]["price"] * buffer_pct
-    else:
-        sl_b = None
-
-    # C) Invalidation = broken_level خود BOS (سطحی که اگه برگرده، BOS باطله)
-    sl_c = bos_broken_level * buffer_pct
-
-    # D) ATR-aware Structural: مثل C ولی Buffer بر اساس ATR
-    atr_buffer = atr * 0.25 if atr else 0
-    if direction == "bearish":
-        sl_d = bos_broken_level + atr_buffer
-    else:
-        sl_d = bos_broken_level - atr_buffer
-
-    return {"A_baseline": sl_a, "B_structural": sl_b, "C_invalidation": sl_c, "D_atr_aware": sl_d}
+def median(values):
+    return percentile(values, 0.5)
 
 
-def sl_distance_ok(entry, sl):
-    if entry == 0 or sl is None:
-        return False
-    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
+def bucket(v, edges):
+    for i, e in enumerate(edges):
+        if v < e:
+            return f"<{e}"
+    return f">={edges[-1]}"
 
 
 if __name__ == "__main__":
-    print("PHASE: 5v")
-    print("STATUS: EXECUTING - SL Model Audit (Shadow Only)")
+    print("PHASE: 5w")
+    print("STATUS: EXECUTING - Bottleneck Audit (Displacement + Anti-Chasing)")
     print("=" * 70)
 
-    model_stats = {k: {"sl_pct": [], "sl_atr": [], "rr": [], "pass": 0, "total": 0}
-                   for k in ["A_baseline", "B_structural", "C_invalidation", "D_atr_aware"]}
+    funnel = {"total_bos": 0, "daily_pass": 0, "daily_reject": 0,
+              "displacement_pass": 0, "displacement_reject": 0,
+              "ft_pass": 0, "ft_reject": 0,
+              "antichase_pass": 0, "antichase_reject": 0}
 
-    all_results = []
+    body_ratios, volume_ratios, close_positions = [], [], []
+    body_fail, volume_fail, closepos_fail = 0, 0, 0
+    disp_pass_ft_fail = 0  # ساختار/FollowThrough خوب بود، فقط Displacement رد شد - این یعنی برعکس
+
+    extension_values = []
+    disp_ok_but_ac_data = []  # برای موارد displacement+ft pass، extension رو ذخیره می‌کنیم
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -356,87 +295,92 @@ if __name__ == "__main__":
         avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
+            funnel["total_bos"] += 1
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
 
             if not global_regime_filter(daily_regime, direction):
+                funnel["daily_reject"] += 1
                 continue
-            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
+            funnel["daily_pass"] += 1
+
+            dd = displacement_details(df4h, idx, avg_body, avg_volume, direction)
+            if dd is None:
                 continue
+
+            body_ratios.append(dd["body_ratio"])
+            volume_ratios.append(dd["volume_ratio"])
+            close_positions.append(dd["close_position"])
+            if not dd["body_ok"]:
+                body_fail += 1
+            if not dd["volume_ok"]:
+                volume_fail += 1
+            if not dd["close_ok"]:
+                closepos_fail += 1
+
             ft = detect_follow_through(df4h, idx, direction)
-            if ft is None or not ft:
-                continue
-            ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
-            if not ac_ok:
-                continue
 
-            entry_price = bos["close"]
-            if direction == "bullish":
-                target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
+            if not dd["overall_pass"]:
+                funnel["displacement_reject"] += 1
+                # اگه Follow-through واقعا خوب بود ولی فقط Displacement رد شد
+                if ft is not None and ft:
+                    disp_pass_ft_fail += 1
+                continue
+            funnel["displacement_pass"] += 1
+
+            if ft is None:
+                continue
+            if not ft:
+                funnel["ft_reject"] += 1
+                continue
+            funnel["ft_pass"] += 1
+
+            ac = anti_chasing_details(df4h, idx, direction, avg_range, structure)
+            if ac is None:
+                continue
+            extension_values.append(ac["extension_atr"])
+            if ac["pass"]:
+                funnel["antichase_pass"] += 1
             else:
-                target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
-            if not target_pool:
-                continue
-
-            atr = avg_range.iloc[idx]
-            if pd.isna(atr) or atr == 0:
-                continue
-
-            strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
-            nearest_target_pool = strong_targets if strong_targets else target_pool
-            sorted_targets = sorted(nearest_target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-            nearest_strong_target = sorted_targets[0]["price"]
-
-            sl_models = compute_sl_models(direction, idx, entry_price, structure, atr, df4h, bos["broken_level"])
-            if sl_models is None:
-                continue
-
-            row_result = {"symbol": symbol, "direction": direction, "entry": entry_price}
-            for model_name, sl_val in sl_models.items():
-                if not sl_distance_ok(entry_price, sl_val):
-                    continue
-                risk = abs(entry_price - sl_val)
-                reward = abs(nearest_strong_target - entry_price)
-                if risk == 0:
-                    continue
-                rr = reward / risk
-                sl_pct = abs(entry_price - sl_val) / entry_price * 100
-                sl_atr = risk / atr
-
-                model_stats[model_name]["sl_pct"].append(sl_pct)
-                model_stats[model_name]["sl_atr"].append(sl_atr)
-                model_stats[model_name]["rr"].append(rr)
-                model_stats[model_name]["total"] += 1
-                if rr >= MIN_RR:
-                    model_stats[model_name]["pass"] += 1
-
-                row_result[model_name] = {"sl": round(sl_val, 6), "sl_pct": round(sl_pct, 2),
-                                            "sl_atr": round(sl_atr, 2), "rr": round(rr, 2)}
-            all_results.append(row_result)
+                funnel["antichase_reject"] += 1
         time.sleep(0.5)
 
-    print(f"\nTotal candidates analyzed (reached target-pool stage): {len(all_results)}\n")
-    for r in all_results:
-        print(f"\n{r['symbol']} | {r['direction']} | Entry={r['entry']:.6f}")
-        for m in ["A_baseline", "B_structural", "C_invalidation", "D_atr_aware"]:
-            if m in r:
-                d = r[m]
-                status = "PASS" if d["rr"] >= MIN_RR else "REJECT"
-                print(f"  {m}: SL={d['sl']} | SL%={d['sl_pct']} | SL/ATR={d['sl_atr']} | RR={d['rr']} | {status}")
-            else:
-                print(f"  {m}: N/A (SL distance too small or no structural swing found)")
+    print("\n--- FUNNEL ---")
+    total = funnel["total_bos"]
+    for k, v in funnel.items():
+        pct = round(v / total * 100, 1) if total else 0
+        print(f"  {k}: {v} ({pct}%)")
 
-    print("\n" + "=" * 70)
-    print("COMPARISON TABLE")
-    print("=" * 70)
-    for m in ["A_baseline", "B_structural", "C_invalidation", "D_atr_aware"]:
-        s = model_stats[m]
-        n = s["total"]
-        pass_rate = round(s["pass"] / n * 100, 1) if n else 0
-        print(f"\n--- {m} ---")
-        print(f"  Sample Size: {n}")
-        print(f"  Median SL%: {median(s['sl_pct'])}")
-        print(f"  Median SL/ATR: {median(s['sl_atr'])}")
-        print(f"  Median R:R: {median(s['rr'])}")
-        print(f"  Pass Rate (RR>=1.5): {s['pass']}/{n} ({pass_rate}%)")
+    print("\n--- DISPLACEMENT DISTRIBUTIONS ---")
+    print(f"Total evaluated: {len(body_ratios)}")
+    print(f"body_ratio: Min={min(body_ratios):.2f} P25={percentile(body_ratios,0.25):.2f} "
+          f"Median={median(body_ratios):.2f} P75={percentile(body_ratios,0.75):.2f} Max={max(body_ratios):.2f}")
+    print(f"  Fail (< 1.2): {body_fail} ({round(body_fail/len(body_ratios)*100,1)}%)")
+    print(f"volume_ratio: Min={min(volume_ratios):.2f} P25={percentile(volume_ratios,0.25):.2f} "
+          f"Median={median(volume_ratios):.2f} P75={percentile(volume_ratios,0.75):.2f} Max={max(volume_ratios):.2f}")
+    print(f"  Fail (< 1.3): {volume_fail} ({round(volume_fail/len(volume_ratios)*100,1)}%)")
+    print(f"close_position: Min={min(close_positions):.2f} P25={percentile(close_positions,0.25):.2f} "
+          f"Median={median(close_positions):.2f} P75={percentile(close_positions,0.75):.2f} Max={max(close_positions):.2f}")
+    print(f"  Fail (< 0.75): {closepos_fail} ({round(closepos_fail/len(close_positions)*100,1)}%)")
+    print(f"\nBOS که Follow-through خوب داشتن ولی فقط به‌خاطر Displacement رد شدن: {disp_pass_ft_fail}")
+
+    print("\n--- ANTI-CHASING DISTRIBUTION (روی BOS هایی که تا اینجا رسیدن) ---")
+    print(f"Total evaluated: {len(extension_values)}")
+    if extension_values:
+        print(f"extension_atr: Min={min(extension_values):.2f} P25={percentile(extension_values,0.25):.2f} "
+              f"Median={median(extension_values):.2f} Mean={sum(extension_values)/len(extension_values):.2f} "
+              f"P75={percentile(extension_values,0.75):.2f} Max={max(extension_values):.2f}")
+        n_le_25 = sum(1 for v in extension_values if v <= 2.5)
+        print(f"Pass (<=2.5): {n_le_25} ({round(n_le_25/len(extension_values)*100,1)}%)")
+
+        # توزیع در باکت‌ها برای دیدن شکل کلی
+        edges = [1, 2, 2.5, 3, 4, 5, 6, 8]
+        dist = {}
+        for v in extension_values:
+            b = bucket(v, edges)
+            dist[b] = dist.get(b, 0) + 1
+        print("Distribution buckets:")
+        for k in sorted(dist.keys(), key=lambda x: float(x.replace('<','').replace('>=',''))):
+            print(f"  {k}: {dist[k]}")
+
     print("=" * 70)
