@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5u: Liquidity / Structural Target Audit (shadow only)
+Crypto Signal Bot V4 — Phase 5v: SL Model Audit (Shadow Only, expanded symbol set)
 """
 
 import requests
@@ -16,12 +16,15 @@ TEST_SYMBOLS = [
     "ATOM-USDT", "LTC-USDT", "ETC-USDT", "TRX-USDT", "ICP-USDT",
     "AAVE-USDT", "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT", "GRT-USDT",
     "ALGO-USDT", "VET-USDT", "HBAR-USDT", "EGLD-USDT", "XLM-USDT",
-    "THETA-USDT", "SAND-USDT", "MANA-USDT", "AXS-USDT", "CHZ-USDT"
+    "THETA-USDT", "SAND-USDT", "MANA-USDT", "AXS-USDT", "CHZ-USDT",
+    "COMP-USDT", "SNX-USDT", "CRV-USDT", "LDO-USDT", "DYDX-USDT",
+    "GMX-USDT", "STX-USDT", "KAVA-USDT", "ZIL-USDT", "ONE-USDT"
 ]
 LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
-EQUAL_LEVEL_TOLERANCE_ATR = 0.15  # دو Swing با فاصله کمتر از این، "Equal High/Low" محسوب می‌شن
+MIN_RR = 1.5
+EQUAL_LEVEL_TOLERANCE_ATR = 0.15
 NOISE_CLUSTER_THRESHOLD_ATR = 0.5
 
 
@@ -81,7 +84,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=250):
         all_dfs.append(df)
         remaining -= len(df)
         end_at = int(df["time"].min()) - 1
-        time.sleep(0.25)
+        time.sleep(0.2)
         if len(df) < 100:
             break
     if not all_dfs:
@@ -240,19 +243,7 @@ def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_a
     return extension_atr <= max_extension_atr, extension_atr
 
 
-def sl_distance_ok(entry, sl):
-    if entry == 0:
-        return False
-    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
-
-
 def find_equal_levels(swings, atr, tolerance_atr=EQUAL_LEVEL_TOLERANCE_ATR):
-    """
-    Equal High/Low بدون Look-Ahead: دو یا چند Swing (از همون نوع) که
-    قیمتشون در فاصله کمتر از tolerance_atr از هم باشه، یه گروه Equal
-    Level محسوب می‌شن. این می‌تونه نشونه یه ناحیه Liquidity واقعی
-    باشه (چون بازار چندبار به یه سطح مشخص واکنش نشون داده).
-    """
     if atr is None or atr == 0 or not swings:
         return []
     sorted_swings = sorted(swings, key=lambda s: s["price"])
@@ -268,51 +259,95 @@ def find_equal_levels(swings, atr, tolerance_atr=EQUAL_LEVEL_TOLERANCE_ATR):
     return [g for g in groups if len(g) >= 2]
 
 
-def classify_target(swing, all_pool, atr, entry_index):
-    """
-    Classification بر پایه معیارهای موجود در داده فعلی (بدون Look-Ahead،
-    بدون اختراع معیار جدید صرفاً برای بهبود R:R):
-    - Strong: بخشی از یه Equal-Level group (>=2 لمس نزدیک به هم) -> نشونه واکنش تکرارشونده بازار
-    - Potential: Swing مجزا (نه در cluster انبوه) و به‌اندازه کافی قدیمی/معتبر
-    - Weak/Noise: بخشی از یه Cluster متراکم (فاصله خیلی کم با همسایه، اما نه دقیقاً Equal Level)
-    - Unknown: داده کافی برای تشخیص نیست
-    """
+def is_structurally_strong(swing, pool, atr):
     if atr is None or atr == 0:
-        return "UNKNOWN"
-
+        return False
     neighbor_distances = [abs(other["price"] - swing["price"]) / atr
-                           for other in all_pool if other["index"] != swing["index"]]
+                           for other in pool if other["index"] != swing["index"]]
     min_dist = min(neighbor_distances) if neighbor_distances else None
+    return min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR
 
-    if min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR:
-        return "A_STRONG (equal-level group)"
-    if min_dist is not None and min_dist <= NOISE_CLUSTER_THRESHOLD_ATR:
-        return "C_WEAK (dense cluster / noise)"
-    if min_dist is not None:
-        return "B_POTENTIAL (isolated swing)"
-    return "D_UNKNOWN"
+
+def median(values):
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 0:
+        return (s[mid - 1] + s[mid]) / 2
+    return s[mid]
+
+
+def compute_sl_models(direction, idx, entry_price, structure, atr, df, bos_broken_level):
+    """
+    چهار مدل SL رو محاسبه می‌کنه (Shadow-only، همه فقط بر اساس داده
+    قبل از idx، بدون Look-Ahead):
+
+    A) Baseline: نزدیک‌ترین Swing مخالف + Buffer فعلی
+    B) Structural: نزدیک‌ترین Swing مخالف که STRONG (Equal-Level) باشه،
+       نه هر Swing (رد کردن Swing های Weak/Noise به‌عنوان SL Reference)
+    C) Invalidation: سطحی که شکستنش یعنی کل فرضیه BOS باطل می‌شه - این
+       رو معادل خود broken_level (سطحی که BOS رو تعریف کرده) در نظر
+       می‌گیریم، چون اگه قیمت به اون برگرده، یعنی BOS دیگه معتبر نیست.
+    D) ATR-aware Structural: مثل C اما با یه Buffer مبتنی بر ATR
+       (0.25 ATR) به‌جای درصد ثابت.
+    """
+    if direction == "bullish":
+        opp_swings = [s for s in structure["swing_lows"] if s["index"] < idx]
+    else:
+        opp_swings = [s for s in structure["swing_highs"] if s["index"] < idx]
+    if not opp_swings:
+        return None
+
+    buffer_pct = 1.003 if direction == "bearish" else 0.997
+    nearest_opp = opp_swings[-1]
+
+    # A) Baseline
+    sl_a = nearest_opp["price"] * buffer_pct
+
+    # B) Structural (فقط بین Swing های STRONG جستجو کن)
+    strong_opp = [s for s in opp_swings if is_structurally_strong(s, opp_swings, atr)]
+    if strong_opp:
+        strong_sorted = sorted(strong_opp, key=lambda s: s["index"])
+        sl_b = strong_sorted[-1]["price"] * buffer_pct
+    else:
+        sl_b = None
+
+    # C) Invalidation = broken_level خود BOS (سطحی که اگه برگرده، BOS باطله)
+    sl_c = bos_broken_level * buffer_pct
+
+    # D) ATR-aware Structural: مثل C ولی Buffer بر اساس ATR
+    atr_buffer = atr * 0.25 if atr else 0
+    if direction == "bearish":
+        sl_d = bos_broken_level + atr_buffer
+    else:
+        sl_d = bos_broken_level - atr_buffer
+
+    return {"A_baseline": sl_a, "B_structural": sl_b, "C_invalidation": sl_c, "D_atr_aware": sl_d}
+
+
+def sl_distance_ok(entry, sl):
+    if entry == 0 or sl is None:
+        return False
+    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
 if __name__ == "__main__":
-    print("PHASE: 5u")
-    print("STATUS: EXECUTING")
+    print("PHASE: 5v")
+    print("STATUS: EXECUTING - SL Model Audit (Shadow Only)")
     print("=" * 70)
 
-    funnel = {"total_bos": 0, "reject_daily": 0, "displacement_ok": 0, "reject_displacement": 0,
-              "ft_ok": 0, "reject_ft": 0, "antichase_ok": 0, "reject_antichase": 0, "sl_ok": 0}
+    model_stats = {k: {"sl_pct": [], "sl_atr": [], "rr": [], "pass": 0, "total": 0}
+                   for k in ["A_baseline", "B_structural", "C_invalidation", "D_atr_aware"]}
 
-    all_candidates = []
-    volume_data_available = None
+    all_results = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
         if df4h is None or len(df4h) < 80:
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
-
-        if volume_data_available is None:
-            volume_data_available = bool((df4h["volume"] > 0).any())
-
         structure = classify_market_structure(df4h)
         bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
         daily_regime = get_daily_regime(symbol)
@@ -321,84 +356,87 @@ if __name__ == "__main__":
         avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
-            funnel["total_bos"] += 1
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
 
             if not global_regime_filter(daily_regime, direction):
-                funnel["reject_daily"] += 1
                 continue
-            if detect_displacement(df4h, idx, avg_body, avg_volume, direction):
-                funnel["displacement_ok"] += 1
-            else:
-                funnel["reject_displacement"] += 1
+            if not detect_displacement(df4h, idx, avg_body, avg_volume, direction):
                 continue
             ft = detect_follow_through(df4h, idx, direction)
             if ft is None or not ft:
-                funnel["reject_ft"] += 1
                 continue
-            funnel["ft_ok"] += 1
             ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
             if not ac_ok:
-                funnel["reject_antichase"] += 1
                 continue
-            funnel["antichase_ok"] += 1
 
             entry_price = bos["close"]
             if direction == "bullish":
-                relevant_sl = [s for s in structure["swing_lows"] if s["index"] < idx]
                 target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
             else:
-                relevant_sl = [s for s in structure["swing_highs"] if s["index"] < idx]
                 target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
-
-            if not relevant_sl or not target_pool:
+            if not target_pool:
                 continue
-            sl = relevant_sl[-1]["price"] * (1.003 if direction == "bearish" else 0.997)
-            if not sl_distance_ok(entry_price, sl):
-                continue
-            funnel["sl_ok"] += 1
 
             atr = avg_range.iloc[idx]
-            equal_groups = find_equal_levels(target_pool, atr)
+            if pd.isna(atr) or atr == 0:
+                continue
 
-            classified = []
-            for s in target_pool:
-                cls = classify_target(s, target_pool, atr, idx)
-                classified.append({"price": s["price"], "index": s["index"], "classification": cls})
+            strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
+            nearest_target_pool = strong_targets if strong_targets else target_pool
+            sorted_targets = sorted(nearest_target_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
+            nearest_strong_target = sorted_targets[0]["price"]
 
-            all_candidates.append({
-                "symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
-                "pool_size": len(target_pool), "equal_level_groups": len(equal_groups),
-                "classified_targets": classified,
-            })
-        time.sleep(0.6)
+            sl_models = compute_sl_models(direction, idx, entry_price, structure, atr, df4h, bos["broken_level"])
+            if sl_models is None:
+                continue
 
-    print(f"\nDATA AVAILABLE: Volume column present and non-zero: {volume_data_available}")
-    print(f"\nFUNNEL:")
-    for k, v in funnel.items():
-        print(f"  {k}: {v}")
+            row_result = {"symbol": symbol, "direction": direction, "entry": entry_price}
+            for model_name, sl_val in sl_models.items():
+                if not sl_distance_ok(entry_price, sl_val):
+                    continue
+                risk = abs(entry_price - sl_val)
+                reward = abs(nearest_strong_target - entry_price)
+                if risk == 0:
+                    continue
+                rr = reward / risk
+                sl_pct = abs(entry_price - sl_val) / entry_price * 100
+                sl_atr = risk / atr
 
-    print(f"\nCANDIDATES: {len(all_candidates)}\n")
+                model_stats[model_name]["sl_pct"].append(sl_pct)
+                model_stats[model_name]["sl_atr"].append(sl_atr)
+                model_stats[model_name]["rr"].append(rr)
+                model_stats[model_name]["total"] += 1
+                if rr >= MIN_RR:
+                    model_stats[model_name]["pass"] += 1
 
-    total_a = total_b = total_c = total_d = 0
-    for cand in all_candidates:
-        print(f"\n=== {cand['symbol']} | {cand['direction']} | Entry={cand['entry']:.6f} | "
-              f"Equal-Level Groups Found={cand['equal_level_groups']} ===")
-        for t in cand["classified_targets"]:
-            print(f"  price={t['price']:.6f} | idx={t['index']} | class={t['classification']}")
-            if t["classification"].startswith("A"):
-                total_a += 1
-            elif t["classification"].startswith("B"):
-                total_b += 1
-            elif t["classification"].startswith("C"):
-                total_c += 1
+                row_result[model_name] = {"sl": round(sl_val, 6), "sl_pct": round(sl_pct, 2),
+                                            "sl_atr": round(sl_atr, 2), "rr": round(rr, 2)}
+            all_results.append(row_result)
+        time.sleep(0.5)
+
+    print(f"\nTotal candidates analyzed (reached target-pool stage): {len(all_results)}\n")
+    for r in all_results:
+        print(f"\n{r['symbol']} | {r['direction']} | Entry={r['entry']:.6f}")
+        for m in ["A_baseline", "B_structural", "C_invalidation", "D_atr_aware"]:
+            if m in r:
+                d = r[m]
+                status = "PASS" if d["rr"] >= MIN_RR else "REJECT"
+                print(f"  {m}: SL={d['sl']} | SL%={d['sl_pct']} | SL/ATR={d['sl_atr']} | RR={d['rr']} | {status}")
             else:
-                total_d += 1
+                print(f"  {m}: N/A (SL distance too small or no structural swing found)")
 
-    print(f"\n{'=' * 70}")
-    print(f"STRONG (A - equal-level group): {total_a}")
-    print(f"POTENTIAL (B - isolated swing): {total_b}")
-    print(f"WEAK/NOISE (C - dense cluster): {total_c}")
-    print(f"UNKNOWN (D): {total_d}")
+    print("\n" + "=" * 70)
+    print("COMPARISON TABLE")
+    print("=" * 70)
+    for m in ["A_baseline", "B_structural", "C_invalidation", "D_atr_aware"]:
+        s = model_stats[m]
+        n = s["total"]
+        pass_rate = round(s["pass"] / n * 100, 1) if n else 0
+        print(f"\n--- {m} ---")
+        print(f"  Sample Size: {n}")
+        print(f"  Median SL%: {median(s['sl_pct'])}")
+        print(f"  Median SL/ATR: {median(s['sl_atr'])}")
+        print(f"  Median R:R: {median(s['rr'])}")
+        print(f"  Pass Rate (RR>=1.5): {s['pass']}/{n} ({pass_rate}%)")
     print("=" * 70)
