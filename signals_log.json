@@ -950,11 +950,11 @@
     "tp1": 1.710081927864114e-06,
     "tp2": 1.7676386703296442e-06,
     "signal_time": "2026-08-31T10:48:41.231408+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-08-31T11:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-01T10:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "XMR_1788189438",
