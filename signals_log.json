@@ -933,11 +933,11 @@
     "tp1": 4.810979089593925,
     "tp2": 4.179694712664449,
     "signal_time": "2026-08-30T21:17:14.447430+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-01T00:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-01T05:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "HTX_1788173321",
