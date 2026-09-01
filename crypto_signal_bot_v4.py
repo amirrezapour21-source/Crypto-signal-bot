@@ -1,8 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 7: Forward Simulation / Outcome Validation
-برای هر Candidate تولیدشده در Phase 6، بعد از BOS، کندل‌های واقعی
-بعدی رو چک می‌کنیم ببینیم TP1/TP2/SL کدوم زودتر خورده - این
-Backtest معمولیه (نه Look-Ahead در ساخت Entry، فقط ارزیابی نتیجه).
+Crypto Signal Bot V4 — Phase 8: SL Buffer / Retest-Tolerance Audit + Look-Ahead Timing Check
 """
 
 import requests
@@ -28,7 +25,8 @@ MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
 MIN_RR = 1.5
 EQUAL_LEVEL_TOLERANCE_ATR = 0.15
-MAX_HOLD_CANDLES = 60  # حداکثر تعداد کندل بعد از Entry برای منتظر موندن نتیجه
+MAX_HOLD_CANDLES = 60
+FOLLOW_THROUGH_CANDLES = 2
 
 
 def safe_get(url, params=None, retries=3):
@@ -188,15 +186,20 @@ def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
 
 
-def detect_follow_through(df, breakout_idx, direction, candles_after=2):
+def detect_follow_through(df, breakout_idx, direction, candles_after=FOLLOW_THROUGH_CANDLES):
     end_idx = min(breakout_idx + candles_after + 1, len(df))
     if end_idx <= breakout_idx + 1:
-        return None
+        return None, None
     breakout_close = df["close"].iloc[breakout_idx]
     after = df.iloc[breakout_idx+1:end_idx]
     if direction == "bullish":
-        return bool((after["close"] > breakout_close).any())
-    return bool((after["close"] < breakout_close).any())
+        confirmed = after["close"] > breakout_close
+    else:
+        confirmed = after["close"] < breakout_close
+    if confirmed.any():
+        confirm_idx = breakout_idx + 1 + confirmed.values.argmax()
+        return True, confirm_idx
+    return False, None
 
 
 def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
@@ -234,92 +237,84 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
-def build_candidate(symbol, direction, idx, bos, structure, atr):
-    entry_price = bos["close"]
+def get_target_pool(direction, entry_price, structure, idx):
     if direction == "bullish":
-        target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
+        return [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
+    return [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
+
+
+def build_sl_variants(direction, bos, atr):
+    """چهار مدل SL: A=Current(0.3%), B1/B2/B3 = ATR-aware با بافر 0.25/0.5/0.75"""
+    broken_level = bos["broken_level"]
+    variants = {}
+    if direction == "bearish":
+        variants["A_current_0.3pct"] = broken_level * 1.003
+        variants["B_atr_0.25"] = broken_level + atr * 0.25
+        variants["B_atr_0.50"] = broken_level + atr * 0.50
+        variants["B_atr_0.75"] = broken_level + atr * 0.75
     else:
-        target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
-    if not target_pool:
-        return None
-    strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
-    use_pool = strong_targets if strong_targets else target_pool
-    sorted_pool = sorted(use_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-    tp1 = sorted_pool[0]["price"]
-    tp2 = sorted_pool[-1]["price"] if len(sorted_pool) > 1 else tp1
-    buffer_pct = 1.003 if direction == "bearish" else 0.997
-    sl = bos["broken_level"] * buffer_pct
-    if not sl_distance_ok(entry_price, sl):
-        return None
-    risk = abs(entry_price - sl)
-    reward1 = abs(tp1 - entry_price)
-    if risk == 0 or reward1 == 0:
-        return None
-    rr1 = reward1 / risk
-    if rr1 < MIN_RR:
-        return None
-    return {"symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
-            "tp1": tp1, "tp2": tp2, "rr1": rr1, "bos_index": idx}
+        variants["A_current_0.3pct"] = broken_level * 0.997
+        variants["B_atr_0.25"] = broken_level - atr * 0.25
+        variants["B_atr_0.50"] = broken_level - atr * 0.50
+        variants["B_atr_0.75"] = broken_level - atr * 0.75
+    return variants
 
 
-def simulate_outcome(df, candidate, max_hold=MAX_HOLD_CANDLES):
-    """
-    از کندل بعد از bos_index شروع می‌کنیم و می‌بینیم اول SL می‌خوره،
-    TP1، یا TP2. اگه هر دو (SL و TP) توی یه کندل باشن، طبق قانون
-    محافظه‌کارانه SL رو اول در نظر می‌گیریم.
-    """
-    idx = candidate["bos_index"]
-    direction = candidate["direction"]
-    entry, sl, tp1, tp2 = candidate["entry"], candidate["sl"], candidate["tp1"], candidate["tp2"]
-
-    end_idx = min(idx + 1 + max_hold, len(df))
+def simulate_outcome(df, direction, entry, sl, tp1, tp2, start_idx, max_hold=MAX_HOLD_CANDLES):
+    end_idx = min(start_idx + 1 + max_hold, len(df))
     mfe, mae = 0, 0
     tp1_hit = False
-
-    for i in range(idx + 1, end_idx):
+    for i in range(start_idx + 1, end_idx):
         row = df.iloc[i]
         if direction == "bullish":
             favorable = row["high"] - entry
             adverse = entry - row["low"]
+            sl_hit = row["low"] <= sl
+            tp1_now = row["high"] >= tp1
+            tp2_now = row["high"] >= tp2
         else:
             favorable = entry - row["low"]
             adverse = row["high"] - entry
+            sl_hit = row["high"] >= sl
+            tp1_now = row["low"] <= tp1
+            tp2_now = row["low"] <= tp2
         mfe = max(mfe, favorable)
         mae = max(mae, adverse)
 
-        if direction == "bullish":
-            sl_hit = row["low"] <= sl
-            tp1_hit_now = row["high"] >= tp1
-            tp2_hit_now = row["high"] >= tp2
-        else:
-            sl_hit = row["high"] >= sl
-            tp1_hit_now = row["low"] <= tp1
-            tp2_hit_now = row["low"] <= tp2
-
         if not tp1_hit:
             if sl_hit:
-                return {"result": "SL_HIT", "bars_held": i - idx, "mfe": mfe, "mae": mae}
-            if tp1_hit_now:
+                return {"result": "SL_HIT", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
+            if tp1_now:
                 tp1_hit = True
-                if tp2_hit_now:
-                    return {"result": "TP2_HIT", "bars_held": i - idx, "mfe": mfe, "mae": mae}
+                if tp2_now:
+                    return {"result": "TP2_HIT", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
         else:
             if sl_hit:
-                return {"result": "TP1_THEN_SL (BE-ish)", "bars_held": i - idx, "mfe": mfe, "mae": mae}
-            if tp2_hit_now:
-                return {"result": "TP2_HIT", "bars_held": i - idx, "mfe": mfe, "mae": mae}
-
+                return {"result": "TP1_THEN_SL", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
+            if tp2_now:
+                return {"result": "TP2_HIT", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
     if tp1_hit:
-        return {"result": "TP1_ONLY_OPEN", "bars_held": end_idx - idx - 1, "mfe": mfe, "mae": mae}
-    return {"result": "OPEN_NO_OUTCOME", "bars_held": end_idx - idx - 1, "mfe": mfe, "mae": mae}
+        return {"result": "TP1_ONLY_OPEN", "bars_held": end_idx - start_idx - 1, "mfe": mfe, "mae": mae}
+    return {"result": "OPEN_NO_OUTCOME", "bars_held": end_idx - start_idx - 1, "mfe": mfe, "mae": mae}
+
+
+def median(values):
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    return (s[mid-1] + s[mid]) / 2 if n % 2 == 0 else s[mid]
 
 
 if __name__ == "__main__":
-    print("PHASE: 7")
-    print("STATUS: EXECUTING - Forward Simulation / Outcome Validation")
+    print("PHASE: 8")
+    print("STATUS: EXECUTING - SL Buffer / Retest-Tolerance Audit + Timing Check")
     print("=" * 70)
 
-    results = []
+    # داده Setup ها رو یک‌بار می‌سازیم (Immutable Snapshot طبق دستور بند ۱۲)
+    setups = []
+    look_ahead_flags = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -336,45 +331,126 @@ if __name__ == "__main__":
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
             if not global_regime_filter(daily_regime, direction):
                 continue
-            ft = detect_follow_through(df4h, idx, direction)
-            if ft is None or not ft:
+
+            ft, confirm_idx = detect_follow_through(df4h, idx, direction)
+            if not ft:
                 continue
+
             atr = avg_range.iloc[idx]
             if pd.isna(atr) or atr == 0:
                 continue
             ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
             if not ac_ok:
                 continue
-            candidate = build_candidate(symbol, direction, idx, bos, structure, atr)
-            if candidate is None:
-                continue
 
-            outcome = simulate_outcome(df4h, candidate)
-            results.append({**candidate, **outcome})
+            entry_price = bos["close"]
+            target_pool = get_target_pool(direction, entry_price, structure, idx)
+            if not target_pool:
+                continue
+            strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
+            use_pool = strong_targets if strong_targets else target_pool
+            sorted_pool = sorted(use_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
+            tp1 = sorted_pool[0]["price"]
+            tp2 = sorted_pool[-1]["price"] if len(sorted_pool) > 1 else tp1
+
+            # === بررسی Look-Ahead Timing (بند ۱۰-۱۱ دستور) ===
+            # آیا Entry واقعاً در زمان idx قابل‌دسترس بود؟ بله - bos.close
+            # یعنی Close خودِ کندل idx، که در لحظه بسته‌شدنش قابل مشاهده‌ست.
+            # اما تأیید Follow-through (که شرط ورودمونه) نیاز به دیدن
+            # کندل‌های idx+1 تا confirm_idx داره. یعنی در عمل، در لحظه‌ای
+            # که واقعاً می‌فهمیم "این Setup معتبره"، بازار از قیمت entry_price
+            # (Close کندل idx) فاصله گرفته. بررسی می‌کنیم این فاصله چقدره:
+            realistic_entry = df4h["close"].iloc[confirm_idx] if confirm_idx else entry_price
+            entry_slippage_atr = abs(realistic_entry - entry_price) / atr if atr else 0
+            look_ahead_flags.append({
+                "symbol": symbol, "claimed_entry": entry_price, "realistic_entry": realistic_entry,
+                "bars_to_confirm": confirm_idx - idx if confirm_idx else 0,
+                "slippage_atr": round(entry_slippage_atr, 3),
+            })
+
+            setups.append({
+                "symbol": symbol, "direction": direction, "entry": entry_price,
+                "tp1": tp1, "tp2": tp2, "bos": bos, "idx": idx, "atr": atr, "df": df4h,
+            })
         time.sleep(0.5)
 
-    print(f"\nTotal Candidates Simulated: {len(results)}\n")
-    for r in results:
-        print(f"{r['symbol']} | {r['direction']} | Entry={r['entry']:.6f} | "
-              f"Result={r['result']} | Bars={r['bars_held']} | MFE={r['mfe']:.4f} | MAE={r['mae']:.4f}")
+    print(f"\nTotal Setups (Snapshot, Immutable): {len(setups)}\n")
 
-    tp2 = sum(1 for r in results if r["result"] == "TP2_HIT")
-    tp1_be = sum(1 for r in results if r["result"] == "TP1_THEN_SL (BE-ish)")
-    tp1_open = sum(1 for r in results if r["result"] == "TP1_ONLY_OPEN")
-    sl_hit = sum(1 for r in results if r["result"] == "SL_HIT")
-    open_none = sum(1 for r in results if r["result"] == "OPEN_NO_OUTCOME")
-    total = len(results)
+    # === بخش ۱: بررسی Look-Ahead Timing ===
+    print("=" * 60)
+    print("LOOK-AHEAD TIMING CHECK (بند 10-11)")
+    print("=" * 60)
+    slippages = [f["slippage_atr"] for f in look_ahead_flags]
+    bars_list = [f["bars_to_confirm"] for f in look_ahead_flags]
+    if slippages:
+        print(f"Entry اعلام‌شده (Close کندل BOS) در برابر قیمتی که واقعاً در لحظه تأیید Follow-through در دسترس بود:")
+        print(f"  Mean Slippage (ATR): {sum(slippages)/len(slippages):.3f} | Median: {median(slippages):.3f} | Max: {max(slippages):.3f}")
+        print(f"  Mean Bars to Confirm: {sum(bars_list)/len(bars_list):.2f}")
+        significant_slippage = sum(1 for s in slippages if s > 0.3)
+        print(f"  تعداد نمونه با Slippage > 0.3 ATR: {significant_slippage} از {len(slippages)} ({round(significant_slippage/len(slippages)*100,1)}%)")
+        print("\n  ⚠️ نتیجه: Entry فعلی روی Close کندل BOS ثبت می‌شه، ولی تأیید")
+        print("  Follow-through به کندل‌های بعدی نیاز داره. اگه Slippage قابل‌توجه")
+        print("  باشه، یعنی SL/TP/RR که حساب کردیم بر پایه یه قیمت Entry ساخته")
+        print("  شده که در لحظه تصمیم واقعی (بعد از تأیید FT) دیگه در دسترس نبوده.")
+
+    # === بخش ۲: مقایسه مدل‌های SL ===
+    print("\n" + "=" * 60)
+    print("SL MODEL COMPARISON (روی همون Setup Snapshot)")
+    print("=" * 60)
+
+    model_results = {"A_current_0.3pct": [], "B_atr_0.25": [], "B_atr_0.50": [], "B_atr_0.75": []}
+
+    for s in setups:
+        variants = build_sl_variants(s["direction"], s["bos"], s["atr"])
+        for model_name, sl_val in variants.items():
+            if not sl_distance_ok(s["entry"], sl_val):
+                continue
+            risk = abs(s["entry"] - sl_val)
+            reward1 = abs(s["tp1"] - s["entry"])
+            if risk == 0 or reward1 == 0:
+                continue
+            rr1 = reward1 / risk
+            if rr1 < MIN_RR:
+                continue
+            outcome = simulate_outcome(s["df"], s["direction"], s["entry"], sl_val, s["tp1"], s["tp2"], s["idx"])
+            model_results[model_name].append({
+                "symbol": s["symbol"], "result": outcome["result"], "bars_held": outcome["bars_held"],
+                "mae": outcome["mae"], "mfe": outcome["mfe"], "risk": risk, "rr1": rr1,
+                "stop_pct": round(risk / s["entry"] * 100, 3),
+            })
+
+    for model_name, results in model_results.items():
+        total = len(results)
+        if total == 0:
+            print(f"\n--- {model_name} --- N=0")
+            continue
+        sl_first_candle = sum(1 for r in results if r["result"] == "SL_HIT" and r["bars_held"] == 1)
+        sl_within_3 = sum(1 for r in results if r["result"] == "SL_HIT" and r["bars_held"] <= 3)
+        tp2 = sum(1 for r in results if r["result"] == "TP2_HIT")
+        tp1_be = sum(1 for r in results if r["result"] == "TP1_THEN_SL")
+        tp1_open = sum(1 for r in results if r["result"] == "TP1_ONLY_OPEN")
+        sl_total = sum(1 for r in results if r["result"] == "SL_HIT")
+        mae_over_risk = [r["mae"]/r["risk"] for r in results if r["risk"] > 0]
+        r_multiples = []
+        for r in results:
+            if r["result"] == "TP2_HIT":
+                r_multiples.append(r["rr1"] * (r["mfe"]/r["risk"] if r["risk"] else 0) if False else r["rr1"])
+            elif r["result"] in ("TP1_THEN_SL",):
+                r_multiples.append(0)
+            elif r["result"] == "SL_HIT":
+                r_multiples.append(-1)
+        expectancy = sum(r_multiples)/len(r_multiples) if r_multiples else None
+        stop_pcts = [r["stop_pct"] for r in results]
+
+        print(f"\n--- {model_name} --- N={total}")
+        print(f"  SL_HIT (کندل اول): {sl_first_candle} ({round(sl_first_candle/total*100,1)}%)")
+        print(f"  SL_HIT (تا کندل 3): {sl_within_3} ({round(sl_within_3/total*100,1)}%)")
+        print(f"  SL_HIT (کل): {sl_total} ({round(sl_total/total*100,1)}%)")
+        print(f"  TP2_HIT: {tp2} ({round(tp2/total*100,1)}%)")
+        print(f"  TP1_THEN_SL: {tp1_be} ({round(tp1_be/total*100,1)}%)")
+        print(f"  TP1_ONLY_OPEN: {tp1_open} ({round(tp1_open/total*100,1)}%)")
+        print(f"  Median Stop Distance %: {median(stop_pcts)}")
+        print(f"  Mean MAE/Risk ratio: {sum(mae_over_risk)/len(mae_over_risk):.2f}" if mae_over_risk else "  N/A")
+        print(f"  Expectancy (R-multiple ساده‌شده): {round(expectancy,2) if expectancy is not None else 'N/A'}")
 
     print("\n" + "=" * 70)
-    print("SUMMARY:")
-    print(f"  TP2_HIT (برد کامل): {tp2} ({round(tp2/total*100,1) if total else 0}%)")
-    print(f"  TP1_THEN_SL (برد جزئی/تقریباً BE): {tp1_be} ({round(tp1_be/total*100,1) if total else 0}%)")
-    print(f"  TP1_ONLY_OPEN (هنوز باز، فقط TP1): {tp1_open} ({round(tp1_open/total*100,1) if total else 0}%)")
-    print(f"  SL_HIT (باخت کامل): {sl_hit} ({round(sl_hit/total*100,1) if total else 0}%)")
-    print(f"  OPEN_NO_OUTCOME (هنوز بدون نتیجه): {open_none} ({round(open_none/total*100,1) if total else 0}%)")
-
-    win_rate_strict = round((tp2) / total * 100, 1) if total else 0
-    win_rate_loose = round((tp2 + tp1_be + tp1_open) / total * 100, 1) if total else 0
-    print(f"\n  Win Rate (فقط TP2 کامل): {win_rate_strict}%")
-    print(f"  Win Rate (هر نوع برخورد به TP1 یا بیشتر): {win_rate_loose}%")
-    print("=" * 70)
