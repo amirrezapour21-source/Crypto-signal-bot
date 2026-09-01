@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5x: Anti-Chasing Metric Re-Design Audit (Shadow Only)
+Crypto Signal Bot V4 — Phase 5y: Displacement Discrimination Audit (Shadow Only)
 """
 
 import requests
@@ -185,12 +185,7 @@ def compute_avg_volume(df, lookback=20):
     return df["volume"].rolling(lookback).mean()
 
 
-def compute_avg_range(df, lookback=20):
-    return (df["high"] - df["low"]).rolling(lookback).mean()
-
-
-def displacement_details(df, idx, avg_body, avg_volume, direction,
-                           body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
+def raw_displacement_metrics(df, idx, avg_body, avg_volume, direction):
     if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
         return None
     row = df.iloc[idx]
@@ -204,11 +199,7 @@ def displacement_details(df, idx, avg_body, avg_volume, direction,
         close_position = (row["close"] - row["low"]) / candle_range
     else:
         close_position = (row["high"] - row["close"]) / candle_range
-    body_ok = body_ratio >= body_multiplier
-    volume_ok = volume_ratio >= volume_multiplier
-    close_ok = close_position >= (1 - close_position_pct)
-    return {"body_ratio": body_ratio, "volume_ratio": volume_ratio,
-            "close_position": close_position, "overall_pass": body_ok and volume_ok and close_ok}
+    return {"body_ratio": body_ratio, "volume_ratio": volume_ratio, "close_position": close_position}
 
 
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
@@ -238,9 +229,32 @@ def median(values):
     return percentile(values, 0.5)
 
 
+def bucket_success_rate(records, metric_key, n_buckets=4):
+    """رکوردها رو بر اساس مقدار metric_key به n_buckets تقسیم می‌کنه و
+    Follow-through Success Rate هر باکت رو برمی‌گردونه."""
+    valid = [r for r in records if r[metric_key] is not None and r["follow_through"] is not None]
+    if len(valid) < n_buckets * 3:
+        return []
+    sorted_recs = sorted(valid, key=lambda r: r[metric_key])
+    bucket_size = len(sorted_recs) // n_buckets
+    results = []
+    for i in range(n_buckets):
+        start = i * bucket_size
+        end = (i + 1) * bucket_size if i < n_buckets - 1 else len(sorted_recs)
+        bucket = sorted_recs[start:end]
+        if not bucket:
+            continue
+        ft_vals = [r["follow_through"] for r in bucket]
+        success_rate = sum(ft_vals) / len(ft_vals) * 100
+        min_val = bucket[0][metric_key]
+        max_val = bucket[-1][metric_key]
+        results.append({"range": f"{min_val:.2f}-{max_val:.2f}", "n": len(bucket), "success_rate": round(success_rate, 1)})
+    return results
+
+
 if __name__ == "__main__":
-    print("PHASE: 5x")
-    print("STATUS: EXECUTING - Anti-Chasing Metric Re-Design Audit")
+    print("PHASE: 5y")
+    print("STATUS: EXECUTING - Displacement Discrimination Audit")
     print("=" * 70)
 
     records = []
@@ -255,7 +269,6 @@ if __name__ == "__main__":
         daily_regime = get_daily_regime(symbol)
         avg_body = compute_avg_body(df4h)
         avg_volume = compute_avg_volume(df4h)
-        avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
             idx = bos["index"]
@@ -264,111 +277,49 @@ if __name__ == "__main__":
             if not global_regime_filter(daily_regime, direction):
                 continue
 
-            atr = avg_range.iloc[idx]
-            if pd.isna(atr) or atr == 0:
+            dm = raw_displacement_metrics(df4h, idx, avg_body, avg_volume, direction)
+            if dm is None:
                 continue
 
-            if direction == "bullish":
-                relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
-            else:
-                relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
-            if not relevant:
-                continue
-            swing = relevant[-1]
-
-            row = df4h.iloc[idx]
-            current_close = row["close"]
-            open_price = row["open"]
-            broken_level = bos["broken_level"]
-
-            # A) Current metric (Swing -> Close)
-            if direction == "bullish":
-                current_extension = (current_close - swing["price"]) / atr
-                pre_bos_extension = (open_price - swing["price"]) / atr
-                swing_to_bos_level = (broken_level - swing["price"]) / atr
-                bos_level_to_close = (current_close - broken_level) / atr
-                bos_candle_disp = (current_close - open_price) / atr
-            else:
-                current_extension = (swing["price"] - current_close) / atr
-                pre_bos_extension = (swing["price"] - open_price) / atr
-                swing_to_bos_level = (swing["price"] - broken_level) / atr
-                bos_level_to_close = (broken_level - current_close) / atr
-                bos_candle_disp = (open_price - current_close) / atr
-
-            bars_since_swing = idx - swing["index"]
-
-            dd = displacement_details(df4h, idx, avg_body, avg_volume, direction)
             ft = detect_follow_through(df4h, idx, direction)
 
             records.append({
                 "symbol": symbol, "direction": direction,
-                "current_extension_atr": round(current_extension, 2),
-                "pre_bos_extension_atr": round(pre_bos_extension, 2),
-                "swing_to_bos_level_atr": round(swing_to_bos_level, 2),
-                "bos_level_to_close_atr": round(bos_level_to_close, 2),
-                "bos_candle_displacement_atr": round(bos_candle_disp, 2),
-                "bars_since_swing": bars_since_swing,
-                "volume_ratio": round(dd["volume_ratio"], 2) if dd else None,
-                "follow_through": ft,
+                "body_ratio": dm["body_ratio"], "volume_ratio": dm["volume_ratio"],
+                "close_position": dm["close_position"], "follow_through": ft,
             })
         time.sleep(0.5)
 
-    print(f"\nTotal BOS analyzed (Daily-passed): {len(records)}\n")
+    print(f"\nTotal BOS analyzed (Daily-passed): {len(records)}")
+    ft_valid = [r for r in records if r["follow_through"] is not None]
+    print(f"Follow-through valid samples: {len(ft_valid)}\n")
 
-    ft_pass_records = [r for r in records if r["follow_through"] is True]
-    ft_fail_records = [r for r in records if r["follow_through"] is False]
+    for metric in ["body_ratio", "volume_ratio", "close_position"]:
+        vals = [r[metric] for r in records if r[metric] is not None]
+        print(f"\n{'=' * 50}")
+        print(f"METRIC: {metric}")
+        print(f"{'=' * 50}")
+        print(f"N={len(vals)} | Min={min(vals):.2f} | P25={percentile(vals,0.25):.2f} | "
+              f"Median={median(vals):.2f} | P75={percentile(vals,0.75):.2f} | Max={max(vals):.2f}")
 
-    print(f"Follow-through PASS: {len(ft_pass_records)} | FAIL: {len(ft_fail_records)} | N/A: {len(records) - len(ft_pass_records) - len(ft_fail_records)}")
+        current_threshold = {"body_ratio": 1.2, "volume_ratio": 1.3, "close_position": 0.75}[metric]
+        fail_rate = sum(1 for v in vals if v < current_threshold) / len(vals) * 100
+        print(f"Current threshold={current_threshold} | Fail Rate={round(fail_rate,1)}%")
 
-    # آنالیز کلیدی: چند مورد که AC رد می‌کرد (>2.5) واقعاً FollowThrough داشتن
-    rejected_by_ac_with_good_ft = [r for r in ft_pass_records if r["current_extension_atr"] > MAX_EXTENSION_ATR]
-    passed_by_ac_with_good_ft = [r for r in ft_pass_records if r["current_extension_atr"] <= MAX_EXTENSION_ATR]
+        buckets = bucket_success_rate(records, metric, n_buckets=4)
+        print("Follow-through Success Rate by bucket (low->high):")
+        for b in buckets:
+            print(f"  range={b['range']} | n={b['n']} | FT_success_rate={b['success_rate']}%")
 
-    print(f"\nاز میان Follow-through=PASS ({len(ft_pass_records)} مورد):")
-    print(f"  Anti-Chasing فعلی رد می‌کرد (ext>2.5) ولی FollowThrough داشتن: {len(rejected_by_ac_with_good_ft)}")
-    print(f"  Anti-Chasing فعلی قبول می‌کرد (ext<=2.5) و FollowThrough داشتن: {len(passed_by_ac_with_good_ft)}")
-
-    # تقسیم به سه گروه بر اساس current_extension_atr
-    all_ext = [r["current_extension_atr"] for r in records]
-    if all_ext:
-        p33 = percentile(all_ext, 0.33)
-        p66 = percentile(all_ext, 0.66)
-        group_a = [r for r in records if r["current_extension_atr"] <= p33]
-        group_b = [r for r in records if p33 < r["current_extension_atr"] <= p66]
-        group_c = [r for r in records if r["current_extension_atr"] > p66]
-
-        print(f"\n--- GROUP A (extension پایین, <= {p33:.2f}) ---")
-        print(f"  N={len(group_a)}")
-        ft_a = [r["follow_through"] for r in group_a if r["follow_through"] is not None]
-        if ft_a:
-            print(f"  Follow-through Success Rate: {round(sum(ft_a)/len(ft_a)*100,1)}%")
-        vr_a = [r["volume_ratio"] for r in group_a if r["volume_ratio"] is not None]
-        if vr_a:
-            print(f"  Mean Volume Ratio: {round(sum(vr_a)/len(vr_a),2)}")
-
-        print(f"\n--- GROUP B (extension متوسط, {p33:.2f}-{p66:.2f}) ---")
-        print(f"  N={len(group_b)}")
-        ft_b = [r["follow_through"] for r in group_b if r["follow_through"] is not None]
-        if ft_b:
-            print(f"  Follow-through Success Rate: {round(sum(ft_b)/len(ft_b)*100,1)}%")
-        vr_b = [r["volume_ratio"] for r in group_b if r["volume_ratio"] is not None]
-        if vr_b:
-            print(f"  Mean Volume Ratio: {round(sum(vr_b)/len(vr_b),2)}")
-
-        print(f"\n--- GROUP C (extension بسیار بالا, > {p66:.2f}) ---")
-        print(f"  N={len(group_c)}")
-        ft_c = [r["follow_through"] for r in group_c if r["follow_through"] is not None]
-        if ft_c:
-            print(f"  Follow-through Success Rate: {round(sum(ft_c)/len(ft_c)*100,1)}%")
-        vr_c = [r["volume_ratio"] for r in group_c if r["volume_ratio"] is not None]
-        if vr_c:
-            print(f"  Mean Volume Ratio: {round(sum(vr_c)/len(vr_c),2)}")
+        # False reject: زیر Threshold ولی Follow-through=True
+        false_reject = sum(1 for r in records if r[metric] is not None and r[metric] < current_threshold
+                            and r["follow_through"] is True)
+        true_ft_total = sum(1 for r in records if r["follow_through"] is True)
+        if true_ft_total:
+            print(f"False Reject Rate (زیر Threshold ولی FT=True): {false_reject}/{true_ft_total} "
+                  f"({round(false_reject/true_ft_total*100,1)}%)")
 
     print("\n" + "=" * 70)
-    print("SAMPLE OF RAW RECORDS (first 15):")
-    for r in records[:15]:
-        print(f"  {r['symbol']} | {r['direction']} | current_ext={r['current_extension_atr']} | "
-              f"pre_bos_ext={r['pre_bos_extension_atr']} | swing_to_level={r['swing_to_bos_level_atr']} | "
-              f"level_to_close={r['bos_level_to_close_atr']} | bos_disp={r['bos_candle_displacement_atr']} | "
-              f"bars_since={r['bars_since_swing']} | FT={r['follow_through']}")
+    print("COMBINED SUMMARY (Anti-Chasing از Phase 5x در برابر Displacement):")
+    print("  Anti-Chasing (Group A->C): 46.2% -> 38.0% -> 11.1% (تفکیک قوی، یک‌طرفه)")
     print("=" * 70)
