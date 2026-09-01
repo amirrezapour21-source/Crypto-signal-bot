@@ -1,14 +1,8 @@
 """
-Crypto Signal Bot V4 — Phase 6: New Production Funnel + Full Trade Parameters
-(Displacement moved to Shadow Mode per Phase 5aa decision)
-
-Funnel:
-Daily Regime -> Fresh BOS -> Follow-through -> Anti-Chasing ->
-Structural Liquidity Target (Equal-Level, Phase 5u) ->
-Invalidation-based SL (Phase 5v Model C) -> Valid R:R -> Final Candidate
-
-Displacement metrics همچنان محاسبه و ثبت می‌شن (Shadow Feature)،
-ولی دیگه باعث Reject نمی‌شن.
+Crypto Signal Bot V4 — Phase 7: Forward Simulation / Outcome Validation
+برای هر Candidate تولیدشده در Phase 6، بعد از BOS، کندل‌های واقعی
+بعدی رو چک می‌کنیم ببینیم TP1/TP2/SL کدوم زودتر خورده - این
+Backtest معمولیه (نه Look-Ahead در ساخت Entry، فقط ارزیابی نتیجه).
 """
 
 import requests
@@ -34,6 +28,7 @@ MAX_EXTENSION_ATR = 2.5
 MIN_SL_DISTANCE_PCT = 0.005
 MIN_RR = 1.5
 EQUAL_LEVEL_TOLERANCE_ATR = 0.15
+MAX_HOLD_CANDLES = 60  # حداکثر تعداد کندل بعد از Entry برای منتظر موندن نتیجه
 
 
 def safe_get(url, params=None, retries=3):
@@ -189,35 +184,8 @@ def global_regime_filter(daily_regime, requested_direction):
     return True
 
 
-def compute_avg_body(df, lookback=20):
-    return (df["close"] - df["open"]).abs().rolling(lookback).mean()
-
-
-def compute_avg_volume(df, lookback=20):
-    return df["volume"].rolling(lookback).mean()
-
-
 def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
-
-
-def displacement_shadow(df, idx, avg_body, avg_volume, direction):
-    """فقط برای ثبت (Shadow) - دیگه باعث Reject نمی‌شه"""
-    if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
-        return None
-    row = df.iloc[idx]
-    body_size = abs(row["close"] - row["open"])
-    candle_range = row["high"] - row["low"]
-    if candle_range == 0:
-        return None
-    body_ratio = body_size / avg_body.iloc[idx]
-    volume_ratio = row["volume"] / avg_volume.iloc[idx]
-    if direction == "bullish":
-        close_position = (row["close"] - row["low"]) / candle_range
-    else:
-        close_position = (row["high"] - row["close"]) / candle_range
-    return {"body_ratio": round(body_ratio, 2), "volume_ratio": round(volume_ratio, 2),
-            "close_position": round(close_position, 2)}
 
 
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
@@ -266,64 +234,92 @@ def sl_distance_ok(entry, sl):
     return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
 
 
-def build_candidate(symbol, direction, idx, bos, df, structure, atr, daily_regime, disp_shadow, ext):
+def build_candidate(symbol, direction, idx, bos, structure, atr):
     entry_price = bos["close"]
-
-    # Structural Liquidity Target (Phase 5u: نزدیک‌ترین STRONG equal-level، بدون Look-Ahead)
     if direction == "bullish":
         target_pool = [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
     else:
         target_pool = [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
-
     if not target_pool:
-        return None, "no_target_pool"
-
+        return None
     strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
     use_pool = strong_targets if strong_targets else target_pool
-    target_type = "STRONG (equal-level)" if strong_targets else "POTENTIAL (isolated swing)"
     sorted_pool = sorted(use_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
     tp1 = sorted_pool[0]["price"]
     tp2 = sorted_pool[-1]["price"] if len(sorted_pool) > 1 else tp1
-
-    # Invalidation-based SL (Phase 5v Model C: خود broken_level BOS)
     buffer_pct = 1.003 if direction == "bearish" else 0.997
     sl = bos["broken_level"] * buffer_pct
-
     if not sl_distance_ok(entry_price, sl):
-        return None, "sl_too_close"
-
+        return None
     risk = abs(entry_price - sl)
     reward1 = abs(tp1 - entry_price)
     if risk == 0 or reward1 == 0:
-        return None, "invalid_risk_reward"
+        return None
     rr1 = reward1 / risk
     if rr1 < MIN_RR:
-        return None, f"rr_too_low ({rr1:.2f})"
+        return None
+    return {"symbol": symbol, "direction": direction, "entry": entry_price, "sl": sl,
+            "tp1": tp1, "tp2": tp2, "rr1": rr1, "bos_index": idx}
 
-    reward2 = abs(tp2 - entry_price)
-    rr2 = reward2 / risk
 
-    return {
-        "symbol": symbol, "direction": "LONG" if direction == "bullish" else "SHORT",
-        "entry": round(entry_price, 6), "sl": round(sl, 6),
-        "tp1": round(tp1, 6), "tp2": round(tp2, 6),
-        "risk_pct": round(risk / entry_price * 100, 3),
-        "rr1": round(rr1, 2), "rr2": round(rr2, 2),
-        "target_type": target_type, "daily_regime": daily_regime,
-        "extension_atr": round(ext, 2), "displacement_shadow": disp_shadow,
-        "bos_time": str(bos["time"]), "bos_index": idx,
-    }, "PASS"
+def simulate_outcome(df, candidate, max_hold=MAX_HOLD_CANDLES):
+    """
+    از کندل بعد از bos_index شروع می‌کنیم و می‌بینیم اول SL می‌خوره،
+    TP1، یا TP2. اگه هر دو (SL و TP) توی یه کندل باشن، طبق قانون
+    محافظه‌کارانه SL رو اول در نظر می‌گیریم.
+    """
+    idx = candidate["bos_index"]
+    direction = candidate["direction"]
+    entry, sl, tp1, tp2 = candidate["entry"], candidate["sl"], candidate["tp1"], candidate["tp2"]
+
+    end_idx = min(idx + 1 + max_hold, len(df))
+    mfe, mae = 0, 0
+    tp1_hit = False
+
+    for i in range(idx + 1, end_idx):
+        row = df.iloc[i]
+        if direction == "bullish":
+            favorable = row["high"] - entry
+            adverse = entry - row["low"]
+        else:
+            favorable = entry - row["low"]
+            adverse = row["high"] - entry
+        mfe = max(mfe, favorable)
+        mae = max(mae, adverse)
+
+        if direction == "bullish":
+            sl_hit = row["low"] <= sl
+            tp1_hit_now = row["high"] >= tp1
+            tp2_hit_now = row["high"] >= tp2
+        else:
+            sl_hit = row["high"] >= sl
+            tp1_hit_now = row["low"] <= tp1
+            tp2_hit_now = row["low"] <= tp2
+
+        if not tp1_hit:
+            if sl_hit:
+                return {"result": "SL_HIT", "bars_held": i - idx, "mfe": mfe, "mae": mae}
+            if tp1_hit_now:
+                tp1_hit = True
+                if tp2_hit_now:
+                    return {"result": "TP2_HIT", "bars_held": i - idx, "mfe": mfe, "mae": mae}
+        else:
+            if sl_hit:
+                return {"result": "TP1_THEN_SL (BE-ish)", "bars_held": i - idx, "mfe": mfe, "mae": mae}
+            if tp2_hit_now:
+                return {"result": "TP2_HIT", "bars_held": i - idx, "mfe": mfe, "mae": mae}
+
+    if tp1_hit:
+        return {"result": "TP1_ONLY_OPEN", "bars_held": end_idx - idx - 1, "mfe": mfe, "mae": mae}
+    return {"result": "OPEN_NO_OUTCOME", "bars_held": end_idx - idx - 1, "mfe": mfe, "mae": mae}
 
 
 if __name__ == "__main__":
-    print("PHASE: 6")
-    print("STATUS: EXECUTING - New Production Funnel (Displacement=Shadow)")
+    print("PHASE: 7")
+    print("STATUS: EXECUTING - Forward Simulation / Outcome Validation")
     print("=" * 70)
 
-    final_candidates = []
-    reject_reasons = {}
-    funnel = {"total_bos": 0, "daily_pass": 0, "ft_pass": 0, "antichase_pass": 0,
-              "target_sl_rr_pass": 0}
+    results = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -333,57 +329,52 @@ if __name__ == "__main__":
         structure = classify_market_structure(df4h)
         bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
         daily_regime = get_daily_regime(symbol)
-        avg_body = compute_avg_body(df4h)
-        avg_volume = compute_avg_volume(df4h)
         avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
-            funnel["total_bos"] += 1
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-
             if not global_regime_filter(daily_regime, direction):
                 continue
-            funnel["daily_pass"] += 1
-
             ft = detect_follow_through(df4h, idx, direction)
             if ft is None or not ft:
                 continue
-            funnel["ft_pass"] += 1
-
             atr = avg_range.iloc[idx]
             if pd.isna(atr) or atr == 0:
                 continue
-
             ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
             if not ac_ok:
                 continue
-            funnel["antichase_pass"] += 1
+            candidate = build_candidate(symbol, direction, idx, bos, structure, atr)
+            if candidate is None:
+                continue
 
-            disp_shadow = displacement_shadow(df4h, idx, avg_body, avg_volume, direction)
-
-            candidate, reason = build_candidate(symbol, direction, idx, bos, df4h, structure,
-                                                  atr, daily_regime, disp_shadow, ext)
-            if candidate:
-                funnel["target_sl_rr_pass"] += 1
-                final_candidates.append(candidate)
-            else:
-                reject_reasons[reason] = reject_reasons.get(reason, 0) + 1
+            outcome = simulate_outcome(df4h, candidate)
+            results.append({**candidate, **outcome})
         time.sleep(0.5)
 
-    print("\n--- FUNNEL ---")
-    for k, v in funnel.items():
-        print(f"  {k}: {v}")
+    print(f"\nTotal Candidates Simulated: {len(results)}\n")
+    for r in results:
+        print(f"{r['symbol']} | {r['direction']} | Entry={r['entry']:.6f} | "
+              f"Result={r['result']} | Bars={r['bars_held']} | MFE={r['mfe']:.4f} | MAE={r['mae']:.4f}")
 
-    print(f"\n--- REJECT REASONS (بعد از Anti-Chasing) ---")
-    for k, v in reject_reasons.items():
-        print(f"  {k}: {v}")
+    tp2 = sum(1 for r in results if r["result"] == "TP2_HIT")
+    tp1_be = sum(1 for r in results if r["result"] == "TP1_THEN_SL (BE-ish)")
+    tp1_open = sum(1 for r in results if r["result"] == "TP1_ONLY_OPEN")
+    sl_hit = sum(1 for r in results if r["result"] == "SL_HIT")
+    open_none = sum(1 for r in results if r["result"] == "OPEN_NO_OUTCOME")
+    total = len(results)
 
-    print(f"\n--- FINAL CANDIDATES: {len(final_candidates)} ---\n")
-    for c in final_candidates:
-        print(f"{c['symbol']} | {c['direction']} | Entry={c['entry']} | SL={c['sl']} | "
-              f"TP1={c['tp1']} | TP2={c['tp2']} | Risk%={c['risk_pct']} | "
-              f"RR1={c['rr1']} | RR2={c['rr2']} | Target={c['target_type']} | "
-              f"Ext={c['extension_atr']} | Disp(shadow)={c['displacement_shadow']}")
+    print("\n" + "=" * 70)
+    print("SUMMARY:")
+    print(f"  TP2_HIT (برد کامل): {tp2} ({round(tp2/total*100,1) if total else 0}%)")
+    print(f"  TP1_THEN_SL (برد جزئی/تقریباً BE): {tp1_be} ({round(tp1_be/total*100,1) if total else 0}%)")
+    print(f"  TP1_ONLY_OPEN (هنوز باز، فقط TP1): {tp1_open} ({round(tp1_open/total*100,1) if total else 0}%)")
+    print(f"  SL_HIT (باخت کامل): {sl_hit} ({round(sl_hit/total*100,1) if total else 0}%)")
+    print(f"  OPEN_NO_OUTCOME (هنوز بدون نتیجه): {open_none} ({round(open_none/total*100,1) if total else 0}%)")
 
+    win_rate_strict = round((tp2) / total * 100, 1) if total else 0
+    win_rate_loose = round((tp2 + tp1_be + tp1_open) / total * 100, 1) if total else 0
+    print(f"\n  Win Rate (فقط TP2 کامل): {win_rate_strict}%")
+    print(f"  Win Rate (هر نوع برخورد به TP1 یا بیشتر): {win_rate_loose}%")
     print("=" * 70)
