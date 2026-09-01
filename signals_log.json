@@ -989,5 +989,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "NEAR_1788286830",
+    "symbol": "NEAR",
+    "coin_id": "near",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.9195,
+    "sl": 1.9428642947362522,
+    "tp1": 1.8034477547343315,
+    "tp2": 1.6842532824813057,
+    "signal_time": "2026-09-01T18:20:30.248789+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
