@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5y: Displacement Discrimination Audit (Shadow Only)
+Crypto Signal Bot V4 — Phase 5z: Displacement Re-Design Audit (Shadow Only)
 """
 
 import requests
@@ -21,7 +21,6 @@ TEST_SYMBOLS = [
     "GMX-USDT", "STX-USDT", "KAVA-USDT", "ZIL-USDT", "ONE-USDT"
 ]
 LOOKBACK_RECENT = 60
-MAX_EXTENSION_ATR = 2.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -185,23 +184,6 @@ def compute_avg_volume(df, lookback=20):
     return df["volume"].rolling(lookback).mean()
 
 
-def raw_displacement_metrics(df, idx, avg_body, avg_volume, direction):
-    if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
-        return None
-    row = df.iloc[idx]
-    body_size = abs(row["close"] - row["open"])
-    candle_range = row["high"] - row["low"]
-    if candle_range == 0:
-        return None
-    body_ratio = body_size / avg_body.iloc[idx]
-    volume_ratio = row["volume"] / avg_volume.iloc[idx]
-    if direction == "bullish":
-        close_position = (row["close"] - row["low"]) / candle_range
-    else:
-        close_position = (row["high"] - row["close"]) / candle_range
-    return {"body_ratio": body_ratio, "volume_ratio": volume_ratio, "close_position": close_position}
-
-
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
     end_idx = min(breakout_idx + candles_after + 1, len(df))
     if end_idx <= breakout_idx + 1:
@@ -229,32 +211,55 @@ def median(values):
     return percentile(values, 0.5)
 
 
-def bucket_success_rate(records, metric_key, n_buckets=4):
-    """رکوردها رو بر اساس مقدار metric_key به n_buckets تقسیم می‌کنه و
-    Follow-through Success Rate هر باکت رو برمی‌گردونه."""
-    valid = [r for r in records if r[metric_key] is not None and r["follow_through"] is not None]
+def bucket_success_rate(records, key, n_buckets=4):
+    valid = [r for r in records if r[key] is not None and r["follow_through"] is not None]
     if len(valid) < n_buckets * 3:
         return []
-    sorted_recs = sorted(valid, key=lambda r: r[metric_key])
+    sorted_recs = sorted(valid, key=lambda r: r[key])
     bucket_size = len(sorted_recs) // n_buckets
     results = []
     for i in range(n_buckets):
         start = i * bucket_size
         end = (i + 1) * bucket_size if i < n_buckets - 1 else len(sorted_recs)
-        bucket = sorted_recs[start:end]
-        if not bucket:
+        b = sorted_recs[start:end]
+        if not b:
             continue
-        ft_vals = [r["follow_through"] for r in bucket]
-        success_rate = sum(ft_vals) / len(ft_vals) * 100
-        min_val = bucket[0][metric_key]
-        max_val = bucket[-1][metric_key]
-        results.append({"range": f"{min_val:.2f}-{max_val:.2f}", "n": len(bucket), "success_rate": round(success_rate, 1)})
+        ft_vals = [r["follow_through"] for r in b]
+        results.append({"range": f"{b[0][key]:.2f}-{b[-1][key]:.2f}", "n": len(b),
+                        "success_rate": round(sum(ft_vals)/len(ft_vals)*100, 1)})
     return results
 
 
+def quadrant_analysis(records, key_x, key_y):
+    valid = [r for r in records if r[key_x] is not None and r[key_y] is not None and r["follow_through"] is not None]
+    if len(valid) < 8:
+        return None
+    med_x = median([r[key_x] for r in valid])
+    med_y = median([r[key_y] for r in valid])
+    quads = {"high_x_high_y": [], "high_x_low_y": [], "low_x_high_y": [], "low_x_low_y": []}
+    for r in valid:
+        x_high = r[key_x] >= med_x
+        y_high = r[key_y] >= med_y
+        if x_high and y_high:
+            quads["high_x_high_y"].append(r["follow_through"])
+        elif x_high and not y_high:
+            quads["high_x_low_y"].append(r["follow_through"])
+        elif not x_high and y_high:
+            quads["low_x_high_y"].append(r["follow_through"])
+        else:
+            quads["low_x_low_y"].append(r["follow_through"])
+    result = {}
+    for k, vals in quads.items():
+        if vals:
+            result[k] = {"n": len(vals), "success_rate": round(sum(vals)/len(vals)*100, 1)}
+        else:
+            result[k] = {"n": 0, "success_rate": None}
+    return result
+
+
 if __name__ == "__main__":
-    print("PHASE: 5y")
-    print("STATUS: EXECUTING - Displacement Discrimination Audit")
+    print("PHASE: 5z")
+    print("STATUS: EXECUTING - Displacement Re-Design Audit")
     print("=" * 70)
 
     records = []
@@ -267,8 +272,12 @@ if __name__ == "__main__":
         structure = classify_market_structure(df4h)
         bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
         daily_regime = get_daily_regime(symbol)
-        avg_body = compute_avg_body(df4h)
-        avg_volume = compute_avg_volume(df4h)
+        avg_body_long = compute_avg_body(df4h, lookback=20)
+        avg_volume = compute_avg_volume(df4h, lookback=20)
+        body_series = (df4h["close"] - df4h["open"]).abs()
+        range_series = df4h["high"] - df4h["low"]
+        avg_body_short = body_series.rolling(5).mean()
+        avg_range_short = range_series.rolling(5).mean()
 
         for bos in bos_events:
             idx = bos["index"]
@@ -277,49 +286,98 @@ if __name__ == "__main__":
             if not global_regime_filter(daily_regime, direction):
                 continue
 
-            dm = raw_displacement_metrics(df4h, idx, avg_body, avg_volume, direction)
-            if dm is None:
+            if idx < 6:
                 continue
+            if pd.isna(avg_body_short.iloc[idx-1]) or avg_body_short.iloc[idx-1] == 0:
+                continue
+            if pd.isna(avg_body_long.iloc[idx]) or avg_body_long.iloc[idx] == 0:
+                continue
+            if pd.isna(avg_volume.iloc[idx]) or avg_volume.iloc[idx] == 0:
+                continue
+
+            row = df4h.iloc[idx]
+            body_size = abs(row["close"] - row["open"])
+            candle_range = row["high"] - row["low"]
+            if candle_range == 0:
+                continue
+
+            # از idx-1 به عقب برای baseline محلی استفاده می‌کنیم (بدون خود کندل BOS)
+            local_avg_body = body_series.iloc[idx-5:idx].mean()
+            local_avg_range = range_series.iloc[idx-5:idx].mean()
+
+            body_ratio_long = body_size / avg_body_long.iloc[idx]
+            volume_ratio = row["volume"] / avg_volume.iloc[idx]
+            if direction == "bullish":
+                close_position = (row["close"] - row["low"]) / candle_range
+            else:
+                close_position = (row["high"] - row["close"]) / candle_range
+
+            rel_body_local = body_size / local_avg_body if local_avg_body and local_avg_body > 0 else None
+            rel_range_local = candle_range / local_avg_range if local_avg_range and local_avg_range > 0 else None
 
             ft = detect_follow_through(df4h, idx, direction)
 
             records.append({
                 "symbol": symbol, "direction": direction,
-                "body_ratio": dm["body_ratio"], "volume_ratio": dm["volume_ratio"],
-                "close_position": dm["close_position"], "follow_through": ft,
+                "body_ratio_long": body_ratio_long, "volume_ratio": volume_ratio,
+                "close_position": close_position, "rel_body_local": rel_body_local,
+                "rel_range_local": rel_range_local, "follow_through": ft,
             })
         time.sleep(0.5)
 
-    print(f"\nTotal BOS analyzed (Daily-passed): {len(records)}")
-    ft_valid = [r for r in records if r["follow_through"] is not None]
-    print(f"Follow-through valid samples: {len(ft_valid)}\n")
+    print(f"\nTotal BOS analyzed: {len(records)}\n")
 
-    for metric in ["body_ratio", "volume_ratio", "close_position"]:
-        vals = [r[metric] for r in records if r[metric] is not None]
-        print(f"\n{'=' * 50}")
-        print(f"METRIC: {metric}")
-        print(f"{'=' * 50}")
-        print(f"N={len(vals)} | Min={min(vals):.2f} | P25={percentile(vals,0.25):.2f} | "
-              f"Median={median(vals):.2f} | P75={percentile(vals,0.75):.2f} | Max={max(vals):.2f}")
+    print("=" * 60)
+    print("MODEL 2: Relative Price Expansion (local 5-candle baseline)")
+    print("=" * 60)
+    vals = [r["rel_body_local"] for r in records if r["rel_body_local"] is not None]
+    if vals:
+        print(f"N={len(vals)} | Min={min(vals):.2f} | Median={median(vals):.2f} | Max={max(vals):.2f}")
+    buckets = bucket_success_rate(records, "rel_body_local")
+    for b in buckets:
+        print(f"  range={b['range']} | n={b['n']} | FT_success={b['success_rate']}%")
 
-        current_threshold = {"body_ratio": 1.2, "volume_ratio": 1.3, "close_position": 0.75}[metric]
-        fail_rate = sum(1 for v in vals if v < current_threshold) / len(vals) * 100
-        print(f"Current threshold={current_threshold} | Fail Rate={round(fail_rate,1)}%")
+    print("\n" + "=" * 60)
+    print("MODEL 3: Volume Context (Volume vs Relative Expansion quadrants)")
+    print("=" * 60)
+    quad3 = quadrant_analysis(records, "volume_ratio", "rel_body_local")
+    if quad3:
+        print(f"  High Volume + High Rel.Expansion: n={quad3['high_x_high_y']['n']} | FT={quad3['high_x_high_y']['success_rate']}%")
+        print(f"  High Volume + Low Rel.Expansion:  n={quad3['high_x_low_y']['n']} | FT={quad3['high_x_low_y']['success_rate']}%")
+        print(f"  Low Volume + High Rel.Expansion:  n={quad3['low_x_high_y']['n']} | FT={quad3['low_x_high_y']['success_rate']}%")
+        print(f"  Low Volume + Low Rel.Expansion:   n={quad3['low_x_low_y']['n']} | FT={quad3['low_x_low_y']['success_rate']}%")
 
-        buckets = bucket_success_rate(records, metric, n_buckets=4)
-        print("Follow-through Success Rate by bucket (low->high):")
-        for b in buckets:
-            print(f"  range={b['range']} | n={b['n']} | FT_success_rate={b['success_rate']}%")
+    print("\n" + "=" * 60)
+    print("MODEL 4: Relative Expansion + Close Position quadrants")
+    print("=" * 60)
+    quad4 = quadrant_analysis(records, "rel_body_local", "close_position")
+    if quad4:
+        print(f"  High Expansion + High ClosePos: n={quad4['high_x_high_y']['n']} | FT={quad4['high_x_high_y']['success_rate']}%")
+        print(f"  High Expansion + Low ClosePos:  n={quad4['high_x_low_y']['n']} | FT={quad4['high_x_low_y']['success_rate']}%")
+        print(f"  Low Expansion + High ClosePos:  n={quad4['low_x_high_y']['n']} | FT={quad4['low_x_high_y']['success_rate']}%")
+        print(f"  Low Expansion + Low ClosePos:   n={quad4['low_x_low_y']['n']} | FT={quad4['low_x_low_y']['success_rate']}%")
 
-        # False reject: زیر Threshold ولی Follow-through=True
-        false_reject = sum(1 for r in records if r[metric] is not None and r[metric] < current_threshold
-                            and r["follow_through"] is True)
-        true_ft_total = sum(1 for r in records if r["follow_through"] is True)
-        if true_ft_total:
-            print(f"False Reject Rate (زیر Threshold ولی FT=True): {false_reject}/{true_ft_total} "
-                  f"({round(false_reject/true_ft_total*100,1)}%)")
+    print("\n" + "=" * 60)
+    print("MODEL 5: All Three Combined (above-median count: 0,1,2,3)")
+    print("=" * 60)
+    valid5 = [r for r in records if r["rel_body_local"] is not None and r["volume_ratio"] is not None
+              and r["close_position"] is not None and r["follow_through"] is not None]
+    if valid5:
+        med_exp = median([r["rel_body_local"] for r in valid5])
+        med_vol = median([r["volume_ratio"] for r in valid5])
+        med_cp = median([r["close_position"] for r in valid5])
+        score_groups = {0: [], 1: [], 2: [], 3: []}
+        for r in valid5:
+            score = sum([r["rel_body_local"] >= med_exp, r["volume_ratio"] >= med_vol, r["close_position"] >= med_cp])
+            score_groups[score].append(r["follow_through"])
+        for score, vals_ft in score_groups.items():
+            if vals_ft:
+                print(f"  Score={score} (تعداد شرط بالای Median): n={len(vals_ft)} | FT_success={round(sum(vals_ft)/len(vals_ft)*100,1)}%")
 
-    print("\n" + "=" * 70)
-    print("COMBINED SUMMARY (Anti-Chasing از Phase 5x در برابر Displacement):")
-    print("  Anti-Chasing (Group A->C): 46.2% -> 38.0% -> 11.1% (تفکیک قوی، یک‌طرفه)")
+    print("\n" + "=" * 60)
+    print("REFERENCE: Model 1 (Current Production Model) — از Phase 5y")
+    print("=" * 60)
+    print("  body_ratio buckets: 41.0% -> 41.0% -> 23.1% -> 20.5% (معکوس)")
+    print("  volume_ratio buckets: 43.6% -> 33.3% -> 33.3% -> 15.4% (معکوس)")
+    print("  close_position buckets: 30.8% -> 38.5% -> 17.9% -> 38.5% (بدون الگو)")
     print("=" * 70)
