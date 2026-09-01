@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot V4 — Phase 5z: Displacement Re-Design Audit (Shadow Only)
+Crypto Signal Bot V4 — Phase 5aa: Controlled Displacement Bypass (A/B Funnel Comparison)
 """
 
 import requests
@@ -21,6 +21,7 @@ TEST_SYMBOLS = [
     "GMX-USDT", "STX-USDT", "KAVA-USDT", "ZIL-USDT", "ONE-USDT"
 ]
 LOOKBACK_RECENT = 60
+MAX_EXTENSION_ATR = 2.5
 
 
 def safe_get(url, params=None, retries=3):
@@ -184,6 +185,32 @@ def compute_avg_volume(df, lookback=20):
     return df["volume"].rolling(lookback).mean()
 
 
+def compute_avg_range(df, lookback=20):
+    return (df["high"] - df["low"]).rolling(lookback).mean()
+
+
+def displacement_details(df, idx, avg_body, avg_volume, direction,
+                           body_multiplier=1.2, volume_multiplier=1.3, close_position_pct=0.25):
+    if pd.isna(avg_body.iloc[idx]) or pd.isna(avg_volume.iloc[idx]) or avg_body.iloc[idx] == 0:
+        return None
+    row = df.iloc[idx]
+    body_size = abs(row["close"] - row["open"])
+    candle_range = row["high"] - row["low"]
+    if candle_range == 0:
+        return None
+    body_ratio = body_size / avg_body.iloc[idx]
+    volume_ratio = row["volume"] / avg_volume.iloc[idx]
+    if direction == "bullish":
+        close_position = (row["close"] - row["low"]) / candle_range
+    else:
+        close_position = (row["high"] - row["close"]) / candle_range
+    body_ok = body_ratio >= body_multiplier
+    volume_ok = volume_ratio >= volume_multiplier
+    close_ok = close_position >= (1 - close_position_pct)
+    return {"body_ratio": body_ratio, "volume_ratio": volume_ratio,
+            "close_position": close_position, "overall_pass": body_ok and volume_ok and close_ok}
+
+
 def detect_follow_through(df, breakout_idx, direction, candles_after=2):
     end_idx = min(breakout_idx + candles_after + 1, len(df))
     if end_idx <= breakout_idx + 1:
@@ -195,74 +222,43 @@ def detect_follow_through(df, breakout_idx, direction, candles_after=2):
     return bool((after["close"] < breakout_close).any())
 
 
-def percentile(values, p):
-    if not values:
-        return None
-    s = sorted(values)
-    k = (len(s) - 1) * p
-    f = int(k)
-    c = f + 1 if f + 1 < len(s) else f
-    if f == c:
-        return s[f]
-    return s[f] + (s[c] - s[f]) * (k - f)
-
-
-def median(values):
-    return percentile(values, 0.5)
-
-
-def bucket_success_rate(records, key, n_buckets=4):
-    valid = [r for r in records if r[key] is not None and r["follow_through"] is not None]
-    if len(valid) < n_buckets * 3:
-        return []
-    sorted_recs = sorted(valid, key=lambda r: r[key])
-    bucket_size = len(sorted_recs) // n_buckets
-    results = []
-    for i in range(n_buckets):
-        start = i * bucket_size
-        end = (i + 1) * bucket_size if i < n_buckets - 1 else len(sorted_recs)
-        b = sorted_recs[start:end]
-        if not b:
-            continue
-        ft_vals = [r["follow_through"] for r in b]
-        results.append({"range": f"{b[0][key]:.2f}-{b[-1][key]:.2f}", "n": len(b),
-                        "success_rate": round(sum(ft_vals)/len(ft_vals)*100, 1)})
-    return results
-
-
-def quadrant_analysis(records, key_x, key_y):
-    valid = [r for r in records if r[key_x] is not None and r[key_y] is not None and r["follow_through"] is not None]
-    if len(valid) < 8:
-        return None
-    med_x = median([r[key_x] for r in valid])
-    med_y = median([r[key_y] for r in valid])
-    quads = {"high_x_high_y": [], "high_x_low_y": [], "low_x_high_y": [], "low_x_low_y": []}
-    for r in valid:
-        x_high = r[key_x] >= med_x
-        y_high = r[key_y] >= med_y
-        if x_high and y_high:
-            quads["high_x_high_y"].append(r["follow_through"])
-        elif x_high and not y_high:
-            quads["high_x_low_y"].append(r["follow_through"])
-        elif not x_high and y_high:
-            quads["low_x_high_y"].append(r["follow_through"])
-        else:
-            quads["low_x_low_y"].append(r["follow_through"])
-    result = {}
-    for k, vals in quads.items():
-        if vals:
-            result[k] = {"n": len(vals), "success_rate": round(sum(vals)/len(vals)*100, 1)}
-        else:
-            result[k] = {"n": 0, "success_rate": None}
-    return result
+def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
+    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+        return False, None
+    current_price = df["close"].iloc[idx]
+    if direction == "bullish":
+        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
+        if not relevant:
+            return False, None
+        origin_price = relevant[-1]["price"]
+        extension = current_price - origin_price
+    else:
+        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+        if not relevant:
+            return False, None
+        origin_price = relevant[-1]["price"]
+        extension = origin_price - current_price
+    extension_atr = extension / avg_range.iloc[idx]
+    return extension_atr <= max_extension_atr, extension_atr
 
 
 if __name__ == "__main__":
-    print("PHASE: 5z")
-    print("STATUS: EXECUTING - Displacement Re-Design Audit")
+    print("PHASE: 5aa")
+    print("STATUS: EXECUTING - Controlled Displacement Bypass (A/B Comparison)")
     print("=" * 70)
 
-    records = []
+    funnel_a = {"total_bos": 0, "daily_pass": 0, "displacement_pass": 0, "displacement_reject": 0,
+                "ft_pass": 0, "ft_reject": 0, "antichase_pass": 0, "antichase_reject": 0}
+    funnel_b = {"total_bos": 0, "daily_pass": 0, "ft_pass": 0, "ft_reject": 0,
+                "antichase_pass": 0, "antichase_reject": 0}
+
+    # BOS هایی که Displacement رد کرده - برای تحلیل مهم‌ترین معیار
+    disp_rejected_but_ft = 0
+    disp_rejected_but_ac = 0
+    disp_rejected_but_both = 0
+    disp_rejected_total = 0
+
+    extension_values_b = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -272,112 +268,92 @@ if __name__ == "__main__":
         structure = classify_market_structure(df4h)
         bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
         daily_regime = get_daily_regime(symbol)
-        avg_body_long = compute_avg_body(df4h, lookback=20)
-        avg_volume = compute_avg_volume(df4h, lookback=20)
-        body_series = (df4h["close"] - df4h["open"]).abs()
-        range_series = df4h["high"] - df4h["low"]
-        avg_body_short = body_series.rolling(5).mean()
-        avg_range_short = range_series.rolling(5).mean()
+        avg_body = compute_avg_body(df4h)
+        avg_volume = compute_avg_volume(df4h)
+        avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
+            funnel_a["total_bos"] += 1
+            funnel_b["total_bos"] += 1
             idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
 
             if not global_regime_filter(daily_regime, direction):
                 continue
+            funnel_a["daily_pass"] += 1
+            funnel_b["daily_pass"] += 1
 
-            if idx < 6:
-                continue
-            if pd.isna(avg_body_short.iloc[idx-1]) or avg_body_short.iloc[idx-1] == 0:
-                continue
-            if pd.isna(avg_body_long.iloc[idx]) or avg_body_long.iloc[idx] == 0:
-                continue
-            if pd.isna(avg_volume.iloc[idx]) or avg_volume.iloc[idx] == 0:
-                continue
-
-            row = df4h.iloc[idx]
-            body_size = abs(row["close"] - row["open"])
-            candle_range = row["high"] - row["low"]
-            if candle_range == 0:
-                continue
-
-            # از idx-1 به عقب برای baseline محلی استفاده می‌کنیم (بدون خود کندل BOS)
-            local_avg_body = body_series.iloc[idx-5:idx].mean()
-            local_avg_range = range_series.iloc[idx-5:idx].mean()
-
-            body_ratio_long = body_size / avg_body_long.iloc[idx]
-            volume_ratio = row["volume"] / avg_volume.iloc[idx]
-            if direction == "bullish":
-                close_position = (row["close"] - row["low"]) / candle_range
-            else:
-                close_position = (row["high"] - row["close"]) / candle_range
-
-            rel_body_local = body_size / local_avg_body if local_avg_body and local_avg_body > 0 else None
-            rel_range_local = candle_range / local_avg_range if local_avg_range and local_avg_range > 0 else None
-
+            dd = displacement_details(df4h, idx, avg_body, avg_volume, direction)
             ft = detect_follow_through(df4h, idx, direction)
+            ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
 
-            records.append({
-                "symbol": symbol, "direction": direction,
-                "body_ratio_long": body_ratio_long, "volume_ratio": volume_ratio,
-                "close_position": close_position, "rel_body_local": rel_body_local,
-                "rel_range_local": rel_range_local, "follow_through": ft,
-            })
+            # ===== FUNNEL A: با Displacement (فعلی) =====
+            disp_pass_a = dd is not None and dd["overall_pass"]
+            if disp_pass_a:
+                funnel_a["displacement_pass"] += 1
+                if ft is True:
+                    funnel_a["ft_pass"] += 1
+                    if ac_ok:
+                        funnel_a["antichase_pass"] += 1
+                    else:
+                        funnel_a["antichase_reject"] += 1
+                elif ft is False:
+                    funnel_a["ft_reject"] += 1
+            else:
+                funnel_a["displacement_reject"] += 1
+                # تحلیل مهم: چند مورد از رد‌شده‌های Displacement بعداً موفق بودن؟
+                if dd is not None:
+                    disp_rejected_total += 1
+                    if ft is True:
+                        disp_rejected_but_ft += 1
+                    if ac_ok:
+                        disp_rejected_but_ac += 1
+                    if ft is True and ac_ok:
+                        disp_rejected_but_both += 1
+
+            # ===== FUNNEL B: بدون Displacement (Bypass) =====
+            if ft is True:
+                funnel_b["ft_pass"] += 1
+                if ac_ok:
+                    funnel_b["antichase_pass"] += 1
+                    if ext is not None:
+                        extension_values_b.append(ext)
+                else:
+                    funnel_b["antichase_reject"] += 1
+            elif ft is False:
+                funnel_b["ft_reject"] += 1
         time.sleep(0.5)
 
-    print(f"\nTotal BOS analyzed: {len(records)}\n")
+    print("\n" + "=" * 35)
+    print("FUNNEL A — WITH Displacement (Current)")
+    print("=" * 35)
+    for k, v in funnel_a.items():
+        print(f"  {k}: {v}")
+    print(f"  Final Candidates (Displacement+FT+AntiChase all PASS): {funnel_a['antichase_pass']}")
 
-    print("=" * 60)
-    print("MODEL 2: Relative Price Expansion (local 5-candle baseline)")
-    print("=" * 60)
-    vals = [r["rel_body_local"] for r in records if r["rel_body_local"] is not None]
-    if vals:
-        print(f"N={len(vals)} | Min={min(vals):.2f} | Median={median(vals):.2f} | Max={max(vals):.2f}")
-    buckets = bucket_success_rate(records, "rel_body_local")
-    for b in buckets:
-        print(f"  range={b['range']} | n={b['n']} | FT_success={b['success_rate']}%")
+    print("\n" + "=" * 35)
+    print("FUNNEL B — WITHOUT Displacement (Bypass)")
+    print("=" * 35)
+    for k, v in funnel_b.items():
+        print(f"  {k}: {v}")
+    print(f"  Final Candidates (FT+AntiChase PASS, no Displacement): {funnel_b['antichase_pass']}")
 
-    print("\n" + "=" * 60)
-    print("MODEL 3: Volume Context (Volume vs Relative Expansion quadrants)")
-    print("=" * 60)
-    quad3 = quadrant_analysis(records, "volume_ratio", "rel_body_local")
-    if quad3:
-        print(f"  High Volume + High Rel.Expansion: n={quad3['high_x_high_y']['n']} | FT={quad3['high_x_high_y']['success_rate']}%")
-        print(f"  High Volume + Low Rel.Expansion:  n={quad3['high_x_low_y']['n']} | FT={quad3['high_x_low_y']['success_rate']}%")
-        print(f"  Low Volume + High Rel.Expansion:  n={quad3['low_x_high_y']['n']} | FT={quad3['low_x_high_y']['success_rate']}%")
-        print(f"  Low Volume + Low Rel.Expansion:   n={quad3['low_x_low_y']['n']} | FT={quad3['low_x_low_y']['success_rate']}%")
+    print("\n" + "=" * 70)
+    print("KEY METRIC: از میان BOS هایی که Displacement رد کرده:")
+    print(f"  کل رد‌شده توسط Displacement: {disp_rejected_total}")
+    print(f"  از این‌ها، Follow-through موفق داشتن: {disp_rejected_but_ft} "
+          f"({round(disp_rejected_but_ft/disp_rejected_total*100,1) if disp_rejected_total else 0}%)")
+    print(f"  از این‌ها، Anti-Chasing رو پاس کردن: {disp_rejected_but_ac} "
+          f"({round(disp_rejected_but_ac/disp_rejected_total*100,1) if disp_rejected_total else 0}%)")
+    print(f"  از این‌ها، هر دو (FT+AC) رو پاس کردن: {disp_rejected_but_both} "
+          f"({round(disp_rejected_but_both/disp_rejected_total*100,1) if disp_rejected_total else 0}%)")
 
-    print("\n" + "=" * 60)
-    print("MODEL 4: Relative Expansion + Close Position quadrants")
-    print("=" * 60)
-    quad4 = quadrant_analysis(records, "rel_body_local", "close_position")
-    if quad4:
-        print(f"  High Expansion + High ClosePos: n={quad4['high_x_high_y']['n']} | FT={quad4['high_x_high_y']['success_rate']}%")
-        print(f"  High Expansion + Low ClosePos:  n={quad4['high_x_low_y']['n']} | FT={quad4['high_x_low_y']['success_rate']}%")
-        print(f"  Low Expansion + High ClosePos:  n={quad4['low_x_high_y']['n']} | FT={quad4['low_x_high_y']['success_rate']}%")
-        print(f"  Low Expansion + Low ClosePos:   n={quad4['low_x_low_y']['n']} | FT={quad4['low_x_low_y']['success_rate']}%")
+    print("\n" + "=" * 70)
+    print(f"FUNNEL B Extension distribution (روی Candidate های نهایی، n={len(extension_values_b)}):")
+    if extension_values_b:
+        s = sorted(extension_values_b)
+        print(f"  Min={min(s):.2f} Median={s[len(s)//2]:.2f} Max={max(s):.2f}")
 
-    print("\n" + "=" * 60)
-    print("MODEL 5: All Three Combined (above-median count: 0,1,2,3)")
-    print("=" * 60)
-    valid5 = [r for r in records if r["rel_body_local"] is not None and r["volume_ratio"] is not None
-              and r["close_position"] is not None and r["follow_through"] is not None]
-    if valid5:
-        med_exp = median([r["rel_body_local"] for r in valid5])
-        med_vol = median([r["volume_ratio"] for r in valid5])
-        med_cp = median([r["close_position"] for r in valid5])
-        score_groups = {0: [], 1: [], 2: [], 3: []}
-        for r in valid5:
-            score = sum([r["rel_body_local"] >= med_exp, r["volume_ratio"] >= med_vol, r["close_position"] >= med_cp])
-            score_groups[score].append(r["follow_through"])
-        for score, vals_ft in score_groups.items():
-            if vals_ft:
-                print(f"  Score={score} (تعداد شرط بالای Median): n={len(vals_ft)} | FT_success={round(sum(vals_ft)/len(vals_ft)*100,1)}%")
-
-    print("\n" + "=" * 60)
-    print("REFERENCE: Model 1 (Current Production Model) — از Phase 5y")
-    print("=" * 60)
-    print("  body_ratio buckets: 41.0% -> 41.0% -> 23.1% -> 20.5% (معکوس)")
-    print("  volume_ratio buckets: 43.6% -> 33.3% -> 33.3% -> 15.4% (معکوس)")
-    print("  close_position buckets: 30.8% -> 38.5% -> 17.9% -> 38.5% (بدون الگو)")
+    print(f"\nمقایسه نهایی: FUNNEL A داد {funnel_a['antichase_pass']} Candidate | "
+          f"FUNNEL B داد {funnel_b['antichase_pass']} Candidate")
     print("=" * 70)
