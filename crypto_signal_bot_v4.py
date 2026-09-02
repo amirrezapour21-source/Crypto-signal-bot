@@ -1,5 +1,6 @@
 """
-Crypto Signal Bot V4 — Phase 8: SL Buffer / Retest-Tolerance Audit + Look-Ahead Timing Check
+Crypto Signal Bot V4 — Phase 9 Part A+F: Realistic Entry Timing + Direct Edge Measurement
+(Phase 7/8 نتایج Immutable باقی می‌مونن - این یه Snapshot جدید و مستقله)
 """
 
 import requests
@@ -22,11 +23,8 @@ TEST_SYMBOLS = [
 ]
 LOOKBACK_RECENT = 60
 MAX_EXTENSION_ATR = 2.5
-MIN_SL_DISTANCE_PCT = 0.005
-MIN_RR = 1.5
-EQUAL_LEVEL_TOLERANCE_ATR = 0.15
-MAX_HOLD_CANDLES = 60
 FOLLOW_THROUGH_CANDLES = 2
+MAX_HOLD_CANDLES = 30
 
 
 def safe_get(url, params=None, retries=3):
@@ -186,135 +184,115 @@ def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
 
 
-def detect_follow_through(df, breakout_idx, direction, candles_after=FOLLOW_THROUGH_CANDLES):
+def detect_follow_through_realtime(df, breakout_idx, direction, candles_after=FOLLOW_THROUGH_CANDLES):
+    """
+    نسخه Realistic: به‌جای اینکه فقط بگه Pass/Fail، دقیقاً کندلی که
+    توش Follow-through برای اولین‌بار تأیید شده رو برمی‌گردونه - این
+    همون کندلیه که سیگنال واقعاً می‌تونه صادر بشه (Signal Decision Time).
+    """
     end_idx = min(breakout_idx + candles_after + 1, len(df))
     if end_idx <= breakout_idx + 1:
-        return None, None
+        return None
     breakout_close = df["close"].iloc[breakout_idx]
-    after = df.iloc[breakout_idx+1:end_idx]
-    if direction == "bullish":
-        confirmed = after["close"] > breakout_close
-    else:
-        confirmed = after["close"] < breakout_close
-    if confirmed.any():
-        confirm_idx = breakout_idx + 1 + confirmed.values.argmax()
-        return True, confirm_idx
-    return False, None
+    for i in range(breakout_idx + 1, end_idx):
+        c = df["close"].iloc[i]
+        if (direction == "bullish" and c > breakout_close) or (direction == "bearish" and c < breakout_close):
+            return i  # این کندل، لحظه‌ی واقعی تأیید Signal است
+    return None
 
 
-def check_anti_chasing(df, idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
-    if pd.isna(avg_range.iloc[idx]) or avg_range.iloc[idx] == 0:
+def check_anti_chasing_at(df, ref_idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
+    """Anti-Chasing رو در لحظه واقعی تصمیم (ref_idx) چک می‌کنه، نه در لحظه BOS"""
+    if pd.isna(avg_range.iloc[ref_idx]) or avg_range.iloc[ref_idx] == 0:
         return False, None
-    current_price = df["close"].iloc[idx]
+    current_price = df["close"].iloc[ref_idx]
     if direction == "bullish":
-        relevant = [s for s in structure["swing_lows"] if s["index"] < idx]
+        relevant = [s for s in structure["swing_lows"] if s["index"] < ref_idx]
         if not relevant:
             return False, None
         origin_price = relevant[-1]["price"]
         extension = current_price - origin_price
     else:
-        relevant = [s for s in structure["swing_highs"] if s["index"] < idx]
+        relevant = [s for s in structure["swing_highs"] if s["index"] < ref_idx]
         if not relevant:
             return False, None
         origin_price = relevant[-1]["price"]
         extension = origin_price - current_price
-    extension_atr = extension / avg_range.iloc[idx]
+    extension_atr = extension / avg_range.iloc[ref_idx]
     return extension_atr <= max_extension_atr, extension_atr
 
 
-def is_structurally_strong(swing, pool, atr):
-    if atr is None or atr == 0:
-        return False
-    neighbor_distances = [abs(other["price"] - swing["price"]) / atr
-                           for other in pool if other["index"] != swing["index"]]
-    min_dist = min(neighbor_distances) if neighbor_distances else None
-    return min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR
-
-
-def sl_distance_ok(entry, sl):
-    if entry == 0 or sl is None:
-        return False
-    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
-
-
-def get_target_pool(direction, entry_price, structure, idx):
-    if direction == "bullish":
-        return [s for s in structure["swing_highs"] if s["price"] > entry_price and s["index"] < idx]
-    return [s for s in structure["swing_lows"] if s["price"] < entry_price and s["index"] < idx]
-
-
-def build_sl_variants(direction, bos, atr):
-    """چهار مدل SL: A=Current(0.3%), B1/B2/B3 = ATR-aware با بافر 0.25/0.5/0.75"""
-    broken_level = bos["broken_level"]
-    variants = {}
-    if direction == "bearish":
-        variants["A_current_0.3pct"] = broken_level * 1.003
-        variants["B_atr_0.25"] = broken_level + atr * 0.25
-        variants["B_atr_0.50"] = broken_level + atr * 0.50
-        variants["B_atr_0.75"] = broken_level + atr * 0.75
-    else:
-        variants["A_current_0.3pct"] = broken_level * 0.997
-        variants["B_atr_0.25"] = broken_level - atr * 0.25
-        variants["B_atr_0.50"] = broken_level - atr * 0.50
-        variants["B_atr_0.75"] = broken_level - atr * 0.75
-    return variants
-
-
-def simulate_outcome(df, direction, entry, sl, tp1, tp2, start_idx, max_hold=MAX_HOLD_CANDLES):
-    end_idx = min(start_idx + 1 + max_hold, len(df))
+def measure_edge(df, direction, entry, entry_idx, atr, max_hold=MAX_HOLD_CANDLES):
+    """
+    اندازه‌گیری مستقیم Edge بدون هیچ SL/TP از پیش تعریف‌شده - فقط
+    می‌بینیم قیمت به +1R/+2R/+3R (بر پایه ATR به‌عنوان واحد ریسک فرضی)
+    زودتر می‌رسه یا به -1R.
+    """
+    end_idx = min(entry_idx + 1 + max_hold, len(df))
     mfe, mae = 0, 0
-    tp1_hit = False
-    for i in range(start_idx + 1, end_idx):
+    reached_1r_before_neg1r = None
+    reached_2r_before_neg1r = None
+    reached_3r_before_neg1r = None
+    ret_1, ret_3, ret_6, ret_12 = None, None, None, None
+
+    for step, i in enumerate(range(entry_idx + 1, end_idx), start=1):
         row = df.iloc[i]
         if direction == "bullish":
             favorable = row["high"] - entry
             adverse = entry - row["low"]
-            sl_hit = row["low"] <= sl
-            tp1_now = row["high"] >= tp1
-            tp2_now = row["high"] >= tp2
         else:
             favorable = entry - row["low"]
             adverse = row["high"] - entry
-            sl_hit = row["high"] >= sl
-            tp1_now = row["low"] <= tp1
-            tp2_now = row["low"] <= tp2
         mfe = max(mfe, favorable)
         mae = max(mae, adverse)
 
-        if not tp1_hit:
-            if sl_hit:
-                return {"result": "SL_HIT", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
-            if tp1_now:
-                tp1_hit = True
-                if tp2_now:
-                    return {"result": "TP2_HIT", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
-        else:
-            if sl_hit:
-                return {"result": "TP1_THEN_SL", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
-            if tp2_now:
-                return {"result": "TP2_HIT", "bars_held": i - start_idx, "mfe": mfe, "mae": mae}
-    if tp1_hit:
-        return {"result": "TP1_ONLY_OPEN", "bars_held": end_idx - start_idx - 1, "mfe": mfe, "mae": mae}
-    return {"result": "OPEN_NO_OUTCOME", "bars_held": end_idx - start_idx - 1, "mfe": mfe, "mae": mae}
+        if reached_1r_before_neg1r is None:
+            if adverse >= atr:
+                reached_1r_before_neg1r = False
+                reached_2r_before_neg1r = False
+                reached_3r_before_neg1r = False
+            elif favorable >= atr:
+                reached_1r_before_neg1r = True
+        if reached_1r_before_neg1r and reached_2r_before_neg1r is None:
+            if adverse >= atr:
+                reached_2r_before_neg1r = False
+                reached_3r_before_neg1r = False
+            elif favorable >= 2 * atr:
+                reached_2r_before_neg1r = True
+        if reached_2r_before_neg1r and reached_3r_before_neg1r is None:
+            if adverse >= atr:
+                reached_3r_before_neg1r = False
+            elif favorable >= 3 * atr:
+                reached_3r_before_neg1r = True
 
+        if step == 1:
+            ret_1 = (row["close"] - entry) / entry * 100 if direction == "bullish" else (entry - row["close"]) / entry * 100
+        if step == 3:
+            ret_3 = (row["close"] - entry) / entry * 100 if direction == "bullish" else (entry - row["close"]) / entry * 100
+        if step == 6:
+            ret_6 = (row["close"] - entry) / entry * 100 if direction == "bullish" else (entry - row["close"]) / entry * 100
+        if step == 12:
+            ret_12 = (row["close"] - entry) / entry * 100 if direction == "bullish" else (entry - row["close"]) / entry * 100
 
-def median(values):
-    if not values:
-        return None
-    s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    return (s[mid-1] + s[mid]) / 2 if n % 2 == 0 else s[mid]
+    return {
+        "mfe_atr": round(mfe / atr, 2) if atr else None, "mae_atr": round(mae / atr, 2) if atr else None,
+        "win_1r": reached_1r_before_neg1r, "win_2r": reached_2r_before_neg1r, "win_3r": reached_3r_before_neg1r,
+        "ret_1": round(ret_1, 2) if ret_1 is not None else None,
+        "ret_3": round(ret_3, 2) if ret_3 is not None else None,
+        "ret_6": round(ret_6, 2) if ret_6 is not None else None,
+        "ret_12": round(ret_12, 2) if ret_12 is not None else None,
+    }
 
 
 if __name__ == "__main__":
-    print("PHASE: 8")
-    print("STATUS: EXECUTING - SL Buffer / Retest-Tolerance Audit + Timing Check")
+    print("PHASE: 9 (Part A + F)")
+    print("STATUS: EXECUTING - Realistic Entry Timing + Direct Edge Measurement")
     print("=" * 70)
+    print("توجه: نتایج Phase 7/8 دست‌نخورده و Immutable باقی می‌مونن - این یه")
+    print("Snapshot کاملاً جدا و مستقله.\n")
 
-    # داده Setup ها رو یک‌بار می‌سازیم (Immutable Snapshot طبق دستور بند ۱۲)
-    setups = []
-    look_ahead_flags = []
+    records = []
+    missed_entries = 0
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -327,130 +305,75 @@ if __name__ == "__main__":
         avg_range = compute_avg_range(df4h)
 
         for bos in bos_events:
-            idx = bos["index"]
+            bos_idx = bos["index"]
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
             if not global_regime_filter(daily_regime, direction):
                 continue
 
-            ft, confirm_idx = detect_follow_through(df4h, idx, direction)
-            if not ft:
-                continue
+            # === PART A: پیدا کردن لحظه واقعی تأیید Follow-through ===
+            confirm_idx = detect_follow_through_realtime(df4h, bos_idx, direction)
+            if confirm_idx is None:
+                continue  # Follow-through هرگز تأیید نشد - سیگنالی صادر نمی‌شد
 
-            atr = avg_range.iloc[idx]
+            atr = avg_range.iloc[confirm_idx]
             if pd.isna(atr) or atr == 0:
                 continue
-            ac_ok, ext = check_anti_chasing(df4h, idx, direction, avg_range, structure)
+
+            # Anti-Chasing حالا در لحظه واقعی تصمیم (confirm_idx) چک می‌شه، نه BOS
+            ac_ok, ext = check_anti_chasing_at(df4h, confirm_idx, direction, avg_range, structure)
             if not ac_ok:
+                missed_entries += 1  # NO TRADE - قیمت خیلی دور شده بود
                 continue
 
-            entry_price = bos["close"]
-            target_pool = get_target_pool(direction, entry_price, structure, idx)
-            if not target_pool:
-                continue
-            strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
-            use_pool = strong_targets if strong_targets else target_pool
-            sorted_pool = sorted(use_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-            tp1 = sorted_pool[0]["price"]
-            tp2 = sorted_pool[-1]["price"] if len(sorted_pool) > 1 else tp1
+            # Entry واقعی = اولین قیمت در دسترس بعد از تأیید = Close همون کندل تأیید
+            realistic_entry = df4h["close"].iloc[confirm_idx]
 
-            # === بررسی Look-Ahead Timing (بند ۱۰-۱۱ دستور) ===
-            # آیا Entry واقعاً در زمان idx قابل‌دسترس بود؟ بله - bos.close
-            # یعنی Close خودِ کندل idx، که در لحظه بسته‌شدنش قابل مشاهده‌ست.
-            # اما تأیید Follow-through (که شرط ورودمونه) نیاز به دیدن
-            # کندل‌های idx+1 تا confirm_idx داره. یعنی در عمل، در لحظه‌ای
-            # که واقعاً می‌فهمیم "این Setup معتبره"، بازار از قیمت entry_price
-            # (Close کندل idx) فاصله گرفته. بررسی می‌کنیم این فاصله چقدره:
-            realistic_entry = df4h["close"].iloc[confirm_idx] if confirm_idx else entry_price
-            entry_slippage_atr = abs(realistic_entry - entry_price) / atr if atr else 0
-            look_ahead_flags.append({
-                "symbol": symbol, "claimed_entry": entry_price, "realistic_entry": realistic_entry,
-                "bars_to_confirm": confirm_idx - idx if confirm_idx else 0,
-                "slippage_atr": round(entry_slippage_atr, 3),
-            })
+            edge = measure_edge(df4h, direction, realistic_entry, confirm_idx, atr)
 
-            setups.append({
-                "symbol": symbol, "direction": direction, "entry": entry_price,
-                "tp1": tp1, "tp2": tp2, "bos": bos, "idx": idx, "atr": atr, "df": df4h,
+            records.append({
+                "symbol": symbol, "direction": direction,
+                "bos_idx": bos_idx, "confirm_idx": confirm_idx,
+                "bars_to_confirm": confirm_idx - bos_idx,
+                "realistic_entry": realistic_entry, "extension_atr": round(ext, 2),
+                **edge,
             })
         time.sleep(0.5)
 
-    print(f"\nTotal Setups (Snapshot, Immutable): {len(setups)}\n")
+    print(f"Total Realistic Setups (بعد از اصلاح Entry Timing): {len(records)}")
+    print(f"NO TRADE / MISSED (به‌خاطر Extension در لحظه تأیید): {missed_entries}\n")
 
-    # === بخش ۱: بررسی Look-Ahead Timing ===
-    print("=" * 60)
-    print("LOOK-AHEAD TIMING CHECK (بند 10-11)")
-    print("=" * 60)
-    slippages = [f["slippage_atr"] for f in look_ahead_flags]
-    bars_list = [f["bars_to_confirm"] for f in look_ahead_flags]
-    if slippages:
-        print(f"Entry اعلام‌شده (Close کندل BOS) در برابر قیمتی که واقعاً در لحظه تأیید Follow-through در دسترس بود:")
-        print(f"  Mean Slippage (ATR): {sum(slippages)/len(slippages):.3f} | Median: {median(slippages):.3f} | Max: {max(slippages):.3f}")
-        print(f"  Mean Bars to Confirm: {sum(bars_list)/len(bars_list):.2f}")
-        significant_slippage = sum(1 for s in slippages if s > 0.3)
-        print(f"  تعداد نمونه با Slippage > 0.3 ATR: {significant_slippage} از {len(slippages)} ({round(significant_slippage/len(slippages)*100,1)}%)")
-        print("\n  ⚠️ نتیجه: Entry فعلی روی Close کندل BOS ثبت می‌شه، ولی تأیید")
-        print("  Follow-through به کندل‌های بعدی نیاز داره. اگه Slippage قابل‌توجه")
-        print("  باشه، یعنی SL/TP/RR که حساب کردیم بر پایه یه قیمت Entry ساخته")
-        print("  شده که در لحظه تصمیم واقعی (بعد از تأیید FT) دیگه در دسترس نبوده.")
+    for r in records:
+        print(f"{r['symbol']} | {r['direction']} | bars_to_confirm={r['bars_to_confirm']} | "
+              f"Entry={r['realistic_entry']:.6f} | MFE={r['mfe_atr']}R | MAE={r['mae_atr']}R | "
+              f"Win1R={r['win_1r']} | Win2R={r['win_2r']} | Win3R={r['win_3r']} | "
+              f"Ret1={r['ret_1']}% Ret3={r['ret_3']}% Ret6={r['ret_6']}% Ret12={r['ret_12']}%")
 
-    # === بخش ۲: مقایسه مدل‌های SL ===
-    print("\n" + "=" * 60)
-    print("SL MODEL COMPARISON (روی همون Setup Snapshot)")
-    print("=" * 60)
+    total = len(records)
+    if total:
+        win1r = sum(1 for r in records if r["win_1r"] is True)
+        win2r = sum(1 for r in records if r["win_2r"] is True)
+        win3r = sum(1 for r in records if r["win_3r"] is True)
+        avg_mfe = sum(r["mfe_atr"] for r in records if r["mfe_atr"] is not None) / total
+        avg_mae = sum(r["mae_atr"] for r in records if r["mae_atr"] is not None) / total
 
-    model_results = {"A_current_0.3pct": [], "B_atr_0.25": [], "B_atr_0.50": [], "B_atr_0.75": []}
+        print("\n" + "=" * 70)
+        print("SUMMARY (Raw Edge بدون هیچ SL/TP از پیش تعریف‌شده):")
+        print(f"  N = {total}")
+        print(f"  Win-to-1R (رسیدن به +1R قبل از -1R): {win1r} ({round(win1r/total*100,1)}%)")
+        print(f"  Win-to-2R: {win2r} ({round(win2r/total*100,1)}%)")
+        print(f"  Win-to-3R: {win3r} ({round(win3r/total*100,1)}%)")
+        print(f"  Mean MFE: {avg_mfe:.2f}R | Mean MAE: {avg_mae:.2f}R")
 
-    for s in setups:
-        variants = build_sl_variants(s["direction"], s["bos"], s["atr"])
-        for model_name, sl_val in variants.items():
-            if not sl_distance_ok(s["entry"], sl_val):
-                continue
-            risk = abs(s["entry"] - sl_val)
-            reward1 = abs(s["tp1"] - s["entry"])
-            if risk == 0 or reward1 == 0:
-                continue
-            rr1 = reward1 / risk
-            if rr1 < MIN_RR:
-                continue
-            outcome = simulate_outcome(s["df"], s["direction"], s["entry"], sl_val, s["tp1"], s["tp2"], s["idx"])
-            model_results[model_name].append({
-                "symbol": s["symbol"], "result": outcome["result"], "bars_held": outcome["bars_held"],
-                "mae": outcome["mae"], "mfe": outcome["mfe"], "risk": risk, "rr1": rr1,
-                "stop_pct": round(risk / s["entry"] * 100, 3),
-            })
-
-    for model_name, results in model_results.items():
-        total = len(results)
-        if total == 0:
-            print(f"\n--- {model_name} --- N=0")
-            continue
-        sl_first_candle = sum(1 for r in results if r["result"] == "SL_HIT" and r["bars_held"] == 1)
-        sl_within_3 = sum(1 for r in results if r["result"] == "SL_HIT" and r["bars_held"] <= 3)
-        tp2 = sum(1 for r in results if r["result"] == "TP2_HIT")
-        tp1_be = sum(1 for r in results if r["result"] == "TP1_THEN_SL")
-        tp1_open = sum(1 for r in results if r["result"] == "TP1_ONLY_OPEN")
-        sl_total = sum(1 for r in results if r["result"] == "SL_HIT")
-        mae_over_risk = [r["mae"]/r["risk"] for r in results if r["risk"] > 0]
-        r_multiples = []
-        for r in results:
-            if r["result"] == "TP2_HIT":
-                r_multiples.append(r["rr1"] * (r["mfe"]/r["risk"] if r["risk"] else 0) if False else r["rr1"])
-            elif r["result"] in ("TP1_THEN_SL",):
-                r_multiples.append(0)
-            elif r["result"] == "SL_HIT":
-                r_multiples.append(-1)
-        expectancy = sum(r_multiples)/len(r_multiples) if r_multiples else None
-        stop_pcts = [r["stop_pct"] for r in results]
-
-        print(f"\n--- {model_name} --- N={total}")
-        print(f"  SL_HIT (کندل اول): {sl_first_candle} ({round(sl_first_candle/total*100,1)}%)")
-        print(f"  SL_HIT (تا کندل 3): {sl_within_3} ({round(sl_within_3/total*100,1)}%)")
-        print(f"  SL_HIT (کل): {sl_total} ({round(sl_total/total*100,1)}%)")
-        print(f"  TP2_HIT: {tp2} ({round(tp2/total*100,1)}%)")
-        print(f"  TP1_THEN_SL: {tp1_be} ({round(tp1_be/total*100,1)}%)")
-        print(f"  TP1_ONLY_OPEN: {tp1_open} ({round(tp1_open/total*100,1)}%)")
-        print(f"  Median Stop Distance %: {median(stop_pcts)}")
-        print(f"  Mean MAE/Risk ratio: {sum(mae_over_risk)/len(mae_over_risk):.2f}" if mae_over_risk else "  N/A")
-        print(f"  Expectancy (R-multiple ساده‌شده): {round(expectancy,2) if expectancy is not None else 'N/A'}")
-
-    print("\n" + "=" * 70)
+        rets_1 = [r["ret_1"] for r in records if r["ret_1"] is not None]
+        rets_3 = [r["ret_3"] for r in records if r["ret_3"] is not None]
+        rets_6 = [r["ret_6"] for r in records if r["ret_6"] is not None]
+        rets_12 = [r["ret_12"] for r in records if r["ret_12"] is not None]
+        if rets_1:
+            print(f"\n  Mean Return after 1 candle: {sum(rets_1)/len(rets_1):.2f}%")
+        if rets_3:
+            print(f"  Mean Return after 3 candles: {sum(rets_3)/len(rets_3):.2f}%")
+        if rets_6:
+            print(f"  Mean Return after 6 candles: {sum(rets_6)/len(rets_6):.2f}%")
+        if rets_12:
+            print(f"  Mean Return after 12 candles: {sum(rets_12)/len(rets_12):.2f}%")
+    print("=" * 70)
