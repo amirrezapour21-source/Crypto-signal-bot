@@ -1035,11 +1035,11 @@
     "tp1": 0.06938532202303418,
     "tp2": 0.06562196217618528,
     "signal_time": "2026-09-02T01:21:52.024998+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-09-02T03:00:00+00:00",
     "closed_time": null,
-    "result": null
+    "result": "WIN (TP1)"
   },
   {
     "id": "ONDO_1788322827",
