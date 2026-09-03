@@ -1,6 +1,6 @@
 """
-Crypto Signal Bot V4 — Phase 9 Part B/C/D/E: Realistic SL/TP + Full Forward Simulation
-Entry = Causal (BOS -> Follow-through confirmation -> first executable price)
+Crypto Signal Bot V4 — Phase 10: BOS Core vs SL Model Decision Experiment
+(Frozen: BOS/Daily/FollowThrough/Anti-Chasing/Entry Timing — Only SL model varies)
 """
 
 import requests
@@ -19,16 +19,17 @@ TEST_SYMBOLS = [
     "ALGO-USDT", "VET-USDT", "HBAR-USDT", "EGLD-USDT", "XLM-USDT",
     "THETA-USDT", "SAND-USDT", "MANA-USDT", "AXS-USDT", "CHZ-USDT",
     "COMP-USDT", "SNX-USDT", "CRV-USDT", "LDO-USDT", "DYDX-USDT",
-    "GMX-USDT", "STX-USDT", "KAVA-USDT", "ZIL-USDT", "ONE-USDT"
+    "GMX-USDT", "STX-USDT", "KAVA-USDT", "ZIL-USDT", "ONE-USDT",
+    "1INCH-USDT", "YFI-USDT", "BAL-USDT", "ENJ-USDT", "BAT-USDT",
+    "ZRX-USDT", "OMG-USDT", "IOTA-USDT", "QTUM-USDT", "WAVES-USDT",
+    "ANKR-USDT", "CELR-USDT", "COTI-USDT", "SKL-USDT", "STORJ-USDT",
+    "OCEAN-USDT", "RSR-USDT", "CKB-USDT", "IOTX-USDT", "KSM-USDT",
 ]
-LOOKBACK_RECENT = 60
+LOOKBACK_RECENT = 120
 MAX_EXTENSION_ATR = 2.5
 FOLLOW_THROUGH_CANDLES = 2
 MAX_HOLD_CANDLES = 30
-MIN_SL_DISTANCE_PCT = 0.005
-MIN_RR = 2.0
 EQUAL_LEVEL_TOLERANCE_ATR = 0.15
-FEE_PCT_ROUND_TRIP = 0.10  # فرض: ۰.۰۵٪ هر طرف (تیکر معمول اسپات/فیوچرز) = ۰.۱٪ رفت‌وبرگشت
 
 
 def safe_get(url, params=None, retries=3):
@@ -87,7 +88,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=250):
         all_dfs.append(df)
         remaining -= len(df)
         end_at = int(df["time"].min()) - 1
-        time.sleep(0.2)
+        time.sleep(0.15)
         if len(df) < 100:
             break
     if not all_dfs:
@@ -229,82 +230,88 @@ def is_structurally_strong(swing, pool, atr):
     return min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR
 
 
-def sl_distance_ok(entry, sl):
-    if entry == 0 or sl is None:
-        return False
-    return abs(entry - sl) / entry >= MIN_SL_DISTANCE_PCT
+def percentile(values, p):
+    if not values:
+        return None
+    s = sorted(values)
+    k = (len(s) - 1) * p
+    f = int(k)
+    c = f + 1 if f + 1 < len(s) else f
+    if f == c:
+        return s[f]
+    return s[f] + (s[c] - s[f]) * (k - f)
 
 
-def simulate_trade(df, direction, entry, sl, tp1, tp2, start_idx, max_hold=MAX_HOLD_CANDLES):
+def track_excursion(df, direction, entry, atr, start_idx, max_hold=MAX_HOLD_CANDLES):
+    """
+    برای هر کندل بعد از Entry، MFE/MAE (بر حسب ATR) رو محاسبه می‌کنه
+    و مشخص می‌کنه کدوم سطوح +ATR قبل از کدوم سطوح -ATR رسیدن -
+    بدون هیچ SL/TP از پیش تعریف‌شده (Pure Directional Excursion).
+    """
     end_idx = min(start_idx + 1 + max_hold, len(df))
     mfe, mae = 0, 0
-    tp1_hit_flag = False
-    bars_to_tp1, bars_to_tp2, bars_to_sl = None, None, None
+    pos_levels = [0.5, 1.0, 1.5, 2.0, 3.0]
+    neg_levels = [0.5, 0.75, 1.0, 1.25, 1.5]
+    reached_pos = {lv: None for lv in pos_levels}  # bars_to_reach
+    reached_neg = {lv: None for lv in neg_levels}
 
     for step, i in enumerate(range(start_idx + 1, end_idx), start=1):
         row = df.iloc[i]
         if direction == "bullish":
             favorable = row["high"] - entry
             adverse = entry - row["low"]
-            sl_hit = row["low"] <= sl
-            tp1_now = row["high"] >= tp1
-            tp2_now = row["high"] >= tp2
         else:
             favorable = entry - row["low"]
             adverse = row["high"] - entry
-            sl_hit = row["high"] >= sl
-            tp1_now = row["low"] <= tp1
-            tp2_now = row["low"] <= tp2
         mfe = max(mfe, favorable)
         mae = max(mae, adverse)
 
-        if not tp1_hit_flag:
-            # قانون محافظه‌کارانه: اگه SL و TP هر دو تو یه کندل باشن، SL اول فرض می‌شه
-            if sl_hit:
-                bars_to_sl = step
-                return {"result": "SL_HIT", "bars_to_sl": bars_to_sl, "bars_to_tp1": None,
-                        "bars_to_tp2": None, "mfe": mfe, "mae": mae, "r_multiple": -1.0}
-            if tp1_now:
-                tp1_hit_flag = True
-                bars_to_tp1 = step
-                if tp2_now:
-                    bars_to_tp2 = step
-                    r_mult = abs(tp2 - entry) / abs(entry - sl)
-                    return {"result": "TP2_HIT", "bars_to_sl": None, "bars_to_tp1": bars_to_tp1,
-                            "bars_to_tp2": bars_to_tp2, "mfe": mfe, "mae": mae, "r_multiple": r_mult}
+        fav_atr = favorable / atr
+        adv_atr = adverse / atr
+        for lv in pos_levels:
+            if reached_pos[lv] is None and fav_atr >= lv:
+                reached_pos[lv] = step
+        for lv in neg_levels:
+            if reached_neg[lv] is None and adv_atr >= lv:
+                reached_neg[lv] = step
+
+    return {
+        "mfe_atr": round(mfe / atr, 3), "mae_atr": round(mae / atr, 3),
+        "reached_pos": reached_pos, "reached_neg": reached_neg,
+    }
+
+
+def simulate_fixed_sl_tp(df, direction, entry, sl_dist_atr, tp_r_mult, atr, start_idx, max_hold=MAX_HOLD_CANDLES):
+    """SL و TP ثابت بر حسب چند برابر ATR - برای تست Fixed-R Model ها"""
+    if direction == "bullish":
+        sl = entry - sl_dist_atr * atr
+        tp = entry + (sl_dist_atr * atr * tp_r_mult)
+    else:
+        sl = entry + sl_dist_atr * atr
+        tp = entry - (sl_dist_atr * atr * tp_r_mult)
+
+    end_idx = min(start_idx + 1 + max_hold, len(df))
+    for i in range(start_idx + 1, end_idx):
+        row = df.iloc[i]
+        if direction == "bullish":
+            sl_hit = row["low"] <= sl
+            tp_hit = row["high"] >= tp
         else:
-            if sl_hit:
-                return {"result": "TP1_THEN_SL", "bars_to_sl": step, "bars_to_tp1": bars_to_tp1,
-                        "bars_to_tp2": None, "mfe": mfe, "mae": mae, "r_multiple": 0.0}
-            if tp2_now:
-                bars_to_tp2 = step
-                r_mult = abs(tp2 - entry) / abs(entry - sl)
-                return {"result": "TP2_HIT", "bars_to_sl": None, "bars_to_tp1": bars_to_tp1,
-                        "bars_to_tp2": bars_to_tp2, "mfe": mfe, "mae": mae, "r_multiple": r_mult}
-
-    if tp1_hit_flag:
-        return {"result": "TP1_ONLY_OPEN", "bars_to_sl": None, "bars_to_tp1": bars_to_tp1,
-                "bars_to_tp2": None, "mfe": mfe, "mae": mae, "r_multiple": None}
-    return {"result": "OPEN_NO_OUTCOME", "bars_to_sl": None, "bars_to_tp1": None,
-            "bars_to_tp2": None, "mfe": mfe, "mae": mae, "r_multiple": None}
-
-
-def median(values):
-    if not values:
-        return None
-    s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    return (s[mid-1] + s[mid]) / 2 if n % 2 == 0 else s[mid]
+            sl_hit = row["high"] >= sl
+            tp_hit = row["low"] <= tp
+        if sl_hit:
+            return -1.0
+        if tp_hit:
+            return tp_r_mult
+    return None  # باز مونده، بدون نتیجه قطعی
 
 
 if __name__ == "__main__":
-    print("PHASE: 9 (Part B/C/D/E)")
-    print("STATUS: EXECUTING - Realistic SL/TP + Full Forward Simulation")
+    print("PHASE: 10")
+    print("STATUS: EXECUTING - BOS Core vs SL Model Decision Experiment")
     print("=" * 70)
 
-    all_pre_rr = []  # همه Candidate ها قبل از فیلتر R:R (بند D)
-    final_trades = []
+    causal_entries = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
@@ -321,130 +328,125 @@ if __name__ == "__main__":
             direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
             if not global_regime_filter(daily_regime, direction):
                 continue
-
             confirm_idx = detect_follow_through_realtime(df4h, bos_idx, direction)
             if confirm_idx is None:
                 continue
-
             atr = avg_range.iloc[confirm_idx]
             if pd.isna(atr) or atr == 0:
                 continue
-
             ac_ok, ext = check_anti_chasing_at(df4h, confirm_idx, direction, avg_range, structure)
             if not ac_ok:
                 continue
-
             entry = df4h["close"].iloc[confirm_idx]
 
-            # SL: broken_level (سطح BOS)، محاسبه‌شده مستقل از Entry جدید ولی خودش تغییر نکرده
-            buffer_pct = 1.003 if direction == "bearish" else 0.997
-            sl = bos["broken_level"] * buffer_pct
-            if not sl_distance_ok(entry, sl):
-                all_pre_rr.append({"symbol": symbol, "reject_stage": "invalid_risk_sl_too_close"})
-                continue
+            excursion = track_excursion(df4h, direction, entry, atr, confirm_idx)
 
-            # Target: فقط Swing هایی که قبل از confirm_idx تشکیل شدن (No Look-Ahead)
-            if direction == "bullish":
-                target_pool = [s for s in structure["swing_highs"] if s["price"] > entry and s["index"] < confirm_idx]
-            else:
-                target_pool = [s for s in structure["swing_lows"] if s["price"] < entry and s["index"] < confirm_idx]
+            causal_entries.append({
+                "symbol": symbol, "direction": direction, "entry": entry, "atr": atr,
+                "confirm_idx": confirm_idx, "daily_regime": daily_regime,
+                "h4_regime": structure["regime"], "df": df4h, "excursion": excursion,
+            })
+        time.sleep(0.4)
 
-            if not target_pool:
-                all_pre_rr.append({"symbol": symbol, "reject_stage": "no_target_pool"})
-                continue
+    N = len(causal_entries)
+    print(f"\n[A] TOTAL CAUSAL ENTRIES (Frozen Pipeline): N={N}\n")
 
-            strong_targets = [s for s in target_pool if is_structurally_strong(s, target_pool, atr)]
-            use_pool = strong_targets if strong_targets else target_pool
-            target_type = "STRONG (equal-level)" if strong_targets else "POTENTIAL (isolated)"
-            sorted_pool = sorted(use_pool, key=lambda s: s["price"], reverse=(direction == "bearish"))
-            tp1 = sorted_pool[0]["price"]
-            tp2 = sorted_pool[-1]["price"] if len(sorted_pool) > 1 else tp1
-
-            risk = abs(entry - sl)
-            reward1 = abs(tp1 - entry)
-            reward2 = abs(tp2 - entry)
-            rr1 = reward1 / risk if risk else 0
-            rr2 = reward2 / risk if risk else 0
-
-            candidate_record = {
-                "symbol": symbol, "direction": direction, "entry": entry, "sl": sl,
-                "tp1": tp1, "tp2": tp2, "risk_pct": round(risk/entry*100, 3),
-                "risk_atr": round(risk/atr, 2), "rr1": round(rr1, 2), "rr2": round(rr2, 2),
-                "target_type": target_type, "confirm_idx": confirm_idx,
-            }
-            all_pre_rr.append({**candidate_record, "reject_stage": "PASSED_TO_RR_GATE" if rr1 >= MIN_RR else f"rr_below_{MIN_RR}"})
-
-            if rr1 < MIN_RR:
-                continue
-
-            outcome = simulate_trade(df4h, direction, entry, sl, tp1, tp2, confirm_idx)
-
-            gross_pct = None
-            if outcome["result"] == "TP2_HIT":
-                gross_pct = reward2 / entry * 100
-            elif outcome["result"] == "TP1_THEN_SL":
-                gross_pct = 0.0
-            elif outcome["result"] == "SL_HIT":
-                gross_pct = -risk / entry * 100
-            net_pct = (gross_pct - FEE_PCT_ROUND_TRIP) if gross_pct is not None else None
-
-            final_trades.append({**candidate_record, **outcome, "gross_pct": gross_pct, "net_pct": net_pct})
-        time.sleep(0.5)
-
-    print(f"\nAll pre-R:R candidates logged: {len(all_pre_rr)}")
-    reject_counts = {}
-    for c in all_pre_rr:
-        stage = c["reject_stage"]
-        reject_counts[stage] = reject_counts.get(stage, 0) + 1
-    print("Breakdown:")
-    for k, v in reject_counts.items():
-        print(f"  {k}: {v}")
-
-    print(f"\n--- LEVEL 2/3: Final Trades (R:R>=2 gate passed): {len(final_trades)} ---\n")
-    for t in final_trades:
-        print(f"{t['symbol']} | {t['direction']} | Entry={t['entry']:.6f} | SL={t['sl']:.6f} | "
-              f"TP1={t['tp1']:.6f} | TP2={t['tp2']:.6f} | RiskATR={t['risk_atr']} | RR1={t['rr1']} | "
-              f"Result={t['result']} | BarsToSL={t['bars_to_sl']} | BarsToTP1={t['bars_to_tp1']} | "
-              f"BarsToTP2={t['bars_to_tp2']} | Gross%={t['gross_pct']} | Net%={t['net_pct']}")
-
-    total = len(final_trades)
-    if total:
-        tp2 = sum(1 for t in final_trades if t["result"] == "TP2_HIT")
-        tp1_be = sum(1 for t in final_trades if t["result"] == "TP1_THEN_SL")
-        sl_hit = sum(1 for t in final_trades if t["result"] == "SL_HIT")
-        open_trades = total - tp2 - tp1_be - sl_hit
-
-        r_mults = [t["r_multiple"] for t in final_trades if t["r_multiple"] is not None]
-        wins = [r for r in r_mults if r > 0]
-        losses = [r for r in r_mults if r < 0]
-        expectancy = sum(r_mults) / len(r_mults) if r_mults else None
-        profit_factor = (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else None
-
-        gross_pcts = [t["gross_pct"] for t in final_trades if t["gross_pct"] is not None]
-        net_pcts = [t["net_pct"] for t in final_trades if t["net_pct"] is not None]
-
-        print("\n" + "=" * 70)
-        print("LEVEL 3 — NET REALISTIC PERFORMANCE SUMMARY")
-        print("=" * 70)
-        print(f"N (Final Trades) = {total}")
-        print(f"TP2_HIT: {tp2} ({round(tp2/total*100,1)}%) | TP1_THEN_SL: {tp1_be} ({round(tp1_be/total*100,1)}%) | "
-              f"SL_HIT: {sl_hit} ({round(sl_hit/total*100,1)}%) | Open: {open_trades}")
-        print(f"Expectancy (R-multiple, on closed trades): {round(expectancy,3) if expectancy is not None else 'N/A'}")
-        print(f"Profit Factor: {round(profit_factor,2) if profit_factor else 'N/A'}")
-        if gross_pcts:
-            print(f"Gross Return sum: {sum(gross_pcts):.2f}% | Mean per trade: {sum(gross_pcts)/len(gross_pcts):.2f}%")
-        if net_pcts:
-            print(f"Net Return sum (after {FEE_PCT_ROUND_TRIP}% fee/trade): {sum(net_pcts):.2f}% | Mean per trade: {sum(net_pcts)/len(net_pcts):.2f}%")
-
-        print("\n" + "=" * 70)
-        print("COMPARISON TABLE: Phase 7/8 (Immutable) vs Phase 9 (Realistic Entry)")
-        print("=" * 70)
-        print(f"{'Metric':<25} {'Phase 7/8':<20} {'Phase 9 Real Entry'}")
-        print(f"{'Entry timing':<25} {'BOS close (flawed)':<20} {'Confirmation close (causal)'}")
-        print(f"{'N (final trades)':<25} {'11':<20} {total}")
-        print(f"{'TP2_HIT %':<25} {'9.1%':<20} {round(tp2/total*100,1)}%")
-        print(f"{'SL_HIT %':<25} {'72.7%':<20} {round(sl_hit/total*100,1)}%")
-        print(f"{'Expectancy':<25} {'-0.61 to -0.91':<20} {round(expectancy,3) if expectancy is not None else 'N/A'}")
+    if N == 0:
+        print("هیچ نمونه‌ای یافت نشد.")
     else:
-        print("\nهیچ Trade نهایی (بعد از R:R>=2) وجود نداره.")
-    print("=" * 70)
+        mfe_vals = [e["excursion"]["mfe_atr"] for e in causal_entries]
+        mae_vals = [e["excursion"]["mae_atr"] for e in causal_entries]
+
+        print("=" * 60)
+        print("[B] MAE DISTRIBUTION (ATR)")
+        print("=" * 60)
+        for p in [0.5, 0.75, 0.9, 0.95]:
+            print(f"  P{int(p*100)}: {percentile(mae_vals, p):.2f}")
+        print(f"  Mean: {sum(mae_vals)/N:.2f}")
+
+        print("\n" + "=" * 60)
+        print("[C] MFE DISTRIBUTION (ATR)")
+        print("=" * 60)
+        for p in [0.5, 0.75, 0.9, 0.95]:
+            print(f"  P{int(p*100)}: {percentile(mfe_vals, p):.2f}")
+        print(f"  Mean: {sum(mfe_vals)/N:.2f}")
+
+        print(f"\n  P(MFE>=1 ATR): {round(sum(1 for v in mfe_vals if v>=1)/N*100,1)}%")
+        print(f"  P(MFE>=1.5 ATR): {round(sum(1 for v in mfe_vals if v>=1.5)/N*100,1)}%")
+        print(f"  P(MFE>=2 ATR): {round(sum(1 for v in mfe_vals if v>=2)/N*100,1)}%")
+        print(f"  P(MFE>=3 ATR): {round(sum(1 for v in mfe_vals if v>=3)/N*100,1)}%")
+
+        print(f"\n  P(MAE<=0.5 ATR): {round(sum(1 for v in mae_vals if v<=0.5)/N*100,1)}%")
+        print(f"  P(MAE<=0.75 ATR): {round(sum(1 for v in mae_vals if v<=0.75)/N*100,1)}%")
+        print(f"  P(MAE<=1.0 ATR): {round(sum(1 for v in mae_vals if v<=1.0)/N*100,1)}%")
+        print(f"  P(MAE<=1.25 ATR): {round(sum(1 for v in mae_vals if v<=1.25)/N*100,1)}%")
+        print(f"  P(MAE<=1.5 ATR): {round(sum(1 for v in mae_vals if v<=1.5)/N*100,1)}%")
+
+        print("\n" + "=" * 60)
+        print("[D] +ATR BEFORE -ATR PROBABILITIES")
+        print("=" * 60)
+        combos = [(1.0, 0.75), (1.0, 1.0), (2.0, 1.0), (2.0, 1.25), (3.0, 1.5)]
+        for pos_lv, neg_lv in combos:
+            count_pos_first = 0
+            count_valid = 0
+            for e in causal_entries:
+                rp = e["excursion"]["reached_pos"].get(pos_lv)
+                rn = e["excursion"]["reached_neg"].get(neg_lv)
+                if rp is None and rn is None:
+                    continue
+                count_valid += 1
+                if rp is not None and (rn is None or rp <= rn):
+                    count_pos_first += 1
+            pct = round(count_pos_first / count_valid * 100, 1) if count_valid else None
+            print(f"  P(+{pos_lv}ATR before -{neg_lv}ATR): {pct}% (n={count_valid})")
+
+        print("\n" + "=" * 60)
+        print("[E] FIXED SL MODEL COMPARISON (SL dist in ATR: 0.75/1.0/1.25/1.5)")
+        print("=" * 60)
+        for sl_dist in [0.75, 1.0, 1.25, 1.5]:
+            win_counts = {0.5: 0, 1.0: 0, 1.5: 0, 2.0: 0, 3.0: 0}
+            total_valid = 0
+            for e in causal_entries:
+                rn_sl = None
+                for lv in [0.5, 0.75, 1.0, 1.25, 1.5]:
+                    if abs(lv - sl_dist) < 0.01:
+                        rn_sl = e["excursion"]["reached_neg"].get(lv)
+                if rn_sl is None:
+                    rn_sl = e["excursion"]["reached_neg"].get(1.5)  # نزدیک‌ترین موجود بالاتر
+                total_valid += 1
+                for win_lv in win_counts:
+                    rp = e["excursion"]["reached_pos"].get(win_lv)
+                    if rp is not None and (rn_sl is None or rp <= rn_sl):
+                        win_counts[win_lv] += 1
+            print(f"\n  SL={sl_dist} ATR:")
+            for win_lv, cnt in win_counts.items():
+                print(f"    Win-to-{win_lv}R: {round(cnt/total_valid*100,1)}% ({cnt}/{total_valid})")
+
+        print("\n" + "=" * 60)
+        print("[F] FIXED R:R TP OUTCOMES (SL=1.0 ATR baseline, TP=1R/1.5R/2R/3R)")
+        print("=" * 60)
+        for tp_mult in [1.0, 1.5, 2.0, 3.0]:
+            outcomes = []
+            for e in causal_entries:
+                r = simulate_fixed_sl_tp(e["df"], e["direction"], e["entry"], 1.0, tp_mult, e["atr"], e["confirm_idx"])
+                if r is not None:
+                    outcomes.append(r)
+            if outcomes:
+                wins = [o for o in outcomes if o > 0]
+                losses = [o for o in outcomes if o < 0]
+                expectancy = sum(outcomes) / len(outcomes)
+                pf = (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else None
+                print(f"  TP={tp_mult}R | N={len(outcomes)} | WinRate={round(len(wins)/len(outcomes)*100,1)}% | "
+                      f"Expectancy={round(expectancy,3)} | ProfitFactor={round(pf,2) if pf else 'N/A'}")
+
+        print("\n" + "=" * 60)
+        print("[H] REGIME BREAKDOWN")
+        print("=" * 60)
+        for regime in ["BULLISH", "BEARISH", "CHOPPY"]:
+            subset = [e for e in causal_entries if e["daily_regime"] == regime]
+            if subset:
+                mean_mfe = sum(e["excursion"]["mfe_atr"] for e in subset) / len(subset)
+                mean_mae = sum(e["excursion"]["mae_atr"] for e in subset) / len(subset)
+                print(f"  Daily={regime}: N={len(subset)} | Mean MFE={mean_mfe:.2f} | Mean MAE={mean_mae:.2f}")
+
+    print("\n" + "=" * 70)
