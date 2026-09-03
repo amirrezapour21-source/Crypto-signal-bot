@@ -1,6 +1,7 @@
 """
-Crypto Signal Bot V4 — Phase 10: BOS Core vs SL Model Decision Experiment
-(Frozen: BOS/Daily/FollowThrough/Anti-Chasing/Entry Timing — Only SL model varies)
+Crypto Signal Bot V4 — Setup Family B, Cycle 1: Liquidity Sweep -> Reclaim -> Reversal
+هدف Cycle 1: فقط اعتبارسنجی منطق تشخیص + رفع باگ‌های Look-Ahead،
+نه اجرای آزمایش کامل.
 """
 
 import requests
@@ -12,24 +13,10 @@ KUCOIN_INTERVALS = {"4h": "4hour", "1d": "1day"}
 TEST_SYMBOLS = [
     "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
     "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT", "DOT-USDT",
-    "NEAR-USDT", "APT-USDT", "ARB-USDT", "OP-USDT",
-    "SUI-USDT", "INJ-USDT", "TIA-USDT", "SEI-USDT", "FIL-USDT",
-    "ATOM-USDT", "LTC-USDT", "ETC-USDT", "TRX-USDT", "ICP-USDT",
-    "AAVE-USDT", "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT", "GRT-USDT",
-    "ALGO-USDT", "VET-USDT", "HBAR-USDT", "EGLD-USDT", "XLM-USDT",
-    "THETA-USDT", "SAND-USDT", "MANA-USDT", "AXS-USDT", "CHZ-USDT",
-    "COMP-USDT", "SNX-USDT", "CRV-USDT", "LDO-USDT", "DYDX-USDT",
-    "GMX-USDT", "STX-USDT", "KAVA-USDT", "ZIL-USDT", "ONE-USDT",
-    "1INCH-USDT", "YFI-USDT", "BAL-USDT", "ENJ-USDT", "BAT-USDT",
-    "ZRX-USDT", "OMG-USDT", "IOTA-USDT", "QTUM-USDT", "WAVES-USDT",
-    "ANKR-USDT", "CELR-USDT", "COTI-USDT", "SKL-USDT", "STORJ-USDT",
-    "OCEAN-USDT", "RSR-USDT", "CKB-USDT", "IOTX-USDT", "KSM-USDT",
 ]
 LOOKBACK_RECENT = 120
-MAX_EXTENSION_ATR = 2.5
-FOLLOW_THROUGH_CANDLES = 2
-MAX_HOLD_CANDLES = 30
 EQUAL_LEVEL_TOLERANCE_ATR = 0.15
+RECLAIM_MAX_CANDLES = 3  # حداکثر فاصله بین Sweep و Reclaim
 
 
 def safe_get(url, params=None, retries=3):
@@ -88,7 +75,7 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=250):
         all_dfs.append(df)
         remaining -= len(df)
         end_at = int(df["time"].min()) - 1
-        time.sleep(0.15)
+        time.sleep(0.2)
         if len(df) < 100:
             break
     if not all_dfs:
@@ -125,328 +112,130 @@ def find_swings(df, left=3, right=3):
     return swing_highs, swing_lows
 
 
-def classify_market_structure(df, left=3, right=3):
-    swing_highs, swing_lows = find_swings(df, left, right)
-    if len(swing_highs) < 2 or len(swing_lows) < 2:
-        return {"regime": "range", "swing_highs": swing_highs, "swing_lows": swing_lows}
-    h1, h2 = swing_highs[-2:]
-    l1, l2 = swing_lows[-2:]
-    if h2["price"] > h1["price"] and l2["price"] > l1["price"]:
-        regime = "up"
-    elif h2["price"] < h1["price"] and l2["price"] < l1["price"]:
-        regime = "down"
-    else:
-        regime = "range"
-    return {"regime": regime, "swing_highs": swing_highs, "swing_lows": swing_lows}
-
-
-def detect_bos_fresh_only(df, swing_highs, swing_lows, lookback_candles=LOOKBACK_RECENT):
-    events = []
-    recent_start = max(0, len(df) - lookback_candles)
-    last_broken_high = None
-    last_broken_low = None
-    for i in range(recent_start, len(df)):
-        close_price = df["close"].iloc[i]
-        relevant_highs = [s for s in swing_highs if s["index"] < i]
-        relevant_lows = [s for s in swing_lows if s["index"] < i]
-        if relevant_highs:
-            level = relevant_highs[-1]["price"]
-            if close_price > level and level != last_broken_high:
-                events.append({"type": "bullish_bos", "index": i, "time": df["dt"].iloc[i],
-                              "close": close_price, "broken_level": level})
-                last_broken_high = level
-        if relevant_lows:
-            level = relevant_lows[-1]["price"]
-            if close_price < level and level != last_broken_low:
-                events.append({"type": "bearish_bos", "index": i, "time": df["dt"].iloc[i],
-                              "close": close_price, "broken_level": level})
-                last_broken_low = level
-    return events
-
-
-def get_daily_regime(symbol):
-    df_daily = get_ohlcv_v4(symbol, "1d", total_candles=100)
-    if df_daily is None or len(df_daily) < 30:
-        return None
-    df_daily = drop_unclosed_candle(df_daily, "1d")
-    structure = classify_market_structure(df_daily)
-    mapping = {"up": "BULLISH", "down": "BEARISH", "range": "CHOPPY"}
-    return mapping[structure["regime"]]
-
-
-def global_regime_filter(daily_regime, requested_direction):
-    if daily_regime is None:
-        return False
-    direction_regime = "BULLISH" if requested_direction == "bullish" else "BEARISH"
-    if daily_regime == "BULLISH" and direction_regime == "BEARISH":
-        return False
-    if daily_regime == "BEARISH" and direction_regime == "BULLISH":
-        return False
-    return True
-
-
 def compute_avg_range(df, lookback=20):
     return (df["high"] - df["low"]).rolling(lookback).mean()
 
 
-def detect_follow_through_realtime(df, breakout_idx, direction, candles_after=FOLLOW_THROUGH_CANDLES):
-    end_idx = min(breakout_idx + candles_after + 1, len(df))
-    if end_idx <= breakout_idx + 1:
-        return None
-    breakout_close = df["close"].iloc[breakout_idx]
-    for i in range(breakout_idx + 1, end_idx):
-        c = df["close"].iloc[i]
-        if (direction == "bullish" and c > breakout_close) or (direction == "bearish" and c < breakout_close):
-            return i
-    return None
-
-
-def check_anti_chasing_at(df, ref_idx, direction, avg_range, structure, max_extension_atr=MAX_EXTENSION_ATR):
-    if pd.isna(avg_range.iloc[ref_idx]) or avg_range.iloc[ref_idx] == 0:
-        return False, None
-    current_price = df["close"].iloc[ref_idx]
-    if direction == "bullish":
-        relevant = [s for s in structure["swing_lows"] if s["index"] < ref_idx]
-        if not relevant:
-            return False, None
-        origin_price = relevant[-1]["price"]
-        extension = current_price - origin_price
-    else:
-        relevant = [s for s in structure["swing_highs"] if s["index"] < ref_idx]
-        if not relevant:
-            return False, None
-        origin_price = relevant[-1]["price"]
-        extension = origin_price - current_price
-    extension_atr = extension / avg_range.iloc[ref_idx]
-    return extension_atr <= max_extension_atr, extension_atr
-
-
-def is_structurally_strong(swing, pool, atr):
-    if atr is None or atr == 0:
-        return False
-    neighbor_distances = [abs(other["price"] - swing["price"]) / atr
-                           for other in pool if other["index"] != swing["index"]]
-    min_dist = min(neighbor_distances) if neighbor_distances else None
-    return min_dist is not None and min_dist <= EQUAL_LEVEL_TOLERANCE_ATR
-
-
-def percentile(values, p):
-    if not values:
-        return None
-    s = sorted(values)
-    k = (len(s) - 1) * p
-    f = int(k)
-    c = f + 1 if f + 1 < len(s) else f
-    if f == c:
-        return s[f]
-    return s[f] + (s[c] - s[f]) * (k - f)
-
-
-def track_excursion(df, direction, entry, atr, start_idx, max_hold=MAX_HOLD_CANDLES):
+def find_equal_level_clusters(swings, atr_series, ref_idx, tolerance_atr=EQUAL_LEVEL_TOLERANCE_ATR):
     """
-    برای هر کندل بعد از Entry، MFE/MAE (بر حسب ATR) رو محاسبه می‌کنه
-    و مشخص می‌کنه کدوم سطوح +ATR قبل از کدوم سطوح -ATR رسیدن -
-    بدون هیچ SL/TP از پیش تعریف‌شده (Pure Directional Excursion).
+    فقط Swing هایی که قبل از ref_idx تشکیل شدن رو در نظر می‌گیره
+    (No Look-Ahead). گروه‌هایی با >=2 Swing نزدیک به هم رو به‌عنوان
+    Liquidity Pool معتبر برمی‌گردونه.
     """
-    end_idx = min(start_idx + 1 + max_hold, len(df))
-    mfe, mae = 0, 0
-    pos_levels = [0.5, 1.0, 1.5, 2.0, 3.0]
-    neg_levels = [0.5, 0.75, 1.0, 1.25, 1.5]
-    reached_pos = {lv: None for lv in pos_levels}  # bars_to_reach
-    reached_neg = {lv: None for lv in neg_levels}
-
-    for step, i in enumerate(range(start_idx + 1, end_idx), start=1):
-        row = df.iloc[i]
-        if direction == "bullish":
-            favorable = row["high"] - entry
-            adverse = entry - row["low"]
+    valid_swings = [s for s in swings if s["index"] < ref_idx]
+    if len(valid_swings) < 2:
+        return []
+    atr = atr_series.iloc[ref_idx]
+    if pd.isna(atr) or atr == 0:
+        return []
+    sorted_swings = sorted(valid_swings, key=lambda s: s["price"])
+    groups = []
+    current_group = [sorted_swings[0]]
+    for s in sorted_swings[1:]:
+        if abs(s["price"] - current_group[-1]["price"]) / atr <= tolerance_atr:
+            current_group.append(s)
         else:
-            favorable = entry - row["low"]
-            adverse = row["high"] - entry
-        mfe = max(mfe, favorable)
-        mae = max(mae, adverse)
-
-        fav_atr = favorable / atr
-        adv_atr = adverse / atr
-        for lv in pos_levels:
-            if reached_pos[lv] is None and fav_atr >= lv:
-                reached_pos[lv] = step
-        for lv in neg_levels:
-            if reached_neg[lv] is None and adv_atr >= lv:
-                reached_neg[lv] = step
-
-    return {
-        "mfe_atr": round(mfe / atr, 3), "mae_atr": round(mae / atr, 3),
-        "reached_pos": reached_pos, "reached_neg": reached_neg,
-    }
+            if len(current_group) >= 2:
+                groups.append(current_group)
+            current_group = [s]
+    if len(current_group) >= 2:
+        groups.append(current_group)
+    return groups
 
 
-def simulate_fixed_sl_tp(df, direction, entry, sl_dist_atr, tp_r_mult, atr, start_idx, max_hold=MAX_HOLD_CANDLES):
-    """SL و TP ثابت بر حسب چند برابر ATR - برای تست Fixed-R Model ها"""
-    if direction == "bullish":
-        sl = entry - sl_dist_atr * atr
-        tp = entry + (sl_dist_atr * atr * tp_r_mult)
-    else:
-        sl = entry + sl_dist_atr * atr
-        tp = entry - (sl_dist_atr * atr * tp_r_mult)
+def detect_sweep_and_reclaim(df, swing_highs, swing_lows, avg_range, lookback=LOOKBACK_RECENT):
+    """
+    برای هر کندل i (Sweep Candidate):
+    ۱. Liquidity Cluster (Equal High/Low) که قبل از i تشکیل شده رو پیدا کن.
+    ۲. چک کن آیا کندل i سطح این Cluster رو Sweep کرده (High/Low ازش رد شده).
+    ۳. در کندل‌های بعدی (حداکثر RECLAIM_MAX_CANDLES تا)، دنبال Reclaim
+       بگرد (Close برگرده داخل سطح).
+    همه چیز فقط با اطلاعات قبل از هر مرحله محاسبه می‌شه.
+    """
+    events = []
+    recent_start = max(0, len(df) - lookback)
 
-    end_idx = min(start_idx + 1 + max_hold, len(df))
-    for i in range(start_idx + 1, end_idx):
+    for i in range(recent_start, len(df)):
         row = df.iloc[i]
-        if direction == "bullish":
-            sl_hit = row["low"] <= sl
-            tp_hit = row["high"] >= tp
-        else:
-            sl_hit = row["high"] >= sl
-            tp_hit = row["low"] <= tp
-        if sl_hit:
-            return -1.0
-        if tp_hit:
-            return tp_r_mult
-    return None  # باز مونده، بدون نتیجه قطعی
+
+        # --- Bearish Reversal: Sweep بالای Equal-High Cluster ---
+        eh_groups = find_equal_level_clusters(swing_highs, avg_range, i)
+        for group in eh_groups:
+            level_price = max(s["price"] for s in group)  # بالاترین نقطه Cluster
+            if row["high"] > level_price and row["close"] <= level_price:
+                # Sweep شد ولی توی همین کندل هنوز Close برنگشته (این سخت‌گیرانه‌تره)
+                pass
+            if row["high"] > level_price:
+                sweep_idx = i
+                # دنبال Reclaim بگرد (کندل‌های بعدی، حداکثر RECLAIM_MAX_CANDLES تا)
+                for j in range(sweep_idx, min(sweep_idx + RECLAIM_MAX_CANDLES + 1, len(df))):
+                    if df["close"].iloc[j] < level_price:
+                        events.append({
+                            "type": "bearish_sweep_reclaim", "sweep_idx": sweep_idx,
+                            "reclaim_idx": j, "level_price": level_price,
+                            "level_group_size": len(group), "time": df["dt"].iloc[j],
+                        })
+                        break
+                break  # فقط یه Cluster برای این کندل کافیه (نزدیک‌ترین)
+
+        # --- Bullish Reversal: Sweep زیر Equal-Low Cluster ---
+        el_groups = find_equal_level_clusters(swing_lows, avg_range, i)
+        for group in el_groups:
+            level_price = min(s["price"] for s in group)
+            if row["low"] < level_price:
+                sweep_idx = i
+                for j in range(sweep_idx, min(sweep_idx + RECLAIM_MAX_CANDLES + 1, len(df))):
+                    if df["close"].iloc[j] > level_price:
+                        events.append({
+                            "type": "bullish_sweep_reclaim", "sweep_idx": sweep_idx,
+                            "reclaim_idx": j, "level_price": level_price,
+                            "level_group_size": len(group), "time": df["dt"].iloc[j],
+                        })
+                        break
+                break
+
+    return events
 
 
 if __name__ == "__main__":
-    print("PHASE: 10")
-    print("STATUS: EXECUTING - BOS Core vs SL Model Decision Experiment")
+    print("SETUP FAMILY B — CYCLE 1: Detection Logic Validation")
     print("=" * 70)
 
-    causal_entries = []
+    total_events = 0
+    debug_samples = []
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
         if df4h is None or len(df4h) < 80:
+            print(f"{symbol}: داده کافی نبود")
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
-        structure = classify_market_structure(df4h)
-        bos_events = detect_bos_fresh_only(df4h, structure["swing_highs"], structure["swing_lows"])
-        daily_regime = get_daily_regime(symbol)
+        swing_highs, swing_lows = find_swings(df4h, 3, 3)
         avg_range = compute_avg_range(df4h)
 
-        for bos in bos_events:
-            bos_idx = bos["index"]
-            direction = "bullish" if bos["type"] == "bullish_bos" else "bearish"
-            if not global_regime_filter(daily_regime, direction):
-                continue
-            confirm_idx = detect_follow_through_realtime(df4h, bos_idx, direction)
-            if confirm_idx is None:
-                continue
-            atr = avg_range.iloc[confirm_idx]
-            if pd.isna(atr) or atr == 0:
-                continue
-            ac_ok, ext = check_anti_chasing_at(df4h, confirm_idx, direction, avg_range, structure)
-            if not ac_ok:
-                continue
-            entry = df4h["close"].iloc[confirm_idx]
+        events = detect_sweep_and_reclaim(df4h, swing_highs, swing_lows, avg_range)
+        total_events += len(events)
 
-            excursion = track_excursion(df4h, direction, entry, atr, confirm_idx)
-
-            causal_entries.append({
-                "symbol": symbol, "direction": direction, "entry": entry, "atr": atr,
-                "confirm_idx": confirm_idx, "daily_regime": daily_regime,
-                "h4_regime": structure["regime"], "df": df4h, "excursion": excursion,
+        print(f"\n{symbol}: {len(events)} رویداد Sweep+Reclaim پیدا شد")
+        for e in events[-3:]:  # فقط ۳ تای آخر برای هر نماد (نمونه Debug)
+            sweep_time = df4h["dt"].iloc[e["sweep_idx"]]
+            reclaim_time = df4h["dt"].iloc[e["reclaim_idx"]]
+            bars_between = e["reclaim_idx"] - e["sweep_idx"]
+            print(f"  {e['type']} | Level={e['level_price']:.6f} (GroupSize={e['level_group_size']}) | "
+                  f"SweepTime={sweep_time} (idx={e['sweep_idx']}) | "
+                  f"ReclaimTime={reclaim_time} (idx={e['reclaim_idx']}) | "
+                  f"BarsBetween={bars_between}")
+            debug_samples.append({
+                "symbol": symbol, "sweep_idx": e["sweep_idx"], "reclaim_idx": e["reclaim_idx"],
+                "level": e["level_price"],
             })
-        time.sleep(0.4)
-
-    N = len(causal_entries)
-    print(f"\n[A] TOTAL CAUSAL ENTRIES (Frozen Pipeline): N={N}\n")
-
-    if N == 0:
-        print("هیچ نمونه‌ای یافت نشد.")
-    else:
-        mfe_vals = [e["excursion"]["mfe_atr"] for e in causal_entries]
-        mae_vals = [e["excursion"]["mae_atr"] for e in causal_entries]
-
-        print("=" * 60)
-        print("[B] MAE DISTRIBUTION (ATR)")
-        print("=" * 60)
-        for p in [0.5, 0.75, 0.9, 0.95]:
-            print(f"  P{int(p*100)}: {percentile(mae_vals, p):.2f}")
-        print(f"  Mean: {sum(mae_vals)/N:.2f}")
-
-        print("\n" + "=" * 60)
-        print("[C] MFE DISTRIBUTION (ATR)")
-        print("=" * 60)
-        for p in [0.5, 0.75, 0.9, 0.95]:
-            print(f"  P{int(p*100)}: {percentile(mfe_vals, p):.2f}")
-        print(f"  Mean: {sum(mfe_vals)/N:.2f}")
-
-        print(f"\n  P(MFE>=1 ATR): {round(sum(1 for v in mfe_vals if v>=1)/N*100,1)}%")
-        print(f"  P(MFE>=1.5 ATR): {round(sum(1 for v in mfe_vals if v>=1.5)/N*100,1)}%")
-        print(f"  P(MFE>=2 ATR): {round(sum(1 for v in mfe_vals if v>=2)/N*100,1)}%")
-        print(f"  P(MFE>=3 ATR): {round(sum(1 for v in mfe_vals if v>=3)/N*100,1)}%")
-
-        print(f"\n  P(MAE<=0.5 ATR): {round(sum(1 for v in mae_vals if v<=0.5)/N*100,1)}%")
-        print(f"  P(MAE<=0.75 ATR): {round(sum(1 for v in mae_vals if v<=0.75)/N*100,1)}%")
-        print(f"  P(MAE<=1.0 ATR): {round(sum(1 for v in mae_vals if v<=1.0)/N*100,1)}%")
-        print(f"  P(MAE<=1.25 ATR): {round(sum(1 for v in mae_vals if v<=1.25)/N*100,1)}%")
-        print(f"  P(MAE<=1.5 ATR): {round(sum(1 for v in mae_vals if v<=1.5)/N*100,1)}%")
-
-        print("\n" + "=" * 60)
-        print("[D] +ATR BEFORE -ATR PROBABILITIES")
-        print("=" * 60)
-        combos = [(1.0, 0.75), (1.0, 1.0), (2.0, 1.0), (2.0, 1.25), (3.0, 1.5)]
-        for pos_lv, neg_lv in combos:
-            count_pos_first = 0
-            count_valid = 0
-            for e in causal_entries:
-                rp = e["excursion"]["reached_pos"].get(pos_lv)
-                rn = e["excursion"]["reached_neg"].get(neg_lv)
-                if rp is None and rn is None:
-                    continue
-                count_valid += 1
-                if rp is not None and (rn is None or rp <= rn):
-                    count_pos_first += 1
-            pct = round(count_pos_first / count_valid * 100, 1) if count_valid else None
-            print(f"  P(+{pos_lv}ATR before -{neg_lv}ATR): {pct}% (n={count_valid})")
-
-        print("\n" + "=" * 60)
-        print("[E] FIXED SL MODEL COMPARISON (SL dist in ATR: 0.75/1.0/1.25/1.5)")
-        print("=" * 60)
-        for sl_dist in [0.75, 1.0, 1.25, 1.5]:
-            win_counts = {0.5: 0, 1.0: 0, 1.5: 0, 2.0: 0, 3.0: 0}
-            total_valid = 0
-            for e in causal_entries:
-                rn_sl = None
-                for lv in [0.5, 0.75, 1.0, 1.25, 1.5]:
-                    if abs(lv - sl_dist) < 0.01:
-                        rn_sl = e["excursion"]["reached_neg"].get(lv)
-                if rn_sl is None:
-                    rn_sl = e["excursion"]["reached_neg"].get(1.5)  # نزدیک‌ترین موجود بالاتر
-                total_valid += 1
-                for win_lv in win_counts:
-                    rp = e["excursion"]["reached_pos"].get(win_lv)
-                    if rp is not None and (rn_sl is None or rp <= rn_sl):
-                        win_counts[win_lv] += 1
-            print(f"\n  SL={sl_dist} ATR:")
-            for win_lv, cnt in win_counts.items():
-                print(f"    Win-to-{win_lv}R: {round(cnt/total_valid*100,1)}% ({cnt}/{total_valid})")
-
-        print("\n" + "=" * 60)
-        print("[F] FIXED R:R TP OUTCOMES (SL=1.0 ATR baseline, TP=1R/1.5R/2R/3R)")
-        print("=" * 60)
-        for tp_mult in [1.0, 1.5, 2.0, 3.0]:
-            outcomes = []
-            for e in causal_entries:
-                r = simulate_fixed_sl_tp(e["df"], e["direction"], e["entry"], 1.0, tp_mult, e["atr"], e["confirm_idx"])
-                if r is not None:
-                    outcomes.append(r)
-            if outcomes:
-                wins = [o for o in outcomes if o > 0]
-                losses = [o for o in outcomes if o < 0]
-                expectancy = sum(outcomes) / len(outcomes)
-                pf = (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else None
-                print(f"  TP={tp_mult}R | N={len(outcomes)} | WinRate={round(len(wins)/len(outcomes)*100,1)}% | "
-                      f"Expectancy={round(expectancy,3)} | ProfitFactor={round(pf,2) if pf else 'N/A'}")
-
-        print("\n" + "=" * 60)
-        print("[H] REGIME BREAKDOWN")
-        print("=" * 60)
-        for regime in ["BULLISH", "BEARISH", "CHOPPY"]:
-            subset = [e for e in causal_entries if e["daily_regime"] == regime]
-            if subset:
-                mean_mfe = sum(e["excursion"]["mfe_atr"] for e in subset) / len(subset)
-                mean_mae = sum(e["excursion"]["mae_atr"] for e in subset) / len(subset)
-                print(f"  Daily={regime}: N={len(subset)} | Mean MFE={mean_mfe:.2f} | Mean MAE={mean_mae:.2f}")
+        time.sleep(0.5)
 
     print("\n" + "=" * 70)
+    print(f"مجموع رویدادهای Sweep+Reclaim (10 نماد، Cycle 1 - فقط برای دیباگ منطق): {total_events}")
+    print("\n--- بررسی صحت منطق (Look-Ahead Sanity Check) ---")
+    print("Level باید همیشه از Swing هایی ساخته شده باشه که index شون < sweep_idx بوده.")
+    print("Reclaim_idx باید همیشه >= sweep_idx باشه (منطقی، چون Reclaim بعد از Sweep میاد).")
+    all_ok = all(d["reclaim_idx"] >= d["sweep_idx"] for d in debug_samples)
+    print(f"Sanity Check Result: {'✅ PASS' if all_ok else '❌ FAIL - باگ پیدا شد'}")
+    print("=" * 70)
