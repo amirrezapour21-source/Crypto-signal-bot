@@ -1074,5 +1074,22 @@
     "entry_time": "2026-09-02T12:00:00+00:00",
     "closed_time": "2026-09-02T12:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "OKB_1788402113",
+    "symbol": "OKB",
+    "coin_id": "okb",
+    "direction": "LONG",
+    "strategy_type": "Mean Reversion",
+    "entry": 104.17823495220503,
+    "sl": 102.35418934165835,
+    "tp1": 109.33301133329499,
+    "tp2": 115.27795262451085,
+    "signal_time": "2026-09-03T02:21:53.111915+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
