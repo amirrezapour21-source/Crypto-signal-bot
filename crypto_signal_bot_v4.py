@@ -1,7 +1,5 @@
 """
-Crypto Signal Bot V4 — Setup Family B, Cycle 1: Liquidity Sweep -> Reclaim -> Reversal
-هدف Cycle 1: فقط اعتبارسنجی منطق تشخیص + رفع باگ‌های Look-Ahead،
-نه اجرای آزمایش کامل.
+Setup Family B — Cycle 2: Fix duplicate-trigger bug (Fresh Sweep Only)
 """
 
 import requests
@@ -16,7 +14,7 @@ TEST_SYMBOLS = [
 ]
 LOOKBACK_RECENT = 120
 EQUAL_LEVEL_TOLERANCE_ATR = 0.15
-RECLAIM_MAX_CANDLES = 3  # حداکثر فاصله بین Sweep و Reclaim
+RECLAIM_MAX_CANDLES = 3
 
 
 def safe_get(url, params=None, retries=3):
@@ -117,11 +115,6 @@ def compute_avg_range(df, lookback=20):
 
 
 def find_equal_level_clusters(swings, atr_series, ref_idx, tolerance_atr=EQUAL_LEVEL_TOLERANCE_ATR):
-    """
-    فقط Swing هایی که قبل از ref_idx تشکیل شدن رو در نظر می‌گیره
-    (No Look-Ahead). گروه‌هایی با >=2 Swing نزدیک به هم رو به‌عنوان
-    Liquidity Pool معتبر برمی‌گردونه.
-    """
     valid_swings = [s for s in swings if s["index"] < ref_idx]
     if len(valid_swings) < 2:
         return []
@@ -143,99 +136,88 @@ def find_equal_level_clusters(swings, atr_series, ref_idx, tolerance_atr=EQUAL_L
     return groups
 
 
-def detect_sweep_and_reclaim(df, swing_highs, swing_lows, avg_range, lookback=LOOKBACK_RECENT):
+def detect_sweep_and_reclaim_v2(df, swing_highs, swing_lows, avg_range, lookback=LOOKBACK_RECENT):
     """
-    برای هر کندل i (Sweep Candidate):
-    ۱. Liquidity Cluster (Equal High/Low) که قبل از i تشکیل شده رو پیدا کن.
-    ۲. چک کن آیا کندل i سطح این Cluster رو Sweep کرده (High/Low ازش رد شده).
-    ۳. در کندل‌های بعدی (حداکثر RECLAIM_MAX_CANDLES تا)، دنبال Reclaim
-       بگرد (Close برگرده داخل سطح).
-    همه چیز فقط با اطلاعات قبل از هر مرحله محاسبه می‌شه.
+    Fix Cycle 2: هر سطح Liquidity فقط یک‌بار می‌تونه Sweep+Reclaim معتبر
+    تولید کنه (Fresh Sweep Only) - دقیقاً همون منطق Fresh-BOS که قبلاً
+    استفاده کردیم. بعد از یه Reclaim موفق روی یه سطح، اون سطح دیگه
+    نمی‌تونه دوباره سیگنال بده مگر این‌که یه سطح Cluster جدید (با
+    قیمت متفاوت) تشکیل بشه.
     """
     events = []
     recent_start = max(0, len(df) - lookback)
+    last_swept_level_bull = None
+    last_swept_level_bear = None
 
     for i in range(recent_start, len(df)):
         row = df.iloc[i]
 
-        # --- Bearish Reversal: Sweep بالای Equal-High Cluster ---
         eh_groups = find_equal_level_clusters(swing_highs, avg_range, i)
-        for group in eh_groups:
-            level_price = max(s["price"] for s in group)  # بالاترین نقطه Cluster
-            if row["high"] > level_price and row["close"] <= level_price:
-                # Sweep شد ولی توی همین کندل هنوز Close برنگشته (این سخت‌گیرانه‌تره)
-                pass
-            if row["high"] > level_price:
+        if eh_groups:
+            nearest_group = eh_groups[-1]  # نزدیک‌ترین Cluster به قیمت فعلی (آخرین در لیست مرتب‌شده صعودی که هنوز بالای قیمته - ساده‌سازی: از انتها می‌گیریم)
+            level_price = max(s["price"] for s in nearest_group)
+            if row["high"] > level_price and level_price != last_swept_level_bear:
                 sweep_idx = i
-                # دنبال Reclaim بگرد (کندل‌های بعدی، حداکثر RECLAIM_MAX_CANDLES تا)
                 for j in range(sweep_idx, min(sweep_idx + RECLAIM_MAX_CANDLES + 1, len(df))):
                     if df["close"].iloc[j] < level_price:
                         events.append({
                             "type": "bearish_sweep_reclaim", "sweep_idx": sweep_idx,
                             "reclaim_idx": j, "level_price": level_price,
-                            "level_group_size": len(group), "time": df["dt"].iloc[j],
+                            "level_group_size": len(nearest_group), "time": df["dt"].iloc[j],
+                            "bars_between": j - sweep_idx,
                         })
+                        last_swept_level_bear = level_price
                         break
-                break  # فقط یه Cluster برای این کندل کافیه (نزدیک‌ترین)
 
-        # --- Bullish Reversal: Sweep زیر Equal-Low Cluster ---
         el_groups = find_equal_level_clusters(swing_lows, avg_range, i)
-        for group in el_groups:
-            level_price = min(s["price"] for s in group)
-            if row["low"] < level_price:
+        if el_groups:
+            nearest_group = el_groups[0]
+            level_price = min(s["price"] for s in nearest_group)
+            if row["low"] < level_price and level_price != last_swept_level_bull:
                 sweep_idx = i
                 for j in range(sweep_idx, min(sweep_idx + RECLAIM_MAX_CANDLES + 1, len(df))):
                     if df["close"].iloc[j] > level_price:
                         events.append({
                             "type": "bullish_sweep_reclaim", "sweep_idx": sweep_idx,
                             "reclaim_idx": j, "level_price": level_price,
-                            "level_group_size": len(group), "time": df["dt"].iloc[j],
+                            "level_group_size": len(nearest_group), "time": df["dt"].iloc[j],
+                            "bars_between": j - sweep_idx,
                         })
+                        last_swept_level_bull = level_price
                         break
-                break
 
     return events
 
 
 if __name__ == "__main__":
-    print("SETUP FAMILY B — CYCLE 1: Detection Logic Validation")
+    print("SETUP FAMILY B — CYCLE 2: Fresh-Sweep-Only Fix")
     print("=" * 70)
 
     total_events = 0
-    debug_samples = []
+    same_candle_count = 0
+    multi_bar_count = 0
 
     for symbol in TEST_SYMBOLS:
         df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
         if df4h is None or len(df4h) < 80:
-            print(f"{symbol}: داده کافی نبود")
             continue
         df4h = drop_unclosed_candle(df4h, "4h")
         swing_highs, swing_lows = find_swings(df4h, 3, 3)
         avg_range = compute_avg_range(df4h)
 
-        events = detect_sweep_and_reclaim(df4h, swing_highs, swing_lows, avg_range)
+        events = detect_sweep_and_reclaim_v2(df4h, swing_highs, swing_lows, avg_range)
         total_events += len(events)
+        same_candle_count += sum(1 for e in events if e["bars_between"] == 0)
+        multi_bar_count += sum(1 for e in events if e["bars_between"] > 0)
 
-        print(f"\n{symbol}: {len(events)} رویداد Sweep+Reclaim پیدا شد")
-        for e in events[-3:]:  # فقط ۳ تای آخر برای هر نماد (نمونه Debug)
-            sweep_time = df4h["dt"].iloc[e["sweep_idx"]]
-            reclaim_time = df4h["dt"].iloc[e["reclaim_idx"]]
-            bars_between = e["reclaim_idx"] - e["sweep_idx"]
-            print(f"  {e['type']} | Level={e['level_price']:.6f} (GroupSize={e['level_group_size']}) | "
-                  f"SweepTime={sweep_time} (idx={e['sweep_idx']}) | "
-                  f"ReclaimTime={reclaim_time} (idx={e['reclaim_idx']}) | "
-                  f"BarsBetween={bars_between}")
-            debug_samples.append({
-                "symbol": symbol, "sweep_idx": e["sweep_idx"], "reclaim_idx": e["reclaim_idx"],
-                "level": e["level_price"],
-            })
+        print(f"\n{symbol}: {len(events)} رویداد (بعد از Fresh-Sweep-Only)")
+        for e in events:
+            print(f"  {e['type']} | Level={e['level_price']:.6f} | GroupSize={e['level_group_size']} | "
+                  f"idx={e['sweep_idx']}->{e['reclaim_idx']} | BarsBetween={e['bars_between']}")
         time.sleep(0.5)
 
     print("\n" + "=" * 70)
-    print(f"مجموع رویدادهای Sweep+Reclaim (10 نماد، Cycle 1 - فقط برای دیباگ منطق): {total_events}")
-    print("\n--- بررسی صحت منطق (Look-Ahead Sanity Check) ---")
-    print("Level باید همیشه از Swing هایی ساخته شده باشه که index شون < sweep_idx بوده.")
-    print("Reclaim_idx باید همیشه >= sweep_idx باشه (منطقی، چون Reclaim بعد از Sweep میاد).")
-    all_ok = all(d["reclaim_idx"] >= d["sweep_idx"] for d in debug_samples)
-    print(f"Sanity Check Result: {'✅ PASS' if all_ok else '❌ FAIL - باگ پیدا شد'}")
+    print(f"مجموع رویداد بعد از Fix: {total_events} (قبلاً 134 بود)")
+    print(f"Same-Candle Reclaim (Wick-Reject): {same_candle_count}")
+    print(f"Multi-Bar Reclaim: {multi_bar_count}")
     print("=" * 70)
