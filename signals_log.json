@@ -1001,11 +1001,11 @@
     "tp1": 1.8034477547343315,
     "tp2": 1.6842532824813057,
     "signal_time": "2026-09-01T18:20:30.248789+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-03T13:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-03T15:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "TRX_1788290213",
