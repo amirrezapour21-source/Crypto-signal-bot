@@ -1,7 +1,8 @@
 """
-Setup Family B — Cycle 3: Full Experiment + Decision Gate
-Liquidity Sweep -> Reclaim -> Reversal
-(Detection logic FROZEN from Cycle 2 - no changes)
+Setup Family B — OOS / Walk-Forward Validation
+(Detection Logic FROZEN exactly as Cycle 3. Only data window changes:
+ a genuinely non-overlapping historical period, ~42 to ~84 days ago,
+ completely separate from the Cycle 1-3 window which covered ~0-42 days ago.)
 """
 
 import requests
@@ -30,6 +31,12 @@ LOOKBACK_RECENT = 120
 EQUAL_LEVEL_TOLERANCE_ATR = 0.15
 RECLAIM_MAX_CANDLES = 3
 MAX_HOLD_CANDLES = 30
+FEE_PCT_ROUND_TRIP = 0.10
+
+# === OOS Window: کاملاً غیرهم‌پوشان با Cycle 1-3 ===
+NOW_TS = int(time.time())
+CYCLE3_WINDOW_START_APPROX = NOW_TS - 250 * 4 * 3600  # ابتدای بازه‌ای که Cycle 3 استفاده کرد (~42 روز قبل)
+OOS_END_AT = CYCLE3_WINDOW_START_APPROX - 3600  # OOS باید قبل از این تموم بشه
 
 
 def safe_get(url, params=None, retries=3):
@@ -77,9 +84,12 @@ def fetch_kucoin_candles(symbol, interval_key, end_at=None):
     return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
 
-def get_ohlcv_v4(symbol, interval_key, total_candles=250):
+def get_ohlcv_oos(symbol, interval_key, total_candles, oos_end_at):
+    """نسخه OOS: صفحه‌بندی به‌جای شروع از 'الان'، از یه نقطه پایانی
+    ثابت در گذشته (oos_end_at) شروع می‌شه - این تضمین می‌کنه بازه
+    کاملاً قبل از بازه Cycle 3 باشه، بدون هیچ همپوشانی."""
     all_dfs = []
-    end_at = None
+    end_at = oos_end_at
     remaining = total_candles
     while remaining > 0:
         df = fetch_kucoin_candles(symbol, interval_key, end_at=end_at)
@@ -96,19 +106,9 @@ def get_ohlcv_v4(symbol, interval_key, total_candles=250):
     full_df = pd.concat(all_dfs, ignore_index=True)
     full_df = full_df.drop_duplicates(subset="time").sort_values("time").reset_index(drop=True)
     full_df["dt"] = pd.to_datetime(full_df["time"], unit="s", utc=True)
+    # فقط کندل‌هایی که قبل از oos_end_at هستن نگه می‌داریم (بدون نیاز به drop_unclosed چون قدیمی‌ان)
+    full_df = full_df[full_df["time"] <= oos_end_at].reset_index(drop=True)
     return full_df.tail(total_candles).reset_index(drop=True)
-
-
-def drop_unclosed_candle(df, interval_key):
-    if df is None or df.empty:
-        return df
-    interval_seconds = {"4h": 4 * 3600, "1d": 86400}
-    now_ts = int(time.time())
-    last_candle_time = int(df["time"].iloc[-1])
-    duration = interval_seconds.get(interval_key, 0)
-    if duration and now_ts < last_candle_time + duration:
-        return df.iloc[:-1].reset_index(drop=True)
-    return df
 
 
 def find_swings(df, left=3, right=3):
@@ -156,10 +156,8 @@ def detect_sweep_and_reclaim_v2(df, swing_highs, swing_lows, avg_range, lookback
     recent_start = max(0, len(df) - lookback)
     last_swept_level_bull = None
     last_swept_level_bear = None
-
     for i in range(recent_start, len(df)):
         row = df.iloc[i]
-
         eh_groups = find_equal_level_clusters(swing_highs, avg_range, i)
         if eh_groups:
             nearest_group = eh_groups[-1]
@@ -168,15 +166,11 @@ def detect_sweep_and_reclaim_v2(df, swing_highs, swing_lows, avg_range, lookback
                 sweep_idx = i
                 for j in range(sweep_idx, min(sweep_idx + RECLAIM_MAX_CANDLES + 1, len(df))):
                     if df["close"].iloc[j] < level_price:
-                        events.append({
-                            "type": "bearish_sweep_reclaim", "sweep_idx": sweep_idx,
-                            "reclaim_idx": j, "level_price": level_price,
-                            "level_group_size": len(nearest_group),
-                            "bars_between": j - sweep_idx,
-                        })
+                        events.append({"type": "bearish_sweep_reclaim", "sweep_idx": sweep_idx,
+                                      "reclaim_idx": j, "level_price": level_price,
+                                      "bars_between": j - sweep_idx})
                         last_swept_level_bear = level_price
                         break
-
         el_groups = find_equal_level_clusters(swing_lows, avg_range, i)
         if el_groups:
             nearest_group = el_groups[0]
@@ -185,28 +179,12 @@ def detect_sweep_and_reclaim_v2(df, swing_highs, swing_lows, avg_range, lookback
                 sweep_idx = i
                 for j in range(sweep_idx, min(sweep_idx + RECLAIM_MAX_CANDLES + 1, len(df))):
                     if df["close"].iloc[j] > level_price:
-                        events.append({
-                            "type": "bullish_sweep_reclaim", "sweep_idx": sweep_idx,
-                            "reclaim_idx": j, "level_price": level_price,
-                            "level_group_size": len(nearest_group),
-                            "bars_between": j - sweep_idx,
-                        })
+                        events.append({"type": "bullish_sweep_reclaim", "sweep_idx": sweep_idx,
+                                      "reclaim_idx": j, "level_price": level_price,
+                                      "bars_between": j - sweep_idx})
                         last_swept_level_bull = level_price
                         break
-
     return events
-
-
-def percentile(values, p):
-    if not values:
-        return None
-    s = sorted(values)
-    k = (len(s) - 1) * p
-    f = int(k)
-    c = f + 1 if f + 1 < len(s) else f
-    if f == c:
-        return s[f]
-    return s[f] + (s[c] - s[f]) * (k - f)
 
 
 def track_excursion(df, direction, entry, atr, start_idx, max_hold=MAX_HOLD_CANDLES):
@@ -216,7 +194,6 @@ def track_excursion(df, direction, entry, atr, start_idx, max_hold=MAX_HOLD_CAND
     neg_levels = [0.5, 0.75, 1.0, 1.25, 1.5]
     reached_pos = {lv: None for lv in pos_levels}
     reached_neg = {lv: None for lv in neg_levels}
-
     for step, i in enumerate(range(start_idx + 1, end_idx), start=1):
         row = df.iloc[i]
         if direction == "bullish":
@@ -235,7 +212,6 @@ def track_excursion(df, direction, entry, atr, start_idx, max_hold=MAX_HOLD_CAND
         for lv in neg_levels:
             if reached_neg[lv] is None and adv_atr >= lv:
                 reached_neg[lv] = step
-
     return {"mfe_atr": round(mfe/atr, 3), "mae_atr": round(mae/atr, 3),
             "reached_pos": reached_pos, "reached_neg": reached_neg}
 
@@ -263,31 +239,84 @@ def simulate_fixed_sl_tp(df, direction, entry, sl_dist_atr, tp_r_mult, atr, star
     return None
 
 
+def percentile(values, p):
+    if not values:
+        return None
+    s = sorted(values)
+    k = (len(s) - 1) * p
+    f = int(k)
+    c = f + 1 if f + 1 < len(s) else f
+    if f == c:
+        return s[f]
+    return s[f] + (s[c] - s[f]) * (k - f)
+
+
+def report_group(name, group_entries, fee_pct=FEE_PCT_ROUND_TRIP):
+    N = len(group_entries)
+    print(f"\n--- GROUP: {name} | N={N} ---")
+    if N == 0:
+        return
+    mfe = [e["excursion"]["mfe_atr"] for e in group_entries]
+    mae = [e["excursion"]["mae_atr"] for e in group_entries]
+    print(f"  Mean MFE={sum(mfe)/N:.2f} Median MFE={percentile(mfe,0.5):.2f} P25={percentile(mfe,0.25):.2f} P75={percentile(mfe,0.75):.2f}")
+    print(f"  Mean MAE={sum(mae)/N:.2f} Median MAE={percentile(mae,0.5):.2f} P25={percentile(mae,0.25):.2f} P75={percentile(mae,0.75):.2f}")
+
+    combos = [(1.0, 1.0), (2.0, 1.0), (3.0, 1.5)]
+    for pos_lv, neg_lv in combos:
+        cnt_pos, cnt_valid = 0, 0
+        for e in group_entries:
+            rp = e["excursion"]["reached_pos"].get(pos_lv)
+            rn = e["excursion"]["reached_neg"].get(neg_lv)
+            if rp is None and rn is None:
+                continue
+            cnt_valid += 1
+            if rp is not None and (rn is None or rp <= rn):
+                cnt_pos += 1
+        pct = round(cnt_pos/cnt_valid*100, 1) if cnt_valid else None
+        print(f"  P(+{pos_lv} before -{neg_lv}): {pct}% (n={cnt_valid})")
+
+    print("  Fixed R:R (SL=1.0 ATR):")
+    for tp_mult in [1.0, 1.5, 2.0, 3.0]:
+        outcomes = []
+        for e in group_entries:
+            r = simulate_fixed_sl_tp(e["df"], e["direction"], e["entry"], 1.0, tp_mult, e["atr"], e["entry_idx"])
+            if r is not None:
+                outcomes.append(r)
+        if outcomes:
+            wins = [o for o in outcomes if o > 0]
+            losses = [o for o in outcomes if o < 0]
+            expectancy = sum(outcomes)/len(outcomes)
+            pf = (sum(wins)/abs(sum(losses))) if losses and sum(losses) != 0 else None
+            gross_pct_per_trade = expectancy * 1.0  # ساده‌سازی: هر R معادل ۱ واحد ریسک ATR-based؛ Net با کسر Fee ثابت تخمین زده می‌شه
+            net_est = expectancy - (fee_pct/100)
+            print(f"    TP={tp_mult}R | N={len(outcomes)} | WinRate={round(len(wins)/len(outcomes)*100,1)}% | "
+                  f"Expectancy={round(expectancy,3)} | PF={round(pf,2) if pf else 'N/A'} | NetEstExpectancy={round(net_est,3)}")
+
+
 if __name__ == "__main__":
-    print("SETUP FAMILY B — CYCLE 3: Full Experiment + Decision Gate")
+    print("SETUP FAMILY B — OOS / WALK-FORWARD VALIDATION")
     print("=" * 70)
+    print(f"OOS Window End (unix): {OOS_END_AT} | این باید کاملاً قبل از بازه Cycle 1-3 باشه")
+    print(f"روزهای فاصله از الان: ~{(NOW_TS - OOS_END_AT)/86400:.1f} روز قبل تا ~{(NOW_TS - OOS_END_AT)/86400 + 250*4/24:.1f} روز قبل\n")
 
     entries = []
 
     for symbol in TEST_SYMBOLS:
-        df4h = get_ohlcv_v4(symbol, "4h", total_candles=250)
+        df4h = get_ohlcv_oos(symbol, "4h", 250, OOS_END_AT)
         if df4h is None or len(df4h) < 80:
             continue
-        df4h = drop_unclosed_candle(df4h, "4h")
         swing_highs, swing_lows = find_swings(df4h, 3, 3)
         avg_range = compute_avg_range(df4h)
-
         events = detect_sweep_and_reclaim_v2(df4h, swing_highs, swing_lows, avg_range)
 
         for e in events:
             direction = "bullish" if e["type"] == "bullish_sweep_reclaim" else "bearish"
-            entry_idx = e["reclaim_idx"]  # Entry = Close همون کندلی که Reclaim توش تأیید شد (Causal)
+            entry_idx = e["reclaim_idx"]
             atr = avg_range.iloc[entry_idx]
             if pd.isna(atr) or atr == 0:
                 continue
             entry_price = df4h["close"].iloc[entry_idx]
             excursion = track_excursion(df4h, direction, entry_price, atr, entry_idx)
-
             entries.append({
                 "symbol": symbol, "direction": direction, "entry": entry_price, "atr": atr,
                 "entry_idx": entry_idx, "df": df4h, "excursion": excursion,
@@ -296,84 +325,29 @@ if __name__ == "__main__":
         time.sleep(0.4)
 
     N = len(entries)
-    print(f"\n[SAMPLE] N = {N}")
-    same_candle_n = sum(1 for e in entries if e["reclaim_type"] == "same_candle")
-    multi_bar_n = sum(1 for e in entries if e["reclaim_type"] == "multi_bar")
-    print(f"  Same-Candle Reclaim: {same_candle_n} | Multi-Bar Reclaim: {multi_bar_n}\n")
+    print(f"[OOS SAMPLE] N = {N}")
+    same_n = sum(1 for e in entries if e["reclaim_type"] == "same_candle")
+    multi_n = sum(1 for e in entries if e["reclaim_type"] == "multi_bar")
+    print(f"  Same-Candle N={same_n} | Multi-Bar N={multi_n}")
 
-    if N == 0:
-        print("هیچ نمونه‌ای یافت نشد.")
+    symbols_used = sorted(set(e["symbol"] for e in entries))
+    print(f"  Symbols with events: {len(symbols_used)}")
+
+    if N > 0:
+        report_group("ALL", entries)
+        report_group("SAME-CANDLE", [e for e in entries if e["reclaim_type"] == "same_candle"])
+        report_group("MULTI-BAR", [e for e in entries if e["reclaim_type"] == "multi_bar"])
+
+        print("\n" + "=" * 60)
+        print("[SYMBOL CONCENTRATION CHECK]")
+        print("=" * 60)
+        by_symbol = {}
+        for e in entries:
+            by_symbol.setdefault(e["symbol"], []).append(e)
+        symbol_counts = sorted(by_symbol.items(), key=lambda x: -len(x[1]))[:10]
+        for sym, evs in symbol_counts:
+            print(f"  {sym}: {len(evs)} events")
     else:
-        mfe_vals = [e["excursion"]["mfe_atr"] for e in entries]
-        mae_vals = [e["excursion"]["mae_atr"] for e in entries]
-
-        print("=" * 60)
-        print("[RAW EDGE] MFE / MAE Distribution (ATR)")
-        print("=" * 60)
-        print(f"Mean MFE: {sum(mfe_vals)/N:.2f} | Mean MAE: {sum(mae_vals)/N:.2f}")
-        print(f"Median MFE: {percentile(mfe_vals,0.5):.2f} | Median MAE: {percentile(mae_vals,0.5):.2f}")
-
-        print(f"\nP(MFE>=1 ATR): {round(sum(1 for v in mfe_vals if v>=1)/N*100,1)}%")
-        print(f"P(MFE>=2 ATR): {round(sum(1 for v in mfe_vals if v>=2)/N*100,1)}%")
-        print(f"P(MAE<=1.0 ATR): {round(sum(1 for v in mae_vals if v<=1.0)/N*100,1)}%")
-
-        print("\n" + "=" * 60)
-        print("[RAW EDGE] +ATR before -ATR Probabilities")
-        print("=" * 60)
-        combos = [(1.0, 0.75), (1.0, 1.0), (2.0, 1.0), (2.0, 1.25), (3.0, 1.5)]
-        for pos_lv, neg_lv in combos:
-            count_pos_first, count_valid = 0, 0
-            for e in entries:
-                rp = e["excursion"]["reached_pos"].get(pos_lv)
-                rn = e["excursion"]["reached_neg"].get(neg_lv)
-                if rp is None and rn is None:
-                    continue
-                count_valid += 1
-                if rp is not None and (rn is None or rp <= rn):
-                    count_pos_first += 1
-            pct = round(count_pos_first/count_valid*100, 1) if count_valid else None
-            print(f"  P(+{pos_lv}ATR before -{neg_lv}ATR): {pct}% (n={count_valid})")
-
-        print("\n" + "=" * 60)
-        print("[TRADE CONSTRUCTION] Fixed SL Models")
-        print("=" * 60)
-        for sl_dist in [0.75, 1.0, 1.25, 1.5]:
-            win_counts = {0.5: 0, 1.0: 0, 1.5: 0, 2.0: 0, 3.0: 0}
-            for e in entries:
-                rn_sl = e["excursion"]["reached_neg"].get(sl_dist) if sl_dist in [0.5,0.75,1.0,1.25,1.5] else None
-                for win_lv in win_counts:
-                    rp = e["excursion"]["reached_pos"].get(win_lv)
-                    if rp is not None and (rn_sl is None or rp <= rn_sl):
-                        win_counts[win_lv] += 1
-            print(f"\n  SL={sl_dist} ATR:")
-            for win_lv, cnt in win_counts.items():
-                print(f"    Win-to-{win_lv}R: {round(cnt/N*100,1)}% ({cnt}/{N})")
-
-        print("\n" + "=" * 60)
-        print("[TRADE CONSTRUCTION] Fixed R:R Outcomes (SL=1.0 ATR)")
-        print("=" * 60)
-        for tp_mult in [1.0, 1.5, 2.0, 3.0]:
-            outcomes = []
-            for e in entries:
-                r = simulate_fixed_sl_tp(e["df"], e["direction"], e["entry"], 1.0, tp_mult, e["atr"], e["entry_idx"])
-                if r is not None:
-                    outcomes.append(r)
-            if outcomes:
-                wins = [o for o in outcomes if o > 0]
-                losses = [o for o in outcomes if o < 0]
-                expectancy = sum(outcomes)/len(outcomes)
-                pf = (sum(wins)/abs(sum(losses))) if losses and sum(losses) != 0 else None
-                print(f"  TP={tp_mult}R | N={len(outcomes)} | WinRate={round(len(wins)/len(outcomes)*100,1)}% | "
-                      f"Expectancy={round(expectancy,3)} | PF={round(pf,2) if pf else 'N/A'}")
-
-        print("\n" + "=" * 60)
-        print("[RECLAIM TYPE BREAKDOWN]")
-        print("=" * 60)
-        for rt in ["same_candle", "multi_bar"]:
-            subset = [e for e in entries if e["reclaim_type"] == rt]
-            if subset:
-                mean_mfe = sum(e["excursion"]["mfe_atr"] for e in subset)/len(subset)
-                mean_mae = sum(e["excursion"]["mae_atr"] for e in subset)/len(subset)
-                print(f"  {rt}: N={len(subset)} | Mean MFE={mean_mfe:.2f} | Mean MAE={mean_mae:.2f}")
+        print("هیچ نمونه‌ای در بازه OOS پیدا نشد.")
 
     print("\n" + "=" * 70)
