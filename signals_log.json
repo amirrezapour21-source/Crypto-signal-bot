@@ -831,11 +831,11 @@
     "tp1": 64.6566212617059,
     "tp2": 55.259012822171506,
     "signal_time": "2026-08-24T18:18:42.571972+00:00",
-    "status": "OPEN",
+    "status": "TIMEOUT",
     "entered": true,
     "entry_time": "2026-08-25T01:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-04T01:14:22.457681+00:00",
+    "result": "OPEN_TIMEOUT"
   },
   {
     "id": "LINK_1787649612",
