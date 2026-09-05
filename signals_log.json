@@ -1176,5 +1176,22 @@
     "entry_time": "2026-09-05T13:00:00+00:00",
     "closed_time": "2026-09-05T13:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "NEAR_1788621614",
+    "symbol": "NEAR",
+    "coin_id": "near",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 2.189,
+    "sl": 2.2406561389163806,
+    "tp1": 1.986264364364156,
+    "tp2": 1.754685401823345,
+    "signal_time": "2026-09-05T15:20:14.156239+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
