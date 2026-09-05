@@ -984,11 +984,11 @@
     "tp1": 1.6823138114465882e-06,
     "tp2": 1.7388469333212665e-06,
     "signal_time": "2026-09-01T15:21:55.519893+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-09-03T11:00:00+00:00",
     "closed_time": null,
-    "result": null
+    "result": "WIN (TP1)"
   },
   {
     "id": "NEAR_1788286830",
@@ -1188,11 +1188,11 @@
     "tp1": 1.986264364364156,
     "tp2": 1.754685401823345,
     "signal_time": "2026-09-05T15:20:14.156239+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-05T17:00:00+00:00",
+    "closed_time": "2026-09-05T18:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "LTC_1788625127",
