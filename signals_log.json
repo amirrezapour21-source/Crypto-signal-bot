@@ -1193,5 +1193,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "LTC_1788625127",
+    "symbol": "LTC",
+    "coin_id": "litecoin",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 53.83853753883941,
+    "sl": 54.39843476113123,
+    "tp1": 50.8722602382438,
+    "tp2": 47.88468407932796,
+    "signal_time": "2026-09-05T16:18:47.204314+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
