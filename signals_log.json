@@ -1018,11 +1018,11 @@
     "tp1": 0.3320718067837254,
     "tp2": 0.3417224950645898,
     "signal_time": "2026-09-01T19:16:53.358438+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-09-01T23:00:00+00:00",
     "closed_time": null,
-    "result": null
+    "result": "WIN (TP1)"
   },
   {
     "id": "SKY_1788312112",
