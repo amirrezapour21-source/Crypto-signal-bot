@@ -1137,11 +1137,11 @@
     "tp1": 82.33759118246415,
     "tp2": 78.23431745511814,
     "signal_time": "2026-09-04T06:20:21.676163+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-04T12:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-06T10:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "LINK_1788529644",
