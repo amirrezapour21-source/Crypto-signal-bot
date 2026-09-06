@@ -1273,10 +1273,10 @@
     "tp1": 990.9277052627831,
     "tp2": 794.9772245528643,
     "signal_time": "2026-09-06T13:20:22.728001+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-06T17:00:00+00:00",
+    "closed_time": "2026-09-06T17:00:00+00:00",
+    "result": "LOSS"
   }
 ]
