@@ -1256,11 +1256,11 @@
     "tp1": 51.369660324347116,
     "tp2": 47.88468407932796,
     "signal_time": "2026-09-06T00:20:20.826291+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-07T00:00:00+00:00",
+    "closed_time": "2026-09-07T01:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ZEC_1788700822",
