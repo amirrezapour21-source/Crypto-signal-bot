@@ -1312,5 +1312,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "WBT_1788871815",
+    "symbol": "WBT",
+    "coin_id": "whitebit",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 78.38717759018834,
+    "sl": 79.55587731816404,
+    "tp1": 74.50811954778007,
+    "tp2": 70.2480437310413,
+    "signal_time": "2026-09-08T12:50:15.070780+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
