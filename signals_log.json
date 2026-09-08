@@ -1329,5 +1329,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "HTX_1788877219",
+    "symbol": "HTX",
+    "coin_id": "htx-dao",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.6981271420180114e-06,
+    "sl": 1.7175477143031895e-06,
+    "tp1": 1.6501319346782558e-06,
+    "tp2": 1.5997215779672152e-06,
+    "signal_time": "2026-09-08T14:20:19.164586+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
