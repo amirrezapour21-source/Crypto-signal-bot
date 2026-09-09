@@ -45,10 +45,10 @@ def fresh_bos(df, sh, sl, lb=LB):
     ev, lh, ll = [], None, None
     for i in range(max(0,len(df)-lb), len(df)):
         c = df["close"].iloc[i]
-        rh = [s for s in sh if s["index"]<i]
+        rh = [s for s in sh if s["index"]+3<i]
         if rh and c>rh[-1]["price"] and rh[-1]["price"]!=lh:
-            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
-        rl = [s for s in sl if s["index"]<i]
+            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh= rh[-1]["price"]
+        rl = [s for s in sl if s["index"]+3<i]
         if rl and c<rl[-1]["price"] and rl[-1]["price"]!=ll:
             ev.append({"dir":"bearish","idx":i,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
     return ev
