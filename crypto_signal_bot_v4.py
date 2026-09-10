@@ -1,4 +1,4 @@
-"""Setup D: Fresh BOS -> Retest — Cycle 2 Edge Discovery"""
+"""Setup D: Fresh BOS -> Retest — Cycle 3 OOS (non-overlapping 42-84 days ago)"""
 import requests, pandas as pd, time
 
 BASE = "https://api.kucoin.com/api/v1/market/candles"
@@ -10,6 +10,7 @@ SYMS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-
 "1INCH-USDT","YFI-USDT","BAL-USDT","ENJ-USDT","BAT-USDT","ZRX-USDT","OMG-USDT","IOTA-USDT","QTUM-USDT","WAVES-USDT",
 "ANKR-USDT","CELR-USDT","COTI-USDT","SKL-USDT","STORJ-USDT","OCEAN-USDT","RSR-USDT","CKB-USDT","IOTX-USDT","KSM-USDT"]
 LB, RETEST_TOL_ATR, RETEST_MAX_BARS, HOLD, FEE = 120, 0.3, 5, 30, 0.10
+OOS_END_AT = int(time.time()) - 250*4*3600 - 3600
 
 def g(sym, end_at=None):
     r = requests.get(BASE, params={"symbol":sym,"type":"4hour",**({"endAt":int(end_at)} if end_at else {})}, timeout=20)
@@ -19,18 +20,18 @@ def g(sym, end_at=None):
     rows = [{"time":int(x[0]),"open":float(x[1]),"close":float(x[2]),"high":float(x[3]),"low":float(x[4]),"volume":float(x[5])} for x in d["data"]]
     return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
-def get_df(sym, n=250):
-    dfs, end_at, rem = [], None, n
+def get_df_oos(sym, n=250, end_at=OOS_END_AT):
+    dfs, cur, rem = [], end_at, n
     while rem > 0:
-        d = g(sym, end_at)
+        d = g(sym, cur)
         if d is None or d.empty: break
-        dfs.append(d); rem -= len(d); end_at = int(d["time"].min())-1
+        dfs.append(d); rem -= len(d); cur = int(d["time"].min())-1
         time.sleep(0.12)
         if len(d) < 100: break
     if not dfs: return None
     f = pd.concat(dfs).drop_duplicates("time").sort_values("time").reset_index(drop=True)
     f["dt"] = pd.to_datetime(f["time"], unit="s", utc=True)
-    if int(time.time()) < int(f["time"].iloc[-1])+14400: f = f.iloc[:-1]
+    f = f[f["time"] <= end_at].reset_index(drop=True)
     return f.tail(n).reset_index(drop=True)
 
 def swings(df, l=3, r=3):
@@ -47,7 +48,7 @@ def fresh_bos(df, sh, sl, lb=LB):
         c = df["close"].iloc[i]
         rh = [s for s in sh if s["index"]+3<i]
         if rh and c>rh[-1]["price"] and rh[-1]["price"]!=lh:
-            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh= rh[-1]["price"]
+            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
         rl = [s for s in sl if s["index"]+3<i]
         if rl and c<rl[-1]["price"] and rl[-1]["price"]!=ll:
             ev.append({"dir":"bearish","idx":i,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
@@ -95,16 +96,11 @@ def sim(df, direction, entry, sl_atr, tp_mult, atr, idx, hold=HOLD):
         if th_: return tp_mult
     return None
 
-def pct(v,p):
-    if not v: return None
-    s=sorted(v); k=(len(s)-1)*p; f=int(k); c=f+1 if f+1<len(s) else f
-    return s[f] if f==c else s[f]+(s[c]-s[f])*(k-f)
-
 if __name__ == "__main__":
-    print("SETUP D CYCLE 2 — Edge Discovery")
+    print("SETUP D CYCLE 3 — OOS Validation")
     entries = []
     for sym in SYMS:
-        df = get_df(sym)
+        df = get_df_oos(sym)
         if df is None or len(df) < 80: continue
         sh, sl = swings(df)
         ar = (df["high"]-df["low"]).rolling(20).mean()
@@ -116,33 +112,17 @@ if __name__ == "__main__":
             entry = df["close"].iloc[rt["confirm_idx"]]
             exc = excursion(df, b["dir"], entry, atr, rt["confirm_idx"])
             entries.append({"sym":sym,"dir":b["dir"],"entry":entry,"atr":atr,"idx":rt["confirm_idx"],"df":df,"exc":exc})
-        time.sleep(0.25)
+        time.sleep(0.2)
 
     N = len(entries)
-    print(f"N={N} | Symbols={len(set(e['sym'] for e in entries))}")
-    if N > 0:
-        mfe=[e["exc"]["mfe"] for e in entries]; mae=[e["exc"]["mae"] for e in entries]
-        print(f"MFE mean={sum(mfe)/N:.2f} med={pct(mfe,.5):.2f} | MAE mean={sum(mae)/N:.2f} med={pct(mae,.5):.2f}")
-        print(f"P(MFE>=1)={round(sum(1 for v in mfe if v>=1)/N*100,1)}% P(MFE>=2)={round(sum(1 for v in mfe if v>=2)/N*100,1)}%")
-        print(f"P(MAE<=1)={round(sum(1 for v in mae if v<=1)/N*100,1)}% P(MAE<=1.5)={round(sum(1 for v in mae if v<=1.5)/N*100,1)}%")
-        for pl,nl in [(1,0.75),(1,1),(2,1),(2,1.25),(3,1.5)]:
-            cp=cv=0
-            for e in entries:
-                r1,r2=e["exc"]["rp"].get(pl),e["exc"]["rn"].get(nl)
-                if r1 is None and r2 is None: continue
-                cv+=1
-                if r1 is not None and (r2 is None or r1<=r2): cp+=1
-            print(f"  P(+{pl} before -{nl}): {round(cp/cv*100,1) if cv else None}% (n={cv})")
-        print("Fixed SL=1.0 ATR:")
-        for tp in [1,1.5,2,3]:
-            outs=[sim(e["df"],e["dir"],e["entry"],1.0,tp,e["atr"],e["idx"]) for e in entries]
-            outs=[o for o in outs if o is not None]
-            if outs:
-                wins=[o for o in outs if o>0]; loss=[o for o in outs if o<0]
-                exp=sum(outs)/len(outs)
-                pf=(sum(wins)/abs(sum(loss))) if loss and sum(loss)!=0 else None
-                print(f"  TP={tp}R N={len(outs)} WR={round(len(wins)/len(outs)*100,1)}% Exp={round(exp,3)} PF={round(pf,2) if pf else 'N/A'} NetExp={round(exp-FEE/100,3)}")
-        by_s={}
-        for e in entries: by_s.setdefault(e["sym"],0); by_s[e["sym"]]+=1
-        top=sorted(by_s.items(),key=lambda x:-x[1])[:6]
-        print("Top symbols:", top)
+    print(f"OOS N={N} | Symbols={len(set(e['sym'] for e in entries))}")
+    results = {}
+    for tp in [1,1.5,2,3]:
+        outs=[sim(e["df"],e["dir"],e["entry"],1.0,tp,e["atr"],e["idx"]) for e in entries]
+        outs=[o for o in outs if o is not None]
+        if outs:
+            wins=[o for o in outs if o>0]; loss=[o for o in outs if o<0]
+            exp=sum(outs)/len(outs)
+            pf=(sum(wins)/abs(sum(loss))) if loss and sum(loss)!=0 else None
+            results[tp] = (len(outs), round(len(wins)/len(outs)*100,1), round(exp,3), round(pf,2) if pf else None, round(exp-FEE/100,3))
+            print(f"TP={tp}R N={results[tp][0]} WR={results[tp][1]}% Exp={results[tp][2]} PF={results[tp][3]} NetExp={results[tp][4]}")
