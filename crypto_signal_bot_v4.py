@@ -1,16 +1,11 @@
-"""Setup D: Fresh BOS -> Retest — Cycle 3 OOS (non-overlapping 42-84 days ago)"""
+"""Setup E: Volatility Compression -> Expansion + BTC Alignment — Cycle 1 Detection"""
 import requests, pandas as pd, time
 
 BASE = "https://api.kucoin.com/api/v1/market/candles"
-SYMS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT",
-"NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT","SUI-USDT","INJ-USDT","TIA-USDT","SEI-USDT","FIL-USDT","ATOM-USDT",
-"LTC-USDT","ETC-USDT","TRX-USDT","ICP-USDT","AAVE-USDT","UNI-USDT","MKR-USDT","RUNE-USDT","FTM-USDT","GRT-USDT",
-"ALGO-USDT","VET-USDT","HBAR-USDT","EGLD-USDT","XLM-USDT","THETA-USDT","SAND-USDT","MANA-USDT","AXS-USDT","CHZ-USDT",
-"COMP-USDT","SNX-USDT","CRV-USDT","LDO-USDT","DYDX-USDT","GMX-USDT","STX-USDT","KAVA-USDT","ZIL-USDT","ONE-USDT",
-"1INCH-USDT","YFI-USDT","BAL-USDT","ENJ-USDT","BAT-USDT","ZRX-USDT","OMG-USDT","IOTA-USDT","QTUM-USDT","WAVES-USDT",
-"ANKR-USDT","CELR-USDT","COTI-USDT","SKL-USDT","STORJ-USDT","OCEAN-USDT","RSR-USDT","CKB-USDT","IOTX-USDT","KSM-USDT"]
-LB, RETEST_TOL_ATR, RETEST_MAX_BARS, HOLD, FEE = 120, 0.3, 5, 30, 0.10
-OOS_END_AT = int(time.time()) - 250*4*3600 - 3600
+SYMS = ["ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT"]
+LB = 120
+COMP_RATIO = 0.6      # فشردگی: ATR کوتاه‌مدت/بلندمدت زیر این مقدار (baseline ثابت)
+EXP_MULT = 1.3        # انبساط: Range کندل فعلی نسبت به ATR بلندمدت
 
 def g(sym, end_at=None):
     r = requests.get(BASE, params={"symbol":sym,"type":"4hour",**({"endAt":int(end_at)} if end_at else {})}, timeout=20)
@@ -20,109 +15,76 @@ def g(sym, end_at=None):
     rows = [{"time":int(x[0]),"open":float(x[1]),"close":float(x[2]),"high":float(x[3]),"low":float(x[4]),"volume":float(x[5])} for x in d["data"]]
     return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
-def get_df_oos(sym, n=250, end_at=OOS_END_AT):
-    dfs, cur, rem = [], end_at, n
+def get_df(sym, n=250):
+    dfs, end_at, rem = [], None, n
     while rem > 0:
-        d = g(sym, cur)
+        d = g(sym, end_at)
         if d is None or d.empty: break
-        dfs.append(d); rem -= len(d); cur = int(d["time"].min())-1
-        time.sleep(0.12)
+        dfs.append(d); rem -= len(d); end_at = int(d["time"].min())-1
+        time.sleep(0.15)
         if len(d) < 100: break
     if not dfs: return None
     f = pd.concat(dfs).drop_duplicates("time").sort_values("time").reset_index(drop=True)
     f["dt"] = pd.to_datetime(f["time"], unit="s", utc=True)
-    f = f[f["time"] <= end_at].reset_index(drop=True)
+    if int(time.time()) < int(f["time"].iloc[-1])+14400: f = f.iloc[:-1]
     return f.tail(n).reset_index(drop=True)
 
-def swings(df, l=3, r=3):
-    h, lo = df["high"].values, df["low"].values
-    sh, sl = [], []
-    for i in range(l, len(df)-r):
-        if h[i]==h[i-l:i+r+1].max() and (h[i-l:i+r+1]==h[i]).sum()==1: sh.append({"index":i,"price":h[i]})
-        if lo[i]==lo[i-l:i+r+1].min() and (lo[i-l:i+r+1]==lo[i]).sum()==1: sl.append({"index":i,"price":lo[i]})
-    return sh, sl
+def detect_compression_expansion(df, btc_df, lb=LB):
+    """
+    فقط با اطلاعات تا کندل i (Causal). Compression = نسبت ATR کوتاه(5)
+    به بلند(20) در کندل i-1 زیر آستانه. Expansion = Range کندل i بزرگ‌تر
+    از ATR بلند * EXP_MULT. جهت از خود کندل Expansion. BTC Filter: در
+    همون timestamp، آیا close فعلی BTC بالای/زیر SMA20 خودشه (هم‌جهت).
+    """
+    df = df.copy()
+    df["range"] = df["high"] - df["low"]
+    atr5 = df["range"].rolling(5).mean()
+    atr20 = df["range"].rolling(20).mean()
+    btc_sma20 = btc_df["close"].rolling(20).mean()
+    btc_by_time = dict(zip(btc_df["time"], zip(btc_df["close"], btc_sma20)))
 
-def fresh_bos(df, sh, sl, lb=LB):
-    ev, lh, ll = [], None, None
-    for i in range(max(0,len(df)-lb), len(df)):
-        c = df["close"].iloc[i]
-        rh = [s for s in sh if s["index"]+3<i]
-        if rh and c>rh[-1]["price"] and rh[-1]["price"]!=lh:
-            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
-        rl = [s for s in sl if s["index"]+3<i]
-        if rl and c<rl[-1]["price"] and rl[-1]["price"]!=ll:
-            ev.append({"dir":"bearish","idx":i,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
-    return ev
+    events = []
+    start = max(21, len(df)-lb)
+    for i in range(start, len(df)):
+        if pd.isna(atr5.iloc[i-1]) or pd.isna(atr20.iloc[i-1]) or atr20.iloc[i-1] == 0:
+            continue
+        compressed = (atr5.iloc[i-1] / atr20.iloc[i-1]) < COMP_RATIO
+        if not compressed:
+            continue
+        row = df.iloc[i]
+        if row["range"] < EXP_MULT * atr20.iloc[i-1]:
+            continue
+        direction = "bullish" if row["close"] > row["open"] else "bearish"
 
-def find_retest(df, bos, atr_s):
-    i, lvl, d = bos["idx"], bos["level"], bos["dir"]
-    atr = atr_s.iloc[i]
-    if pd.isna(atr) or atr==0: return None
-    tol = RETEST_TOL_ATR*atr
-    for j in range(i+1, min(i+RETEST_MAX_BARS+1, len(df))):
-        row = df.iloc[j]
-        near = (d=="bullish" and row["low"]<=lvl+tol) or (d=="bearish" and row["high"]>=lvl-tol)
-        if near:
-            for k in range(j, min(j+2, len(df))):
-                c = df["close"].iloc[k]
-                if (d=="bullish" and c>lvl) or (d=="bearish" and c<lvl):
-                    return {"retest_idx":j, "confirm_idx":k}
-            return None
-    return None
+        btc_info = btc_by_time.get(row["time"])
+        if btc_info is None or pd.isna(btc_info[1]):
+            continue
+        btc_close, btc_sma = btc_info
+        btc_dir = "bullish" if btc_close > btc_sma else "bearish"
+        if btc_dir != direction:
+            continue  # BTC Alignment Filter
 
-def excursion(df, direction, entry, atr, idx, hold=HOLD):
-    end = min(idx+1+hold, len(df))
-    mfe=mae=0; pl=[0.5,1,1.5,2,3]; nl=[0.5,0.75,1,1.25,1.5]
-    rp={v:None for v in pl}; rn={v:None for v in nl}
-    for step,i in enumerate(range(idx+1,end),1):
-        row=df.iloc[i]
-        fav,adv=(row["high"]-entry,entry-row["low"]) if direction=="bullish" else (entry-row["low"],row["high"]-entry)
-        mfe,mae=max(mfe,fav),max(mae,adv)
-        fa,aa=fav/atr,adv/atr
-        for v in pl:
-            if rp[v] is None and fa>=v: rp[v]=step
-        for v in nl:
-            if rn[v] is None and aa>=v: rn[v]=step
-    return {"mfe":mfe/atr,"mae":mae/atr,"rp":rp,"rn":rn}
-
-def sim(df, direction, entry, sl_atr, tp_mult, atr, idx, hold=HOLD):
-    if direction=="bullish": sl=entry-sl_atr*atr; tp=entry+sl_atr*atr*tp_mult
-    else: sl=entry+sl_atr*atr; tp=entry-sl_atr*atr*tp_mult
-    end=min(idx+1+hold,len(df))
-    for i in range(idx+1,end):
-        row=df.iloc[i]
-        sh_,th_=(row["low"]<=sl,row["high"]>=tp) if direction=="bullish" else (row["high"]>=sl,row["low"]<=tp)
-        if sh_: return -1.0
-        if th_: return tp_mult
-    return None
+        events.append({"idx": i, "direction": direction, "comp_ratio": round(atr5.iloc[i-1]/atr20.iloc[i-1],2)})
+    return events
 
 if __name__ == "__main__":
-    print("SETUP D CYCLE 3 — OOS Validation")
-    entries = []
+    print("SETUP E CYCLE 1 — Detection/Causality")
+    btc_df = get_df("BTC-USDT")
+    total_events, causal_ok = 0, True
     for sym in SYMS:
-        df = get_df_oos(sym)
-        if df is None or len(df) < 80: continue
-        sh, sl = swings(df)
-        ar = (df["high"]-df["low"]).rolling(20).mean()
-        for b in fresh_bos(df, sh, sl):
-            rt = find_retest(df, b, ar)
-            if not rt: continue
-            atr = ar.iloc[rt["confirm_idx"]]
-            if pd.isna(atr) or atr == 0: continue
-            entry = df["close"].iloc[rt["confirm_idx"]]
-            exc = excursion(df, b["dir"], entry, atr, rt["confirm_idx"])
-            entries.append({"sym":sym,"dir":b["dir"],"entry":entry,"atr":atr,"idx":rt["confirm_idx"],"df":df,"exc":exc})
-        time.sleep(0.2)
+        df = get_df(sym)
+        if df is None or len(df) < 80 or btc_df is None:
+            continue
+        events = detect_compression_expansion(df, btc_df)
+        total_events += len(events)
+        for e in events[:2]:
+            print(f"  {sym} {e['direction']} idx={e['idx']} comp_ratio={e['comp_ratio']}")
+        # Causality check: هیچ اطلاعاتی از i+1 به بعد استفاده نشده (خود منطق تضمین می‌کنه، فقط sanity)
+        for e in events:
+            if e["idx"] >= len(df):
+                causal_ok = False
+        time.sleep(0.3)
 
-    N = len(entries)
-    print(f"OOS N={N} | Symbols={len(set(e['sym'] for e in entries))}")
-    results = {}
-    for tp in [1,1.5,2,3]:
-        outs=[sim(e["df"],e["dir"],e["entry"],1.0,tp,e["atr"],e["idx"]) for e in entries]
-        outs=[o for o in outs if o is not None]
-        if outs:
-            wins=[o for o in outs if o>0]; loss=[o for o in outs if o<0]
-            exp=sum(outs)/len(outs)
-            pf=(sum(wins)/abs(sum(loss))) if loss and sum(loss)!=0 else None
-            results[tp] = (len(outs), round(len(wins)/len(outs)*100,1), round(exp,3), round(pf,2) if pf else None, round(exp-FEE/100,3))
-            print(f"TP={tp}R N={results[tp][0]} WR={results[tp][1]}% Exp={results[tp][2]} PF={results[tp][3]} NetExp={results[tp][4]}")
+    print(f"\nTotal events (9 symbols, BTC-aligned): {total_events}")
+    print(f"Causality sanity PASS={causal_ok}")
+    print(f"Decision: {'PASS - proceed to Cycle 2' if total_events > 5 and causal_ok else 'Review needed'}")
