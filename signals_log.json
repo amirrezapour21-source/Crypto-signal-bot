@@ -1324,10 +1324,10 @@
     "tp1": 74.50811954778007,
     "tp2": 70.2480437310413,
     "signal_time": "2026-09-08T12:50:15.070780+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-09-11T14:17:16.104880+00:00",
     "result": null
   },
   {
