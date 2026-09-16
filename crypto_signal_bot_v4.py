@@ -1,19 +1,16 @@
-"""Setup F Cycle 2: IS Edge (independent events = NEW entries into Top-N only)"""
+"""Candidate 1: SMT Divergence -> BOS -> OB+FVG Entry — Cycle 1 Detection"""
 import requests, pandas as pd, time
 
 BASE = "https://api.kucoin.com/api/v1/market/candles"
-SYMS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT",
-"NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT","SUI-USDT","INJ-USDT","TIA-USDT","SEI-USDT","FIL-USDT","ATOM-USDT",
-"LTC-USDT","ETC-USDT","TRX-USDT","ICP-USDT","AAVE-USDT","UNI-USDT","MKR-USDT","RUNE-USDT","FTM-USDT","GRT-USDT",
-"ALGO-USDT","VET-USDT","HBAR-USDT","EGLD-USDT","XLM-USDT","THETA-USDT","SAND-USDT","MANA-USDT","AXS-USDT","CHZ-USDT"]
-LB, MOM_PERIOD, TOP_N, HOLD = 100, 20, 3, 30
+SYMS = ["ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT"]
+LB, RETEST_MAX_BARS = 120, 5
 
 def g(sym, end_at=None):
     r = requests.get(BASE, params={"symbol":sym,"type":"4hour",**({"endAt":int(end_at)} if end_at else {})}, timeout=20)
     if r.status_code != 200: return None
     d = r.json()
     if d.get("code") != "200000" or not d.get("data"): return None
-    rows = [{"time":int(x[0]),"close":float(x[2]),"high":float(x[3]),"low":float(x[4])} for x in d["data"]]
+    rows = [{"time":int(x[0]),"open":float(x[1]),"close":float(x[2]),"high":float(x[3]),"low":float(x[4])} for x in d["data"]]
     return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
 def get_df(sym, n=250):
@@ -22,91 +19,113 @@ def get_df(sym, n=250):
         d = g(sym, end_at)
         if d is None or d.empty: break
         dfs.append(d); rem -= len(d); end_at = int(d["time"].min())-1
-        time.sleep(0.12)
+        time.sleep(0.15)
         if len(d) < 100: break
     if not dfs: return None
     f = pd.concat(dfs).drop_duplicates("time").sort_values("time").reset_index(drop=True)
     if int(time.time()) < int(f["time"].iloc[-1])+14400: f = f.iloc[:-1]
-    f["range"] = f["high"] - f["low"]
-    f["atr20"] = f["range"].rolling(20).mean()
     return f.tail(n).reset_index(drop=True)
 
-def sim(df, t_idx, sl_atr, tp_mult, hold=HOLD):
-    entry = df["close"].iloc[t_idx]
-    atr = df["atr20"].iloc[t_idx]
-    if pd.isna(atr) or atr == 0: return None
-    sl, tp = entry - sl_atr*atr, entry + sl_atr*atr*tp_mult
-    end = min(t_idx+1+hold, len(df))
-    for i in range(t_idx+1, end):
-        row = df.iloc[i]
-        if row["low"] <= sl: return -1.0
-        if row["high"] >= tp: return tp_mult
+def swings(df, l=3, r=3):
+    h, lo = df["high"].values, df["low"].values
+    sh, sl = [], []
+    for i in range(l, len(df)-r):
+        if h[i]==h[i-l:i+r+1].max() and (h[i-l:i+r+1]==h[i]).sum()==1: sh.append({"index":i,"price":h[i]})
+        if lo[i]==lo[i-l:i+r+1].min() and (lo[i-l:i+r+1]==lo[i]).sum()==1: sl.append({"index":i,"price":lo[i]})
+    return sh, sl
+
+def fresh_bos(df, sh, sl, lb=LB):
+    ev, lh, ll = [], None, None
+    for i in range(max(0,len(df)-lb), len(df)):
+        c = df["close"].iloc[i]
+        rh = [s for s in sh if s["index"]+3<i]
+        if rh and c>rh[-1]["price"] and rh[-1]["price"]!=lh:
+            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
+        rl = [s for s in sl if s["index"]+3<i]
+        if rl and c<rl[-1]["price"] and rl[-1]["price"]!=ll:
+            ev.append({"dir":"bearish","idx":i,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
+    return ev
+
+def check_smt(df, btc_df, sh, sl, btc_sh, btc_sl, bos_idx, direction):
+    """SMT: نزدیک‌ترین Swing قبل از BOS رو با نزدیک‌ترین Swing هم‌زمان BTC مقایسه می‌کنه"""
+    if direction == "bullish":
+        rel = [s for s in sl if s["index"]+3 < bos_idx]
+        btc_rel = [s for s in btc_sl if s["index"]+3 < bos_idx]
+        if len(rel) < 2 or len(btc_rel) < 2: return False
+        sym_higher_low = rel[-1]["price"] > rel[-2]["price"]
+        btc_lower_low = btc_rel[-1]["price"] < btc_rel[-2]["price"]
+        return sym_higher_low and btc_lower_low
+    else:
+        rel = [s for s in sh if s["index"]+3 < bos_idx]
+        btc_rel = [s for s in btc_sh if s["index"]+3 < bos_idx]
+        if len(rel) < 2 or len(btc_rel) < 2: return False
+        sym_lower_high = rel[-1]["price"] < rel[-2]["price"]
+        btc_higher_high = btc_rel[-1]["price"] > btc_rel[-2]["price"]
+        return sym_lower_high and btc_higher_high
+
+def find_ob(df, bos_idx, direction):
+    """آخرین کندل مخالف قبل از BOS (Causal، فقط ایندکس قبل از BOS)"""
+    for j in range(bos_idx-1, max(0,bos_idx-10), -1):
+        row = df.iloc[j]
+        if direction == "bullish" and row["close"] < row["open"]:
+            return {"idx": j, "low": row["low"], "high": row["high"]}
+        if direction == "bearish" and row["close"] > row["open"]:
+            return {"idx": j, "low": row["low"], "high": row["high"]}
     return None
 
-def excursion(df, t_idx, hold=HOLD):
-    entry = df["close"].iloc[t_idx]; atr = df["atr20"].iloc[t_idx]
-    if pd.isna(atr) or atr == 0: return None
-    end = min(t_idx+1+hold, len(df)); mfe = mae = 0
-    for i in range(t_idx+1, end):
-        row = df.iloc[i]
-        mfe = max(mfe, row["high"]-entry); mae = max(mae, entry-row["low"])
-    return {"mfe": mfe/atr, "mae": mae/atr}
+def find_fvg(df, bos_idx, direction):
+    """FVG سه‌کندلی حول BOS (Causal، فقط کندل‌های <= bos_idx)"""
+    for k in range(bos_idx, max(1,bos_idx-5), -1):
+        if k < 2: continue
+        c0, c2 = df.iloc[k-2], df.iloc[k]
+        if direction == "bullish" and c0["high"] < c2["low"]:
+            return {"low": c0["high"], "high": c2["low"]}
+        if direction == "bearish" and c0["low"] > c2["high"]:
+            return {"low": c2["high"], "high": c0["low"]}
+    return None
+
+def find_entry(df, bos_idx, zone, direction, max_bars=RETEST_MAX_BARS):
+    for j in range(bos_idx+1, min(bos_idx+max_bars+1, len(df))):
+        row = df.iloc[j]
+        touched = (direction=="bullish" and row["low"]<=zone["high"]) or (direction=="bearish" and row["high"]>=zone["low"])
+        if touched:
+            for k in range(j, min(j+2, len(df))):
+                c = df["close"].iloc[k]
+                if (direction=="bullish" and c>zone["low"]) or (direction=="bearish" and c<zone["high"]):
+                    return k
+            return None
+    return None
 
 if __name__ == "__main__":
-    print("SETUP F CYCLE 2 — IS Edge (independent new-entry events only)")
-    dfs = {}
+    print("CANDIDATE 1: SMT->BOS->OB+FVG — CYCLE 1 Detection")
+    btc_df = get_df("BTC-USDT")
+    btc_sh, btc_sl = swings(btc_df)
+    total_bos, smt_pass, ob_found, fvg_found, entries, causal_ok = 0,0,0,0,[],True
+
     for sym in SYMS:
-        d = get_df(sym)
-        if d is not None and len(d) > MOM_PERIOD+LB:
-            dfs[sym] = d
-    print(f"Symbols loaded: {len(dfs)}")
+        df = get_df(sym)
+        if df is None or len(df) < 80: continue
+        sh, sl = swings(df)
+        bos_list = fresh_bos(df, sh, sl)
+        total_bos += len(bos_list)
+        for b in bos_list:
+            if not check_smt(df, btc_df, sh, sl, btc_sh, btc_sl, b["idx"], b["dir"]): continue
+            smt_pass += 1
+            ob = find_ob(df, b["idx"], b["dir"])
+            fvg = find_fvg(df, b["idx"], b["dir"])
+            if ob: ob_found += 1
+            if fvg: fvg_found += 1
+            zone = ob if ob else fvg
+            if not zone: continue
+            if not (zone.get("idx", -1) < b["idx"] if ob else True): causal_ok = False
+            entry_idx = find_entry(df, b["idx"], zone, b["dir"])
+            if entry_idx:
+                entries.append({"sym":sym,"dir":b["dir"],"bos_idx":b["idx"],"entry_idx":entry_idx})
 
-    common_times = None
-    for sym, d in dfs.items():
-        t = set(d["time"])
-        common_times = t if common_times is None else common_times & t
-    common_times = sorted(common_times)[-LB:]
-
-    prev_top = set()
-    entries = []
-    for t_idx, t in enumerate(common_times):
-        if t_idx < MOM_PERIOD: continue
-        rets = {}
-        past_time = common_times[t_idx - MOM_PERIOD]
-        for sym, d in dfs.items():
-            row_now = d[d["time"] == t]; row_past = d[d["time"] == past_time]
-            if row_now.empty or row_past.empty: continue
-            c_now, c_past = row_now["close"].values[0], row_past["close"].values[0]
-            if c_past == 0: continue
-            rets[sym] = (c_now - c_past) / c_past
-        if len(rets) < TOP_N: continue
-        top_now = set(s for s, r in sorted(rets.items(), key=lambda x: -x[1])[:TOP_N])
-        new_entries = top_now - prev_top  # فقط نمادهایی که تازه وارد Top-N شدن (Event مستقل)
-        for sym in new_entries:
-            d = dfs[sym]
-            idx_in_d = d[d["time"] == t].index
-            if len(idx_in_d) == 0: continue
-            idx = idx_in_d[0]
-            entries.append({"sym": sym, "df": d, "idx": idx})
-        prev_top = top_now
-
-    N = len(entries)
-    print(f"Independent events (new Top-{TOP_N} entries): {N}")
-
-    if N > 0:
-        exc = [excursion(e["df"], e["idx"]) for e in entries]
-        exc = [x for x in exc if x is not None]
-        mfe = [x["mfe"] for x in exc]; mae = [x["mae"] for x in exc]
-        if mfe:
-            print(f"MFE mean={sum(mfe)/len(mfe):.2f} | MAE mean={sum(mae)/len(mae):.2f}")
-        for tp in [1, 1.5, 2, 3]:
-            outs = [sim(e["df"], e["idx"], 1.0, tp) for e in entries]
-            outs = [o for o in outs if o is not None]
-            if outs:
-                wins = [o for o in outs if o > 0]; loss = [o for o in outs if o < 0]
-                exp = sum(outs)/len(outs)
-                pf = (sum(wins)/abs(sum(loss))) if loss and sum(loss) != 0 else None
-                print(f"  TP={tp}R N={len(outs)} WR={round(len(wins)/len(outs)*100,1)}% Exp={round(exp,3)} PF={round(pf,2) if pf else 'N/A'}")
-        by_s = {}
-        for e in entries: by_s.setdefault(e["sym"],0); by_s[e["sym"]] += 1
-        print("By symbol:", by_s)
+    print(f"Total Fresh BOS: {total_bos}")
+    print(f"SMT-confirmed BOS: {smt_pass}")
+    print(f"OB found: {ob_found} | FVG found: {fvg_found}")
+    print(f"Final causal entries: {len(entries)}")
+    print(f"Causality PASS={causal_ok}")
+    for e in entries[:8]:
+        print(f"  {e['sym']} {e['dir']} bos={e['bos_idx']} entry={e['entry_idx']}")
