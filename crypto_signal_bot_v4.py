@@ -1,4 +1,4 @@
-"""Candidate 1: SMT->BOS->OB+FVG — Cycle 2 IS Edge Discovery (full universe, frozen logic)"""
+"""Candidate 1: SMT->BOS->OB+FVG — Cycle 2 CORRECTED (causal SL/TP, timestamp SMT, dedup)"""
 import requests, pandas as pd, time
 
 BASE = "https://api.kucoin.com/api/v1/market/candles"
@@ -9,7 +9,7 @@ SYMS = ["ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","LINK
 "COMP-USDT","SNX-USDT","CRV-USDT","LDO-USDT","DYDX-USDT","GMX-USDT","STX-USDT","KAVA-USDT","ZIL-USDT","ONE-USDT",
 "1INCH-USDT","YFI-USDT","BAL-USDT","ENJ-USDT","BAT-USDT","ZRX-USDT","OMG-USDT","IOTA-USDT","QTUM-USDT","WAVES-USDT",
 "ANKR-USDT","CELR-USDT","COTI-USDT","SKL-USDT","STORJ-USDT","OCEAN-USDT","RSR-USDT","CKB-USDT","IOTX-USDT","KSM-USDT"]
-LB, RETEST_MAX_BARS, HOLD = 120, 5, 30
+LB, RETEST_MAX_BARS, HOLD, ZONE_BUFFER_ATR, MIN_RR = 120, 5, 30, 0.1, 2.0
 
 def g(sym, end_at=None):
     r = requests.get(BASE, params={"symbol":sym,"type":"4hour",**({"endAt":int(end_at)} if end_at else {})}, timeout=20)
@@ -34,34 +34,35 @@ def get_df(sym, n=250):
     return f.tail(n).reset_index(drop=True)
 
 def swings(df, l=3, r=3):
-    h, lo = df["high"].values, df["low"].values
+    h, lo, t = df["high"].values, df["low"].values, df["time"].values
     sh, sl = [], []
     for i in range(l, len(df)-r):
-        if h[i]==h[i-l:i+r+1].max() and (h[i-l:i+r+1]==h[i]).sum()==1: sh.append({"index":i,"price":h[i]})
-        if lo[i]==lo[i-l:i+r+1].min() and (lo[i-l:i+r+1]==lo[i]).sum()==1: sl.append({"index":i,"price":lo[i]})
+        if h[i]==h[i-l:i+r+1].max() and (h[i-l:i+r+1]==h[i]).sum()==1: sh.append({"index":i,"price":h[i],"time":t[i]})
+        if lo[i]==lo[i-l:i+r+1].min() and (lo[i-l:i+r+1]==lo[i]).sum()==1: sl.append({"index":i,"price":lo[i],"time":t[i]})
     return sh, sl
 
 def fresh_bos(df, sh, sl, lb=LB):
     ev, lh, ll = [], None, None
     for i in range(max(0,len(df)-lb), len(df)):
-        c = df["close"].iloc[i]
+        c = df["close"].iloc[i]; t = df["time"].iloc[i]
         rh = [s for s in sh if s["index"]+3<i]
         if rh and c>rh[-1]["price"] and rh[-1]["price"]!=lh:
-            ev.append({"dir":"bullish","idx":i,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
+            ev.append({"dir":"bullish","idx":i,"time":t,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
         rl = [s for s in sl if s["index"]+3<i]
         if rl and c<rl[-1]["price"] and rl[-1]["price"]!=ll:
-            ev.append({"dir":"bearish","idx":i,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
+            ev.append({"dir":"bearish","idx":i,"time":t,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
     return ev
 
-def check_smt(sh, sl, btc_sh, btc_sl, bos_idx, direction):
+def check_smt_by_time(sh, sl, btc_sh, btc_sl, bos_time, direction):
+    """FIX: مقایسه بر اساس timestamp واقعی، نه index موقعیتی"""
     if direction == "bullish":
-        rel = [s for s in sl if s["index"]+3 < bos_idx]
-        btc_rel = [s for s in btc_sl if s["index"]+3 < bos_idx]
+        rel = [s for s in sl if s["time"] < bos_time]
+        btc_rel = [s for s in btc_sl if s["time"] < bos_time]
         if len(rel) < 2 or len(btc_rel) < 2: return False
         return rel[-1]["price"]>rel[-2]["price"] and btc_rel[-1]["price"]<btc_rel[-2]["price"]
     else:
-        rel = [s for s in sh if s["index"]+3 < bos_idx]
-        btc_rel = [s for s in btc_sh if s["index"]+3 < bos_idx]
+        rel = [s for s in sh if s["time"] < bos_time]
+        btc_rel = [s for s in btc_sh if s["time"] < bos_time]
         if len(rel) < 2 or len(btc_rel) < 2: return False
         return rel[-1]["price"]<rel[-2]["price"] and btc_rel[-1]["price"]>btc_rel[-2]["price"]
 
@@ -92,16 +93,32 @@ def find_entry(df, bos_idx, zone, direction, max_bars=RETEST_MAX_BARS):
             return None
     return None
 
-def sim(df, direction, entry, sl_atr, tp_mult, atr, idx, hold=HOLD):
-    if direction=="bullish": sl=entry-sl_atr*atr; tp=entry+sl_atr*atr*tp_mult
-    else: sl=entry+sl_atr*atr; tp=entry-sl_atr*atr*tp_mult
-    end=min(idx+1+hold,len(df))
-    for i in range(idx+1,end):
-        row=df.iloc[i]
-        sh_,th_=(row["low"]<=sl,row["high"]>=tp) if direction=="bullish" else (row["high"]>=sl,row["low"]<=tp)
-        if sh_: return -1.0
-        if th_: return tp_mult
-    return None
+def build_trade(df, direction, entry_idx, zone, atr):
+    """FIX: SL از خود Zone (Invalidation)، TP بر پایه حداقل R:R=2"""
+    entry = df["close"].iloc[entry_idx]
+    buf = ZONE_BUFFER_ATR * atr
+    if direction == "bullish":
+        sl = zone["low"] - buf
+        risk = entry - sl
+        if risk <= 0: return None, "invalid_risk_nonpositive"
+        tp = entry + risk * MIN_RR
+    else:
+        sl = zone["high"] + buf
+        risk = sl - entry
+        if risk <= 0: return None, "invalid_risk_nonpositive"
+        tp = entry - risk * MIN_RR
+    return {"entry":entry,"sl":sl,"tp":tp,"risk":risk}, "ok"
+
+def sim_trade(df, direction, trade, idx, hold=HOLD):
+    end = min(idx+1+hold, len(df))
+    for i in range(idx+1, end):
+        row = df.iloc[i]
+        sl_hit = row["low"]<=trade["sl"] if direction=="bullish" else row["high"]>=trade["sl"]
+        tp_hit = row["high"]>=trade["tp"] if direction=="bullish" else row["low"]<=trade["tp"]
+        if sl_hit and tp_hit: return -1.0, "ambiguous_same_candle_SL_assumed"
+        if sl_hit: return -1.0, "SL"
+        if tp_hit: return MIN_RR, "TP"
+    return None, "open_no_outcome"
 
 def excursion(df, direction, entry, atr, idx, hold=HOLD):
     end=min(idx+1+hold,len(df)); mfe=mae=0
@@ -112,49 +129,72 @@ def excursion(df, direction, entry, atr, idx, hold=HOLD):
     return mfe/atr, mae/atr
 
 if __name__ == "__main__":
-    print("CANDIDATE 1: SMT->BOS->OB+FVG — CYCLE 2 IS Edge")
+    print("CANDIDATE 1 — CYCLE 2 CORRECTED (causal SL/TP, timestamp SMT, dedup)")
     btc_df = get_df("BTC-USDT")
     btc_sh, btc_sl = swings(btc_df)
-    entries = []
+
+    raw_entries, valid, rejected, overlap_removed = 0, [], {}, 0
+    last_exit_time = {}  # per symbol: زمان آخرین Trade باز/بسته‌شده
+
     for sym in SYMS:
         df = get_df(sym)
         if df is None or len(df) < 80: continue
         sh, sl = swings(df)
         for b in fresh_bos(df, sh, sl):
-            if not check_smt(sh, sl, btc_sh, btc_sl, b["idx"], b["dir"]): continue
+            if not check_smt_by_time(sh, sl, btc_sh, btc_sl, b["time"], b["dir"]): continue
             ob = find_ob(df, b["idx"], b["dir"])
             fvg = find_fvg(df, b["idx"], b["dir"])
             zone = ob if ob else fvg
             if not zone: continue
             entry_idx = find_entry(df, b["idx"], zone, b["dir"])
             if entry_idx is None: continue
+            raw_entries += 1
+            entry_time = df["time"].iloc[entry_idx]
+
+            # Overlap check: اگه هنوز Trade قبلی همین نماد باز/تداخل داره، رد کن
+            if sym in last_exit_time and entry_time < last_exit_time[sym]:
+                overlap_removed += 1
+                continue
+
             atr = df["atr20"].iloc[entry_idx]
-            if pd.isna(atr) or atr == 0: continue
-            entries.append({"sym":sym,"dir":b["dir"],"df":df,"idx":entry_idx,"atr":atr})
+            if pd.isna(atr) or atr == 0:
+                rejected["atr_invalid"] = rejected.get("atr_invalid",0)+1; continue
+            trade, reason = build_trade(df, b["dir"], entry_idx, zone, atr)
+            if trade is None:
+                rejected[reason] = rejected.get(reason,0)+1; continue
+
+            r_mult, outcome = sim_trade(df, b["dir"], trade, entry_idx)
+            exit_idx = min(entry_idx+1+HOLD, len(df)-1)
+            last_exit_time[sym] = df["time"].iloc[exit_idx]
+
+            mfe, mae = excursion(df, b["dir"], trade["entry"], atr, entry_idx)
+            valid.append({"sym":sym,"dir":b["dir"],"entry":trade["entry"],"sl":trade["sl"],"tp":trade["tp"],
+                          "r":r_mult,"outcome":outcome,"mfe":mfe,"mae":mae})
         time.sleep(0.2)
 
-    N = len(entries)
-    print(f"N={N} | Symbols={len(set(e['sym'] for e in entries))}")
+    print(f"\nRaw detected entries: {raw_entries}")
+    print(f"Overlapping events removed: {overlap_removed}")
+    print(f"Rejected constructions: {rejected}")
+    print(f"Final independent trades: {len(valid)}")
+
+    N = len(valid)
     if N < 30:
-        print("SAMPLE TOO SMALL for meaningful IS inference — reporting raw numbers only, no conclusion.")
+        print("INSUFFICIENT SAMPLE for meaningful IS inference.")
     if N > 0:
-        mfe_l, mae_l = [], []
-        for e in entries:
-            entry_price = e["df"]["close"].iloc[e["idx"]]
-            mfe, mae = excursion(e["df"], e["dir"], entry_price, e["atr"], e["idx"])
-            mfe_l.append(mfe); mae_l.append(mae)
+        closed = [v for v in valid if v["r"] is not None]
+        ambiguous = sum(1 for v in valid if v["outcome"]=="ambiguous_same_candle_SL_assumed")
+        print(f"\nClosed trades: {len(closed)} | Ambiguous same-candle SL/TP: {ambiguous}")
+        for v in valid[:10]:
+            print(f"  {v['sym']} {v['dir']} E={v['entry']:.4f} SL={v['sl']:.4f} TP={v['tp']:.4f} R={v['r']} outcome={v['outcome']}")
+        if closed:
+            rs = [v["r"] for v in closed]
+            wins = [r for r in rs if r>0]; losses=[r for r in rs if r<0]
+            exp = sum(rs)/len(rs)
+            pf = (sum(wins)/abs(sum(losses))) if losses and sum(losses)!=0 else None
+            wr = round(len(wins)/len(rs)*100,1)
+            cum, peak, maxdd = 0,0,0
+            for r in rs:
+                cum += r; peak = max(peak,cum); maxdd = min(maxdd, cum-peak)
+            print(f"\nWR={wr}% Exp={round(exp,3)}R PF={round(pf,2) if pf else 'N/A'} TotalR={round(sum(rs),2)} MaxDD={round(maxdd,2)}R")
+        mfe_l=[v["mfe"] for v in valid]; mae_l=[v["mae"] for v in valid]
         print(f"MFE mean={sum(mfe_l)/N:.2f} | MAE mean={sum(mae_l)/N:.2f}")
-        for tp in [1,1.5,2,3]:
-            outs=[]
-            for e in entries:
-                entry_price = e["df"]["close"].iloc[e["idx"]]
-                r = sim(e["df"], e["dir"], entry_price, 1.0, tp, e["atr"], e["idx"])
-                if r is not None: outs.append(r)
-            if outs:
-                wins=[o for o in outs if o>0]; loss=[o for o in outs if o<0]
-                exp=sum(outs)/len(outs)
-                pf=(sum(wins)/abs(sum(loss))) if loss and sum(loss)!=0 else None
-                print(f"  TP={tp}R N={len(outs)} WR={round(len(wins)/len(outs)*100,1)}% Exp={round(exp,3)} PF={round(pf,2) if pf else 'N/A'}")
-        by_s={}
-        for e in entries: by_s.setdefault(e["sym"],0); by_s[e["sym"]]+=1
-        print("By symbol:", by_s)
