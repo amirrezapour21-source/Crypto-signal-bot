@@ -1477,11 +1477,11 @@
     "tp1": 0.34683981142443715,
     "tp2": 0.32358759315524466,
     "signal_time": "2026-09-17T15:50:09.962863+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-17T17:00:00+00:00",
+    "closed_time": "2026-09-17T18:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "NEAR_1789661706",
