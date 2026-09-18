@@ -1550,5 +1550,39 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "DOT_1789732722",
+    "symbol": "DOT",
+    "coin_id": "polkadot",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.1256,
+    "sl": 1.1538988619915678,
+    "tp1": 1.0314304528090967,
+    "tp2": 0.9205745968007867,
+    "signal_time": "2026-09-18T11:58:42.831784+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "BNB_1789732722",
+    "symbol": "BNB",
+    "coin_id": "binancecoin",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 753.3336948116732,
+    "sl": 761.7454910262808,
+    "tp1": 730.4263589349689,
+    "tp2": 706.6492614082738,
+    "signal_time": "2026-09-18T11:58:42.833587+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
