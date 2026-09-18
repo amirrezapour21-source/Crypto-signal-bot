@@ -1635,5 +1635,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ICP_1789759228",
+    "symbol": "ICP",
+    "coin_id": "internet-computer",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 2.863,
+    "sl": 2.9184462333095076,
+    "tp1": 2.697425404759797,
+    "tp2": 2.5047720647614335,
+    "signal_time": "2026-09-18T19:20:28.090023+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
