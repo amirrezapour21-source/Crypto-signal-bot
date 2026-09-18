@@ -1652,5 +1652,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "BNB_1789760966",
+    "symbol": "BNB",
+    "coin_id": "binancecoin",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 766.8673122008665,
+    "sl": 771.8929015881354,
+    "tp1": 735.4498295101446,
+    "tp2": 706.6492614082738,
+    "signal_time": "2026-09-18T19:49:26.108772+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
