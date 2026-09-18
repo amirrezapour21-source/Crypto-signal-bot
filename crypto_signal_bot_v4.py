@@ -1,4 +1,4 @@
-"""Candidate 1: SMT->BOS->OB+FVG — Cycle 2 CORRECTED (causal SL/TP, timestamp SMT, dedup)"""
+"""Candidate 1 — Cycle 2 FINAL FIX: require OB+FVG both, single-candle causal retest confirm"""
 import requests, pandas as pd, time
 
 BASE = "https://api.kucoin.com/api/v1/market/candles"
@@ -47,14 +47,13 @@ def fresh_bos(df, sh, sl, lb=LB):
         c = df["close"].iloc[i]; t = df["time"].iloc[i]
         rh = [s for s in sh if s["index"]+3<i]
         if rh and c>rh[-1]["price"] and rh[-1]["price"]!=lh:
-            ev.append({"dir":"bullish","idx":i,"time":t,"level":rh[-1]["price"]}); lh=rh[-1]["price"]
+            ev.append({"dir":"bullish","idx":i,"time":t}); lh=rh[-1]["price"]
         rl = [s for s in sl if s["index"]+3<i]
         if rl and c<rl[-1]["price"] and rl[-1]["price"]!=ll:
-            ev.append({"dir":"bearish","idx":i,"time":t,"level":rl[-1]["price"]}); ll=rl[-1]["price"]
+            ev.append({"dir":"bearish","idx":i,"time":t}); ll=rl[-1]["price"]
     return ev
 
 def check_smt_by_time(sh, sl, btc_sh, btc_sl, bos_time, direction):
-    """FIX: مقایسه بر اساس timestamp واقعی، نه index موقعیتی"""
     if direction == "bullish":
         rel = [s for s in sl if s["time"] < bos_time]
         btc_rel = [s for s in btc_sl if s["time"] < bos_time]
@@ -82,32 +81,28 @@ def find_fvg(df, bos_idx, direction):
     return None
 
 def find_entry(df, bos_idx, zone, direction, max_bars=RETEST_MAX_BARS):
+    """FIX: تأیید فقط با اطلاعات خودِ همون کندلی که Zone رو لمس کرده -
+    بدون نگاه به کندل بعدی (j+1 حذف شد)."""
     for j in range(bos_idx+1, min(bos_idx+max_bars+1, len(df))):
         row = df.iloc[j]
         touched = (direction=="bullish" and row["low"]<=zone["high"]) or (direction=="bearish" and row["high"]>=zone["low"])
         if touched:
-            for k in range(j, min(j+2, len(df))):
-                c = df["close"].iloc[k]
-                if (direction=="bullish" and c>zone["low"]) or (direction=="bearish" and c<zone["high"]):
-                    return k
-            return None
+            c = row["close"]
+            if (direction=="bullish" and c>zone["low"]) or (direction=="bearish" and c<zone["high"]):
+                return j
     return None
 
-def build_trade(df, direction, entry_idx, zone, atr):
-    """FIX: SL از خود Zone (Invalidation)، TP بر پایه حداقل R:R=2"""
-    entry = df["close"].iloc[entry_idx]
+def build_trade(direction, entry, zone, atr):
     buf = ZONE_BUFFER_ATR * atr
     if direction == "bullish":
-        sl = zone["low"] - buf
-        risk = entry - sl
-        if risk <= 0: return None, "invalid_risk_nonpositive"
+        sl = zone["low"] - buf; risk = entry - sl
+        if risk <= 0: return None
         tp = entry + risk * MIN_RR
     else:
-        sl = zone["high"] + buf
-        risk = sl - entry
-        if risk <= 0: return None, "invalid_risk_nonpositive"
+        sl = zone["high"] + buf; risk = sl - entry
+        if risk <= 0: return None
         tp = entry - risk * MIN_RR
-    return {"entry":entry,"sl":sl,"tp":tp,"risk":risk}, "ok"
+    return {"entry":entry,"sl":sl,"tp":tp,"risk":risk}
 
 def sim_trade(df, direction, trade, idx, hold=HOLD):
     end = min(idx+1+hold, len(df))
@@ -129,12 +124,12 @@ def excursion(df, direction, entry, atr, idx, hold=HOLD):
     return mfe/atr, mae/atr
 
 if __name__ == "__main__":
-    print("CANDIDATE 1 — CYCLE 2 CORRECTED (causal SL/TP, timestamp SMT, dedup)")
+    print("CANDIDATE 1 — CYCLE 2 FINAL (OB+FVG required, single-candle causal entry)")
     btc_df = get_df("BTC-USDT")
     btc_sh, btc_sl = swings(btc_df)
 
-    raw_entries, valid, rejected, overlap_removed = 0, [], {}, 0
-    last_exit_time = {}  # per symbol: زمان آخرین Trade باز/بسته‌شده
+    raw, ob_fvg_qualified, valid, rejected, overlap_removed = 0, 0, [], {}, 0
+    last_exit_time = {}
 
     for sym in SYMS:
         df = get_df(sym)
@@ -142,26 +137,27 @@ if __name__ == "__main__":
         sh, sl = swings(df)
         for b in fresh_bos(df, sh, sl):
             if not check_smt_by_time(sh, sl, btc_sh, btc_sl, b["time"], b["dir"]): continue
+            raw += 1
             ob = find_ob(df, b["idx"], b["dir"])
             fvg = find_fvg(df, b["idx"], b["dir"])
-            zone = ob if ob else fvg
-            if not zone: continue
+            if not (ob and fvg):
+                continue
+            ob_fvg_qualified += 1
+            zone = ob
             entry_idx = find_entry(df, b["idx"], zone, b["dir"])
             if entry_idx is None: continue
-            raw_entries += 1
             entry_time = df["time"].iloc[entry_idx]
 
-            # Overlap check: اگه هنوز Trade قبلی همین نماد باز/تداخل داره، رد کن
             if sym in last_exit_time and entry_time < last_exit_time[sym]:
-                overlap_removed += 1
-                continue
+                overlap_removed += 1; continue
 
             atr = df["atr20"].iloc[entry_idx]
             if pd.isna(atr) or atr == 0:
                 rejected["atr_invalid"] = rejected.get("atr_invalid",0)+1; continue
-            trade, reason = build_trade(df, b["dir"], entry_idx, zone, atr)
+            entry_price = df["close"].iloc[entry_idx]
+            trade = build_trade(b["dir"], entry_price, zone, atr)
             if trade is None:
-                rejected[reason] = rejected.get(reason,0)+1; continue
+                rejected["invalid_risk"] = rejected.get("invalid_risk",0)+1; continue
 
             r_mult, outcome = sim_trade(df, b["dir"], trade, entry_idx)
             exit_idx = min(entry_idx+1+HOLD, len(df)-1)
@@ -172,29 +168,24 @@ if __name__ == "__main__":
                           "r":r_mult,"outcome":outcome,"mfe":mfe,"mae":mae})
         time.sleep(0.2)
 
-    print(f"\nRaw detected entries: {raw_entries}")
-    print(f"Overlapping events removed: {overlap_removed}")
-    print(f"Rejected constructions: {rejected}")
+    print(f"\nRaw SMT+BOS entries: {raw}")
+    print(f"OB+FVG qualified: {ob_fvg_qualified}")
+    print(f"Overlapping removed: {overlap_removed}")
+    print(f"Rejected: {rejected}")
     print(f"Final independent trades: {len(valid)}")
 
     N = len(valid)
-    if N < 30:
-        print("INSUFFICIENT SAMPLE for meaningful IS inference.")
+    if N < 30: print("INSUFFICIENT SAMPLE for meaningful IS inference.")
     if N > 0:
         closed = [v for v in valid if v["r"] is not None]
         ambiguous = sum(1 for v in valid if v["outcome"]=="ambiguous_same_candle_SL_assumed")
-        print(f"\nClosed trades: {len(closed)} | Ambiguous same-candle SL/TP: {ambiguous}")
-        for v in valid[:10]:
-            print(f"  {v['sym']} {v['dir']} E={v['entry']:.4f} SL={v['sl']:.4f} TP={v['tp']:.4f} R={v['r']} outcome={v['outcome']}")
+        print(f"Closed: {len(closed)} | Ambiguous: {ambiguous}")
         if closed:
-            rs = [v["r"] for v in closed]
-            wins = [r for r in rs if r>0]; losses=[r for r in rs if r<0]
-            exp = sum(rs)/len(rs)
-            pf = (sum(wins)/abs(sum(losses))) if losses and sum(losses)!=0 else None
-            wr = round(len(wins)/len(rs)*100,1)
-            cum, peak, maxdd = 0,0,0
-            for r in rs:
-                cum += r; peak = max(peak,cum); maxdd = min(maxdd, cum-peak)
-            print(f"\nWR={wr}% Exp={round(exp,3)}R PF={round(pf,2) if pf else 'N/A'} TotalR={round(sum(rs),2)} MaxDD={round(maxdd,2)}R")
+            rs=[v["r"] for v in closed]; wins=[r for r in rs if r>0]; losses=[r for r in rs if r<0]
+            exp=sum(rs)/len(rs)
+            pf=(sum(wins)/abs(sum(losses))) if losses and sum(losses)!=0 else None
+            cum=peak=maxdd=0
+            for r in rs: cum+=r; peak=max(peak,cum); maxdd=min(maxdd,cum-peak)
+            print(f"WR={round(len(wins)/len(rs)*100,1)}% Exp={round(exp,3)}R PF={round(pf,2) if pf else 'N/A'} TotalR={round(sum(rs),2)} MaxDD={round(maxdd,2)}R")
         mfe_l=[v["mfe"] for v in valid]; mae_l=[v["mae"] for v in valid]
         print(f"MFE mean={sum(mfe_l)/N:.2f} | MAE mean={sum(mae_l)/N:.2f}")
