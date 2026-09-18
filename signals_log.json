@@ -1686,5 +1686,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "XMR_1789773620",
+    "symbol": "XMR",
+    "coin_id": "monero",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 566.3673718867459,
+    "sl": 576.1769987877649,
+    "tp1": 528.6089469672183,
+    "tp2": 486.7456179069467,
+    "signal_time": "2026-09-18T23:20:20.824558+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
