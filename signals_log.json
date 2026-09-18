@@ -1545,11 +1545,11 @@
     "tp1": 234.39355071716682,
     "tp2": 216.54236942679464,
     "signal_time": "2026-09-18T09:20:21.244628+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-18T13:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-18T21:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "DOT_1789732722",
