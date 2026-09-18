@@ -1307,10 +1307,10 @@
     "tp1": 0.4153524099510124,
     "tp2": 0.3477680342628241,
     "signal_time": "2026-09-08T04:21:47.936856+00:00",
-    "status": "TP1_HIT",
+    "status": "TIMEOUT",
     "entered": true,
     "entry_time": "2026-09-08T08:00:00+00:00",
-    "closed_time": null,
+    "closed_time": "2026-09-18T11:45:13.887427+00:00",
     "result": "WIN (TP1)"
   },
   {
@@ -1528,9 +1528,9 @@
     "tp1": 0.3562118224027837,
     "tp2": 0.32358759315524466,
     "signal_time": "2026-09-18T06:47:54.438377+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-18T09:00:00+00:00",
     "closed_time": null,
     "result": null
   },
