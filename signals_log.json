@@ -1533,5 +1533,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "BCH_1789723221",
+    "symbol": "BCH",
+    "coin_id": "bitcoin-cash",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 249.26,
+    "sl": 254.74211821427264,
+    "tp1": 234.39355071716682,
+    "tp2": 216.54236942679464,
+    "signal_time": "2026-09-18T09:20:21.244628+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
