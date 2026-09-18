@@ -1579,11 +1579,11 @@
     "tp1": 730.4263589349689,
     "tp2": 706.6492614082738,
     "signal_time": "2026-09-18T11:58:42.833587+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-18T14:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-18T18:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "WLD_1789741223",
@@ -1613,9 +1613,9 @@
     "tp1": 238.28279153032722,
     "tp2": 220.6929089251408,
     "signal_time": "2026-09-18T14:50:16.946193+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-18T16:00:00+00:00",
     "closed_time": null,
     "result": null
   },
