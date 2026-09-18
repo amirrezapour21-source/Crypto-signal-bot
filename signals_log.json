@@ -1341,11 +1341,11 @@
     "tp1": 1.6501319346782558e-06,
     "tp2": 1.5997215779672152e-06,
     "signal_time": "2026-09-08T14:20:19.164586+00:00",
-    "status": "OPEN",
+    "status": "TIMEOUT",
     "entered": true,
     "entry_time": "2026-09-08T15:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-18T15:12:05.950859+00:00",
+    "result": "OPEN_TIMEOUT"
   },
   {
     "id": "BCH_1789068020",
@@ -1409,11 +1409,11 @@
     "tp1": 1.3760713264900954,
     "tp2": 1.4773500750431205,
     "signal_time": "2026-09-16T03:20:21.598015+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-09-16T08:00:00+00:00",
     "closed_time": null,
-    "result": null
+    "result": "WIN (TP1)"
   },
   {
     "id": "SOL_1789532141",
@@ -1443,11 +1443,11 @@
     "tp1": 0.20515168066424483,
     "tp2": 0.21795299965672524,
     "signal_time": "2026-09-16T06:20:23.957341+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-09-16T08:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-09-18T15:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "AVAX_1789645547",
@@ -1528,11 +1528,11 @@
     "tp1": 0.3562118224027837,
     "tp2": 0.32358759315524466,
     "signal_time": "2026-09-18T06:47:54.438377+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-18T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-18T13:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "BCH_1789723221",
@@ -1545,9 +1545,9 @@
     "tp1": 234.39355071716682,
     "tp2": 216.54236942679464,
     "signal_time": "2026-09-18T09:20:21.244628+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-18T13:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -1562,9 +1562,9 @@
     "tp1": 1.0314304528090967,
     "tp2": 0.9205745968007867,
     "signal_time": "2026-09-18T11:58:42.831784+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-18T13:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -1579,9 +1579,9 @@
     "tp1": 730.4263589349689,
     "tp2": 706.6492614082738,
     "signal_time": "2026-09-18T11:58:42.833587+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-18T14:00:00+00:00",
     "closed_time": null,
     "result": null
   },
