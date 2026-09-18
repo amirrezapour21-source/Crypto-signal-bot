@@ -1618,5 +1618,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "M_1789755620",
+    "symbol": "M",
+    "coin_id": "memecore",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.3350386516733908,
+    "sl": 1.3577846058304521,
+    "tp1": 1.210106531694196,
+    "tp2": 1.0758718694968548,
+    "signal_time": "2026-09-18T18:20:20.855133+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
