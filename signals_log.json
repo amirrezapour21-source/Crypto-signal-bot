@@ -1516,5 +1516,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ONDO_1789714074",
+    "symbol": "ONDO",
+    "coin_id": "ondo-finance",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.386576943333358,
+    "sl": 0.3927244121668259,
+    "tp1": 0.3562118224027837,
+    "tp2": 0.32358759315524466,
+    "signal_time": "2026-09-18T06:47:54.438377+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
