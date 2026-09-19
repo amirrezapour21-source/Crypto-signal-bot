@@ -1737,5 +1737,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "MNT_1789784415",
+    "symbol": "MNT",
+    "coin_id": "mantle",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.6262830806593578,
+    "sl": 0.6356690242932507,
+    "tp1": 0.5841003991670659,
+    "tp2": 0.5388255267566558,
+    "signal_time": "2026-09-19T02:20:15.212318+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
