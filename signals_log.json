@@ -1596,9 +1596,9 @@
     "tp1": 0.3989356278800607,
     "tp2": 0.3575982707360145,
     "signal_time": "2026-09-18T14:20:23.263937+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-19T17:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -1630,11 +1630,11 @@
     "tp1": 1.210106531694196,
     "tp2": 1.0758718694968548,
     "signal_time": "2026-09-18T18:20:20.855133+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-18T21:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-19T17:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ICP_1789759228",
@@ -1681,11 +1681,11 @@
     "tp1": 0.08359135176596479,
     "tp2": 0.07888856807078037,
     "signal_time": "2026-09-18T21:50:12.977926+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-19T00:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-19T17:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "XMR_1789773620",
