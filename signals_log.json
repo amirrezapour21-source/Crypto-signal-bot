@@ -1754,5 +1754,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "BTC_1789788020",
+    "symbol": "BTC",
+    "coin_id": "bitcoin",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 81272.8360569798,
+    "sl": 82421.65746799404,
+    "tp1": 78494.6534436766,
+    "tp2": 75383.70543389375,
+    "signal_time": "2026-09-19T03:20:20.348221+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
