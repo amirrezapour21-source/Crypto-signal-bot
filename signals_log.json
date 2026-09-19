@@ -1664,11 +1664,11 @@
     "tp1": 735.4498295101446,
     "tp2": 706.6492614082738,
     "signal_time": "2026-09-18T19:49:26.108772+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-19T12:00:00+00:00",
+    "closed_time": "2026-09-19T13:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "DOGE_1789768212",
@@ -1783,9 +1783,9 @@
     "tp1": 2.4578233715585514,
     "tp2": 2.0983592084131977,
     "signal_time": "2026-09-19T09:20:19.446437+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-19T12:00:00+00:00",
     "closed_time": null,
     "result": null
   }
