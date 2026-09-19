@@ -1647,11 +1647,11 @@
     "tp1": 2.697425404759797,
     "tp2": 2.5047720647614335,
     "signal_time": "2026-09-18T19:20:28.090023+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-18T21:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-19T19:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "BNB_1789760966",
@@ -1749,11 +1749,11 @@
     "tp1": 0.5841003991670659,
     "tp2": 0.5388255267566558,
     "signal_time": "2026-09-19T02:20:15.212318+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-19T14:00:00+00:00",
+    "closed_time": "2026-09-19T15:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "BTC_1789788020",
