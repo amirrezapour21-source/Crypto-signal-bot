@@ -1771,5 +1771,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "MORPHO_1789809619",
+    "symbol": "MORPHO",
+    "coin_id": "morpho",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 2.7682,
+    "sl": 2.8451429485574167,
+    "tp1": 2.4578233715585514,
+    "tp2": 2.0983592084131977,
+    "signal_time": "2026-09-19T09:20:19.446437+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
