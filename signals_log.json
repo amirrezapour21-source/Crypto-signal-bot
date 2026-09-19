@@ -1698,11 +1698,11 @@
     "tp1": 528.6089469672183,
     "tp2": 486.7456179069467,
     "signal_time": "2026-09-18T23:20:20.824558+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-19T01:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-19T02:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "SOL_1789777312",
@@ -1766,9 +1766,9 @@
     "tp1": 78494.6534436766,
     "tp2": 75383.70543389375,
     "signal_time": "2026-09-19T03:20:20.348221+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-19T09:00:00+00:00",
     "closed_time": null,
     "result": null
   },
