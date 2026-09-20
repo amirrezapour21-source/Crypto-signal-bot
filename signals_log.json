@@ -1511,10 +1511,10 @@
     "tp1": 6.807500959730868,
     "tp2": 5.951080419685715,
     "signal_time": "2026-09-17T21:18:44.257251+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-09-20T23:10:59.825074+00:00",
     "result": null
   },
   {
