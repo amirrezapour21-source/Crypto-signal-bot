@@ -1817,11 +1817,11 @@
     "tp1": 9.28796576281108,
     "tp2": 7.200295336805299,
     "signal_time": "2026-09-20T20:50:15.932659+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-21T02:00:00+00:00",
+    "closed_time": "2026-09-21T05:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "WBT_1790002308",
@@ -1834,9 +1834,9 @@
     "tp1": 81.99414822479798,
     "tp2": 77.54726929722924,
     "signal_time": "2026-09-21T14:51:48.759123+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-21T16:00:00+00:00",
     "closed_time": null,
     "result": null
   },
