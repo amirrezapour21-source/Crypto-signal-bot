@@ -1822,5 +1822,39 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "WBT_1790002308",
+    "symbol": "WBT",
+    "coin_id": "whitebit",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 86.33079748538054,
+    "sl": 87.30543742389038,
+    "tp1": 81.99414822479798,
+    "tp2": 77.54726929722924,
+    "signal_time": "2026-09-21T14:51:48.759123+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "HYPE_1790002308",
+    "symbol": "HYPE",
+    "coin_id": "hyperliquid",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 94.288,
+    "sl": 95.39411867756583,
+    "tp1": 84.98091142765475,
+    "tp2": 75.5220230476412,
+    "signal_time": "2026-09-21T14:51:48.760355+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
