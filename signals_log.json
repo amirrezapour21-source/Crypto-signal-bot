@@ -1409,11 +1409,11 @@
     "tp1": 1.3760713264900954,
     "tp2": 1.4773500750431205,
     "signal_time": "2026-09-16T03:20:21.598015+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-09-16T08:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-09-21T11:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "SOL_1789532141",
@@ -1715,11 +1715,11 @@
     "tp1": 105.22471647955405,
     "tp2": 96.42857132684493,
     "signal_time": "2026-09-19T00:21:52.943296+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-19T05:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-21T09:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "BCH_1789780913",
@@ -1732,11 +1732,11 @@
     "tp1": 237.70049715372284,
     "tp2": 214.03625809262067,
     "signal_time": "2026-09-19T01:21:53.175650+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-19T04:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-21T11:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "MNT_1789784415",
@@ -1766,11 +1766,11 @@
     "tp1": 78494.6534436766,
     "tp2": 75383.70543389375,
     "signal_time": "2026-09-19T03:20:20.348221+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-19T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-21T09:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "MORPHO_1789809619",
