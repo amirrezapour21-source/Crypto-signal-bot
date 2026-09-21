@@ -1856,5 +1856,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "GRAM_1790004121",
+    "symbol": "GRAM",
+    "coin_id": "the-open-network",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.4270848281392579,
+    "sl": 1.4535688266070623,
+    "tp1": 1.3691199796459386,
+    "tp2": 1.2990629032452805,
+    "signal_time": "2026-09-21T15:22:01.680898+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
