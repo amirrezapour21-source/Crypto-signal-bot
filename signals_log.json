@@ -1851,11 +1851,11 @@
     "tp1": 84.98091142765475,
     "tp2": 75.5220230476412,
     "signal_time": "2026-09-21T14:51:48.760355+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-22T08:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-22T13:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "GRAM_1790004121",
