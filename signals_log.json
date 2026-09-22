@@ -1975,5 +1975,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "DOGE_1790063269",
+    "symbol": "DOGE",
+    "coin_id": "dogecoin",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.09903,
+    "sl": 0.10201047876681099,
+    "tp1": 0.0894327041287195,
+    "tp2": 0.0778749698567747,
+    "signal_time": "2026-09-22T07:47:49.216766+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
