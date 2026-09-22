@@ -1868,11 +1868,11 @@
     "tp1": 1.3691199796459386,
     "tp2": 1.2990629032452805,
     "signal_time": "2026-09-21T15:22:01.680898+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-22T11:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-22T19:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "LTC_1790018518",
@@ -1936,11 +1936,11 @@
     "tp1": 0.2214413974369089,
     "tp2": 0.19378307731017333,
     "signal_time": "2026-09-22T00:51:46.043992+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-22T04:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-22T14:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "WBT_1790043435",
