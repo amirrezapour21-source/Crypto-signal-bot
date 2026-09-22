@@ -1992,5 +1992,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "TRX_1790067134",
+    "symbol": "TRX",
+    "coin_id": "tron",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.34890315015187284,
+    "sl": 0.3523180664317309,
+    "tp1": 0.3404909238304856,
+    "tp2": 0.3321520789166832,
+    "signal_time": "2026-09-22T08:52:14.025075+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
