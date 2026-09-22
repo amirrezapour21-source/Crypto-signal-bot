@@ -1907,5 +1907,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "SOL_1790036523",
+    "symbol": "SOL",
+    "coin_id": "solana",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 118.65009550406666,
+    "sl": 120.59848688012737,
+    "tp1": 107.91650689120829,
+    "tp2": 96.42857132684493,
+    "signal_time": "2026-09-22T00:22:03.072386+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
