@@ -1,4 +1,4 @@
-"""Candidate 2: SVA/Value-Area Mean-Reversion — Cycle 2 IS Edge (full universe, causal SL/TP)"""
+"""Candidate 2 — Cycle 2 IS CORRECTED: LB=200 (full historical coverage), all else frozen"""
 import requests, pandas as pd, numpy as np, time
 
 BASE = "https://api.kucoin.com/api/v1/market/candles"
@@ -9,7 +9,7 @@ SYMS = ["ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","LINK
 "COMP-USDT","SNX-USDT","CRV-USDT","LDO-USDT","DYDX-USDT","GMX-USDT","STX-USDT","KAVA-USDT","ZIL-USDT","ONE-USDT",
 "1INCH-USDT","YFI-USDT","BAL-USDT","ENJ-USDT","BAT-USDT","ZRX-USDT","OMG-USDT","IOTA-USDT","QTUM-USDT","WAVES-USDT",
 "ANKR-USDT","CELR-USDT","COTI-USDT","SKL-USDT","STORJ-USDT","OCEAN-USDT","RSR-USDT","CKB-USDT","IOTX-USDT","KSM-USDT"]
-VP_WINDOW, VA_PCT, LB, HOLD, MIN_RR, SL_BUFFER_PCT, MAX_EXCURSION_LOOKBACK = 40, 0.70, 120, 30, 2.0, 0.001, 10
+VP_WINDOW, VA_PCT, LB, HOLD, MIN_RR, SL_BUFFER_PCT, MAX_EXCURSION_LOOKBACK = 40, 0.70, 200, 30, 2.0, 0.001, 10
 
 def g(sym, end_at=None):
     r = requests.get(BASE, params={"symbol":sym,"type":"4hour",**({"endAt":int(end_at)} if end_at else {})}, timeout=20)
@@ -72,20 +72,15 @@ def build_trade(df, event):
     lookback_start = max(0, idx-MAX_EXCURSION_LOOKBACK)
     if direction == "bullish":
         extreme = df["low"].iloc[lookback_start:idx].min()
-        sl = extreme * (1 - SL_BUFFER_PCT)
-        risk = entry - sl
+        sl = extreme * (1 - SL_BUFFER_PCT); risk = entry - sl
         if risk <= 0: return None
-        tp = va["poc"]
-        reward = tp - entry
+        tp = va["poc"]; reward = tp - entry
     else:
         extreme = df["high"].iloc[lookback_start:idx].max()
-        sl = extreme * (1 + SL_BUFFER_PCT)
-        risk = sl - entry
+        sl = extreme * (1 + SL_BUFFER_PCT); risk = sl - entry
         if risk <= 0: return None
-        tp = va["poc"]
-        reward = entry - tp
-    if reward <= 0 or reward/risk < MIN_RR:
-        return None
+        tp = va["poc"]; reward = entry - tp
+    if reward <= 0 or reward/risk < MIN_RR: return None
     return {"entry":entry, "sl":sl, "tp":tp, "risk":risk, "rr":reward/risk}
 
 def sim_trade(df, direction, trade, idx, hold=HOLD):
@@ -100,7 +95,7 @@ def sim_trade(df, direction, trade, idx, hold=HOLD):
     return None, "open_no_outcome"
 
 if __name__ == "__main__":
-    print("CANDIDATE 2 — CYCLE 2 IS Edge Discovery")
+    print("CANDIDATE 2 — CYCLE 2 IS CORRECTED (LB=200, full historical coverage)")
     raw, valid, rejected, overlap_removed = 0, [], {}, 0
     last_exit_time = {}
     is_period_start, is_period_end = None, None
@@ -108,10 +103,9 @@ if __name__ == "__main__":
     for sym in SYMS:
         df = get_df(sym)
         if df is None or len(df) < 80: continue
-        if is_period_start is None or df["time"].iloc[max(0,len(df)-LB)] < is_period_start:
-            is_period_start = df["time"].iloc[max(0,len(df)-LB)]
-        if is_period_end is None or df["time"].iloc[-1] > is_period_end:
-            is_period_end = df["time"].iloc[-1]
+        candidate_start = df["time"].iloc[max(0,len(df)-LB)]
+        if is_period_start is None or candidate_start < is_period_start: is_period_start = candidate_start
+        if is_period_end is None or df["time"].iloc[-1] > is_period_end: is_period_end = df["time"].iloc[-1]
 
         for e in detect_events(df):
             raw += 1
@@ -125,7 +119,7 @@ if __name__ == "__main__":
             exit_idx = min(e["idx"]+1+HOLD, len(df)-1)
             last_exit_time[sym] = df["time"].iloc[exit_idx]
             valid.append({"sym":sym,"dir":e["dir"],"r":r_mult,"outcome":outcome,"rr":trade["rr"]})
-        time.sleep(0.2)
+        time.sleep(0.15)
 
     print(f"IS Period: {pd.to_datetime(is_period_start,unit='s')} to {pd.to_datetime(is_period_end,unit='s')}")
     print(f"Raw events: {raw} | Overlap removed: {overlap_removed} | Rejected: {rejected}")
@@ -137,16 +131,14 @@ if __name__ == "__main__":
     if N > 0:
         closed = [v for v in valid if v["r"] is not None]
         ambiguous = sum(1 for v in valid if v["outcome"]=="ambiguous_same_candle_SL_assumed")
-        print(f"Closed: {len(closed)} | Ambiguous same-candle: {ambiguous}")
+        print(f"Closed: {len(closed)} | Ambiguous: {ambiguous}")
         if closed:
-            rs = [v["r"] for v in closed]
-            wins=[r for r in rs if r>0]; losses=[r for r in rs if r<0]
-            exp = sum(rs)/len(rs)
-            pf = (sum(wins)/abs(sum(losses))) if losses and sum(losses)!=0 else None
+            rs=[v["r"] for v in closed]; wins=[r for r in rs if r>0]; losses=[r for r in rs if r<0]
+            exp=sum(rs)/len(rs)
+            pf=(sum(wins)/abs(sum(losses))) if losses and sum(losses)!=0 else None
             cum=peak=maxdd=0
             for r in rs: cum+=r; peak=max(peak,cum); maxdd=min(maxdd,cum-peak)
             print(f"WR={round(len(wins)/len(rs)*100,1)}% Exp={round(exp,3)}R PF={round(pf,2) if pf else 'N/A'} TotalR={round(sum(rs),2)} MaxDD={round(maxdd,2)}R")
         by_s={}
         for v in valid: by_s.setdefault(v["sym"],0); by_s[v["sym"]]+=1
-        top=sorted(by_s.items(),key=lambda x:-x[1])[:8]
-        print("Top symbols:", top)
+        print("Top symbols:", sorted(by_s.items(),key=lambda x:-x[1])[:8])
