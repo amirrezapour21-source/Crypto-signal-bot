@@ -1902,11 +1902,11 @@
     "tp1": 0.08959067450561783,
     "tp2": 0.07888856807078037,
     "signal_time": "2026-09-21T23:51:46.115650+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-22T01:00:00+00:00",
+    "closed_time": "2026-09-22T04:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "SOL_1790036523",
@@ -1936,9 +1936,9 @@
     "tp1": 0.2214413974369089,
     "tp2": 0.19378307731017333,
     "signal_time": "2026-09-22T00:51:46.043992+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-22T04:00:00+00:00",
     "closed_time": null,
     "result": null
   },
