@@ -1885,11 +1885,11 @@
     "tp1": 56.576311725403755,
     "tp2": 50.26483351998537,
     "signal_time": "2026-09-21T19:21:58.230726+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-21T22:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-23T04:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "DOGE_1790034706",
@@ -1953,9 +1953,9 @@
     "tp1": 82.52441413932038,
     "tp2": 77.54726929722924,
     "signal_time": "2026-09-22T02:17:15.892239+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-23T04:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -1970,11 +1970,11 @@
     "tp1": 5.425552997598369e-06,
     "tp2": 4.765656524254758e-06,
     "signal_time": "2026-09-22T06:53:17.233958+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-22T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-23T03:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "DOGE_1790063269",
@@ -1987,11 +1987,11 @@
     "tp1": 0.0894327041287195,
     "tp2": 0.0778749698567747,
     "signal_time": "2026-09-22T07:47:49.216766+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-22T09:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-23T03:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "TRX_1790067134",
