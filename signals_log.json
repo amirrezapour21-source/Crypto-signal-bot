@@ -2060,5 +2060,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "SUI_1790354834",
+    "symbol": "SUI",
+    "coin_id": "sui",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.1131,
+    "sl": 1.1409328233899771,
+    "tp1": 0.9613535493874528,
+    "tp2": 0.793223904466262,
+    "signal_time": "2026-09-25T16:47:14.722728+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
