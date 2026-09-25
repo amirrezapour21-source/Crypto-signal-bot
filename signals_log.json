@@ -2055,9 +2055,9 @@
     "tp1": 0.4807133830645986,
     "tp2": 0.39477293100024324,
     "signal_time": "2026-09-25T12:24:57.706242+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-25T22:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -2072,10 +2072,10 @@
     "tp1": 0.9613535493874528,
     "tp2": 0.793223904466262,
     "signal_time": "2026-09-25T16:47:14.722728+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-25T18:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-25T20:00:00+00:00",
+    "result": "LOSS"
   }
 ]
