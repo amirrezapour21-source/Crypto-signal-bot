@@ -32,7 +32,7 @@ def fetch(sym):
         for x in data:
             ts=int(x[0])
             if ts not in seen:
-                seen.add(ts); rows.append([ts,float(x[1]),float(x[2]),float(x[3]),float(x[4]),float(x[5])])
+                seen.add(ts); rows.append([ts,float(x[1]),float(x[3]),float(x[4]),float(x[2]),float(x[5])])
         oldest=min(int(x[0]) for x in data)
         end=oldest-14400
         if len(rows)==before: break
@@ -130,7 +130,7 @@ def simulate(m,dfs,tp):
     return 0,"TIMEOUT",-cost,cost,False
 
 def main():
-    print("SETUP F — UNIFIED VALIDATION ENGINE — CORRECTED")
+    print("SETUP F — UNIFIED VALIDATION ENGINE — CORRECTED v3")
     print("Spec: 4H | 40 symbols | MOM=20 | lookback=100 | TOP_N=3 | new-entry only | Long-only | HOLD=30")
     raw={}; dfs={}; audits={}
     for sym in SYMS:
