@@ -2089,10 +2089,10 @@
     "tp1": 1557.8094447502633,
     "tp2": 1563.7226825921973,
     "signal_time": "2026-09-26T07:51:44.036676+00:00",
-    "status": "OPEN",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-09-26T11:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-26T17:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   }
 ]
