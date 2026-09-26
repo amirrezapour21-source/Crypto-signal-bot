@@ -80,16 +80,28 @@ def detect(dfs):
     return events,times
 
 def layer_b(events,dfs):
-    out=[]; hits=defaultdict(list)
+    out=[]; reject=Counter()
     for e in events:
-        d=dfs[e["sym"]]; i=e["idx"]; rows=d["r"]
-        if i>=len(rows) or d["atr"][i]<=0: continue
-        entry=rows[i][4]; a=d["atr"][i]
+        sym=e["sym"]
+        if sym not in dfs:
+            reject["symbol_not_in_dfs"]+=1; continue
+        d=dfs[sym]; i=e["idx"]; rows=d["r"]
+        if not isinstance(i,int) or i<0 or i>=len(rows):
+            reject["bad_index"]+=1; continue
+        a=d["atr"][i]
+        if a is None or not (a>0):
+            reject["invalid_atr"]+=1; continue
+        entry=rows[i][4]
+        if not (entry>0):
+            reject["invalid_entry"]+=1; continue
         maxb=min(MAX_TRACK_BARS,len(rows)-1-i)
-        mfe=-1e99; mae=1e99; tm=ta=0
+        if maxb<1:
+            reject["no_forward_data"]+=1; continue
+        mfe=0.0; mae=0.0; tm=0; ta=0
         fwd={}
         for h in HORIZONS:
-            if i+h<len(rows): fwd[h]=rows[i+h][4]/entry-1
+            if i+h<len(rows):
+                fwd[h]=rows[i+h][4]/entry-1
         for n in range(1,maxb+1):
             hi,lo=rows[i+n][2],rows[i+n][3]
             up=(hi-entry)/a; dn=(entry-lo)/a
@@ -98,9 +110,11 @@ def layer_b(events,dfs):
         hit={}
         for h in HORIZONS:
             for lv in HIT_LEVELS:
-                hit[(h,lv)] = any((rows[i+k][2]-entry)/a>=lv for k in range(1,min(h,maxb)+1))
-        out.append({"event":e,"entry":entry,"atr":a,"mfe":mfe,"mae":mae,"tmfe":tm,"tmae":ta,"fwd":fwd,"hit":hit})
-    return out
+                upto=min(h,maxb)
+                hit[(h,lv)] = any((rows[i+k][2]-entry)/a>=lv for k in range(1,upto+1))
+        out.append({"event":e,"entry":entry,"atr":a,"mfe":mfe,"mae":mae,
+                    "tmfe":tm,"tmae":ta,"fwd":fwd,"hit":hit})
+    return out,reject
 
 def simulate(m,dfs,tp):
     e=m["event"]; d=dfs[e["sym"]]; rows=d["r"]; i=e["idx"]
@@ -133,8 +147,9 @@ def main():
     events,times=detect(dfs)
     print("COMMON_TIMESTAMPS",len(times),"SCAN",min(times) if times else None,"->",max(times) if times else None)
     print("DETECTED_EVENTS",len(events))
-    meas=layer_b(events,dfs)
+    meas,rejects=layer_b(events,dfs)
     print("LAYER_B_MEASURED",len(meas),"rejected",len(events)-len(meas))
+    if rejects: print("LAYER_B_REJECT_REASONS",dict(rejects))
     if meas:
         print("MFE_MEAN %.3f MAE_MEAN %.3f MFE_MED %.3f MAE_MED %.3f" %
               (statistics.mean(x["mfe"] for x in meas),statistics.mean(x["mae"] for x in meas),
