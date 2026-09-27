@@ -2055,11 +2055,11 @@
     "tp1": 0.4807133830645986,
     "tp2": 0.39477293100024324,
     "signal_time": "2026-09-25T12:24:57.706242+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-25T22:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-27T23:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "SUI_1790354834",
