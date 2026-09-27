@@ -2094,5 +2094,22 @@
     "entry_time": "2026-09-26T11:00:00+00:00",
     "closed_time": "2026-09-26T17:00:00+00:00",
     "result": "WIN (TP2 - Full)"
+  },
+  {
+    "id": "ONDO_1790473627",
+    "symbol": "ONDO",
+    "coin_id": "ondo-finance",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 0.5363364997796317,
+    "sl": 0.5319103964560918,
+    "tp1": 0.5500050936849648,
+    "tp2": 0.5567511527949683,
+    "signal_time": "2026-09-27T01:47:07.073936+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
