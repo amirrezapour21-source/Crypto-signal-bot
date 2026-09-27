@@ -88,8 +88,9 @@ def fetch_symbol(sym):
     for c in ["open","close","high","low","volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
+    # FIXED: unit changed from "s" to "ms" for KuCoin timestamp
     df["time"] = pd.to_datetime(
-        df["time"], unit="s", utc=True
+        df["time"], unit="ms", utc=True
     )
 
     df = df.sort_values("time").drop_duplicates("time").reset_index(drop=True)
@@ -194,7 +195,6 @@ def detect_events(df):
             df["low"].iloc[i-BREAKOUT:i].min()
         )
 
-        # Breakout requires previous range only.
         long_break = close > prior_high
         short_break = close < prior_low
 
@@ -239,7 +239,6 @@ def simulate(df, event, tp_mult):
 
     last = i + HOLD
 
-    # Need the complete HOLD window.
     if last >= len(df):
         return {
             "status": "OPEN_AT_DATASET_END",
@@ -273,7 +272,6 @@ def simulate(df, event, tp_mult):
             hit_sl = high >= sl
             hit_tp = low <= tp
 
-        # SL-first exactly as frozen engine.
         if hit_sl and hit_tp:
             return {
                 "status": "SL",
@@ -298,7 +296,6 @@ def simulate(df, event, tp_mult):
                 "ambiguous": False
             }
 
-    # Full HOLD completed with no SL/TP.
     return {
         "status": "TIMEOUT",
         "gross_r": 0.0,
@@ -338,7 +335,6 @@ def main():
 
         df, days = result
 
-        # FIX: result is always unpacked as (df, days).
         data[sym] = {
             "df": df,
             "days": days
@@ -376,7 +372,6 @@ def main():
         f"{common[0]} -> {common[-1]}"
     )
 
-    # Daily bias for each symbol.
     biases = {
         s: build_bias(df)
         for s, df in usable.items()
@@ -384,8 +379,6 @@ def main():
 
     all_events = []
 
-    # Signal events must have full HOLD future data.
-    # This prevents OPEN_AT_DATASET_END from entering results.
     last_allowed = common[-1] - pd.Timedelta(
         hours=4 * HOLD
     )
