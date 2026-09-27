@@ -38,7 +38,6 @@ FEE_PCT = 0.10
 SLIPPAGE_PCT = 0.05
 
 BASE_URL = "https://api.kucoin.com/api/v1/market/candles"
-
 INTERVAL = "4hour"
 
 
@@ -52,7 +51,6 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
     start_at = end_at - target_days * 86400
 
     rows = []
-
     current_end = end_at
 
     while current_end > start_at:
@@ -85,9 +83,6 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
 
             rows.extend(batch)
 
-            # KuCoin candles are:
-            # [time, open, close, high, low, volume, turnover]
-
             timestamps = []
 
             for row in batch:
@@ -104,10 +99,8 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
             if oldest <= start_at:
                 break
 
-            # Move pagination window backward
             current_end = oldest - 1
 
-            # Avoid API hammering
             time_module.sleep(0.15)
 
         except Exception as e:
@@ -131,8 +124,8 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
     )
 
     # ========================================================
-    # IMPORTANT TIMESTAMP FIX
-    # KuCoin /market/candles returns UNIX timestamp in seconds
+    # TIMESTAMP
+    # KuCoin candles use UNIX timestamp in seconds
     # ========================================================
 
     df["time"] = pd.to_numeric(
@@ -140,7 +133,9 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
         errors="coerce"
     )
 
-    df = df.dropna(subset=["time"])
+    df = df.dropna(
+        subset=["time"]
+    )
 
     df["time"] = pd.to_datetime(
         df["time"],
@@ -148,7 +143,7 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
         utc=True
     )
 
-    # Numeric coercion
+    # Numeric OHLCV
     for col in [
         "open",
         "close",
@@ -172,12 +167,10 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
         ]
     )
 
-    # Remove duplicates
     df = df.drop_duplicates(
         subset=["time"]
     )
 
-    # Chronological order
     df = df.sort_values(
         "time"
     ).reset_index(drop=True)
@@ -189,6 +182,7 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
     now = pd.Timestamp.now(tz="UTC")
 
     if len(df) > 0:
+
         last_time = df.iloc[-1]["time"]
 
         if last_time + pd.Timedelta(hours=4) > now:
@@ -214,7 +208,7 @@ def add_indicators(df):
     df = df.copy()
 
     # --------------------------------------------------------
-    # True Range / ATR
+    # ATR
     # --------------------------------------------------------
 
     prev_close = df["close"].shift(1)
@@ -222,13 +216,11 @@ def add_indicators(df):
     tr1 = df["high"] - df["low"]
 
     tr2 = (
-        df["high"] -
-        prev_close
+        df["high"] - prev_close
     ).abs()
 
     tr3 = (
-        df["low"] -
-        prev_close
+        df["low"] - prev_close
     ).abs()
 
     df["TR"] = pd.concat(
@@ -243,7 +235,7 @@ def add_indicators(df):
     )
 
     # --------------------------------------------------------
-    # Volume average
+    # Volume MA
     # --------------------------------------------------------
 
     df["VOL_MA"] = (
@@ -252,9 +244,15 @@ def add_indicators(df):
         .mean()
     )
 
-    # --------------------------------------------------------
-    # Daily EMA20 bias
-    # --------------------------------------------------------
+    # ========================================================
+    # CAUSAL DAILY EMA20 BIAS
+    #
+    # IMPORTANT:
+    # The current day's unfinished/future daily close
+    # must NEVER be used by a 4H candle from that same day.
+    #
+    # Therefore the daily bias is shifted by one full day.
+    # ========================================================
 
     daily = (
         df.set_index("time")
@@ -280,15 +278,25 @@ def add_indicators(df):
         "SHORT"
     )
 
-    # Map daily bias back to each 4H candle
-    daily_bias = daily["DAILY_BIAS"].reindex(
-        df["time"].dt.floor("D"),
-        method="ffill"
+    # --------------------------------------------------------
+    # CRITICAL CAUSALITY FIX
+    # Only the previous completed daily candle is visible.
+    # --------------------------------------------------------
+
+    daily["DAILY_BIAS_CAUSAL"] = (
+        daily["DAILY_BIAS"].shift(1)
+    )
+
+    daily_bias = (
+        daily["DAILY_BIAS_CAUSAL"]
+        .reindex(
+            df["time"].dt.floor("D"),
+            method="ffill"
+        )
     )
 
     df["DAILY_BIAS"] = (
-        daily_bias
-        .to_numpy()
+        daily_bias.to_numpy()
     )
 
     return df
@@ -321,7 +329,6 @@ def detect_events(df):
 
     for i in range(len(df)):
 
-        # Need enough history
         if i < max(
             BREAKOUT,
             ATR_LEN,
@@ -339,14 +346,19 @@ def detect_events(df):
             continue
 
         close = df.iloc[i]["close"]
-        high = df.iloc[i]["high"]
-        low = df.iloc[i]["low"]
         volume = df.iloc[i]["volume"]
 
-        previous_high = df.iloc[i]["DONCHIAN_HIGH"]
-        previous_low = df.iloc[i]["DONCHIAN_LOW"]
+        previous_high = (
+            df.iloc[i]["DONCHIAN_HIGH"]
+        )
 
-        daily_bias = df.iloc[i]["DAILY_BIAS"]
+        previous_low = (
+            df.iloc[i]["DONCHIAN_LOW"]
+        )
+
+        daily_bias = (
+            df.iloc[i]["DAILY_BIAS"]
+        )
 
         # ----------------------------------------------------
         # LONG
@@ -443,15 +455,19 @@ def simulate_trade(
 
             # Same-candle SL-first
             if hit_sl:
+
                 exit_idx = j
                 exit_price = sl
                 outcome = "SL"
+
                 break
 
             if hit_tp:
+
                 exit_idx = j
                 exit_price = tp
                 outcome = "TP"
+
                 break
 
         # ----------------------------------------------------
@@ -465,15 +481,19 @@ def simulate_trade(
 
             # Same-candle SL-first
             if hit_sl:
+
                 exit_idx = j
                 exit_price = sl
                 outcome = "SL"
+
                 break
 
             if hit_tp:
+
                 exit_idx = j
                 exit_price = tp
                 outcome = "TP"
+
                 break
 
     # --------------------------------------------------------
@@ -483,11 +503,13 @@ def simulate_trade(
     if exit_idx is None:
 
         if idx + HOLD >= len(df):
+
             return {
                 "status": "OPEN_AT_DATASET_END"
             }
 
         exit_idx = idx + HOLD
+
         exit_price = float(
             df.iloc[exit_idx]["close"]
         )
@@ -501,10 +523,13 @@ def simulate_trade(
     risk = atr
 
     if direction == "LONG":
+
         gross_r = (
             exit_price - entry
         ) / risk
+
     else:
+
         gross_r = (
             entry - exit_price
         ) / risk
@@ -517,17 +542,17 @@ def simulate_trade(
         FEE_PCT + SLIPPAGE_PCT
     ) / 100.0
 
-    # Approximate round-trip percentage cost
     round_trip_cost = (
         2 * total_cost_pct
     )
 
-    # Convert percentage cost to R
     cost_r = (
         entry * round_trip_cost
     ) / risk
 
-    net_r = gross_r - cost_r
+    net_r = (
+        gross_r - cost_r
+    )
 
     return {
         "status": "TRADED",
@@ -563,12 +588,18 @@ def calc_metrics(trades):
         }
 
     gross = np.array(
-        [x["gross_r"] for x in trades],
+        [
+            x["gross_r"]
+            for x in trades
+        ],
         dtype=float
     )
 
     net = np.array(
-        [x["net_r"] for x in trades],
+        [
+            x["net_r"]
+            for x in trades
+        ],
         dtype=float
     )
 
@@ -593,19 +624,26 @@ def calc_metrics(trades):
     )
 
     gross_pf = (
-        gross_positive / gross_negative
+        gross_positive /
+        gross_negative
         if gross_negative > 0
         else np.inf
     )
 
     net_pf = (
-        net_positive / net_negative
+        net_positive /
+        net_negative
         if net_negative > 0
         else np.inf
     )
 
-    gross_curve = np.cumsum(gross)
-    net_curve = np.cumsum(net)
+    gross_curve = np.cumsum(
+        gross
+    )
+
+    net_curve = np.cumsum(
+        net
+    )
 
     gross_peak = np.maximum.accumulate(
         gross_curve
@@ -719,16 +757,27 @@ def main():
 
         df = item["df"]
 
-        df = add_indicators(df)
+        df = add_indicators(
+            df
+        )
 
-        events = detect_events(df)
+        events = detect_events(
+            df
+        )
 
-        # Exclude final HOLD candles so every event
-        # has complete forward data.
-        max_event_idx = len(df) - HOLD - 1
+        # Exclude final HOLD candles
+        # so every event has complete
+        # forward data.
+
+        max_event_idx = (
+            len(df) -
+            HOLD -
+            1
+        )
 
         events = [
-            e for e in events
+            e
+            for e in events
             if e["idx"] <= max_event_idx
         ]
 
@@ -752,7 +801,10 @@ def main():
                 )
 
                 if result["status"] == "TRADED":
-                    trades.append(result)
+
+                    trades.append(
+                        result
+                    )
 
             metrics = calc_metrics(
                 trades
@@ -761,7 +813,9 @@ def main():
             all_results.setdefault(
                 tp_r,
                 []
-            ).extend(trades)
+            ).extend(
+                trades
+            )
 
             print(
                 f"  TP {tp_r}R | "
@@ -776,7 +830,9 @@ def main():
     # --------------------------------------------------------
 
     print("")
-    print("===== PORTFOLIO SUMMARY =====")
+    print(
+        "===== PORTFOLIO SUMMARY ====="
+    )
 
     for tp_r in TP_SCENARIOS:
 
@@ -845,7 +901,9 @@ def main():
         )
 
     print("")
-    print("===== TEST RUN COMPLETE =====")
+    print(
+        "===== TEST RUN COMPLETE ====="
+    )
 
 
 if __name__ == "__main__":
