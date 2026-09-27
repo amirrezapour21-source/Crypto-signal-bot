@@ -1,117 +1,573 @@
-import time, requests, math
-import pandas as pd
+import time
+import requests
 import numpy as np
+import pandas as pd
 
-# SETUP V4 — CANDIDATE 4 — CAUSAL DONCHIAN VOLATILITY BREAKOUT
-# Research only. Frozen parameters; no optimization.
-# 4H entry: close breaks prior 20-bar high/low + ATR expansion + volume confirmation.
-# HTF protection: daily 20-bar EMA slope must agree with trade direction.
-# Trade: entry close, SL=1 ATR, TP=1/1.5/2/3R, HOLD=30, SL-first.
+# ============================================================
+# V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT
+# Frozen Spec — no optimization
+# ============================================================
 
-SYMS=['ETH','SOL','BNB','XRP','DOGE','ADA','LINK','AVAX','DOT','NEAR','APT','ARB','OP','SUI','INJ','TIA','SEI','FIL','ATOM','LTC','ETC','TRX','ICP','AAVE','UNI','MKR','RUNE','FTM','GRT','ALGO','VET','HBAR','EGLD','XLM','THETA','SAND','MANA','AXS','CHZ']
-BASE='https://api.kucoin.com/api/v1/market/candles'
-TARGET_DAYS=730; MIN_DAYS=180
-BREAKOUT=20; ATR_N=20; VOL_N=20; HOLD=30
-FEE=0.10; SLIPPAGE=0.05
-TP_SCENARIOS=[1,1.5,2,3]
+SYMS = [
+    "ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT","NEAR",
+    "APT","ARB","OP","SUI","INJ","TIA","SEI","FIL","ATOM","LTC",
+    "ETC","TRX","ICP","AAVE","UNI","MKR","RUNE","FTM","GRT","ALGO",
+    "VET","HBAR","EGLD","XLM","THETA","SAND","MANA","AXS","CHZ"
+]
 
-S=requests.Session(); S.headers.update({'User-Agent':'V4-Candidate4-Validation/1.0'})
+TARGET_DAYS = 730
+MIN_DAYS = 180
 
-def fetch(sym):
-    end=int(time.time()); rows=[]
-    while True:
-        p={'symbol':sym+'-USDT','type':'4hour','endAt':end}
-        r=S.get(BASE,params=p,timeout=20); r.raise_for_status(); data=r.json().get('data',[])
-        if not data: break
-        rows += data
-        mn=min(int(x[0]) for x in data)
-        if len(rows)>=TARGET_DAYS*6 or mn>=end: break
-        end=mn-1; time.sleep(.05)
-    if not rows: return None
-    # KuCoin candle order: time, open, close, high, low, volume, turnover
-    df=pd.DataFrame(rows,columns=['ts','open','close','high','low','volume','turnover'])
-    for c in df.columns: df[c]=pd.to_numeric(df[c],errors='coerce')
-    df=df.sort_values('ts').drop_duplicates('ts').reset_index(drop=True)
-    now=int(time.time())
-    if len(df) and now < int(df.iloc[-1].ts)+14400: df=df.iloc[:-1]
-    df['atr']=(df.high-df.low).rolling(ATR_N).mean()
-    df['vol_ma']=df.volume.rolling(VOL_N).mean()
-    df['prior_hi']=df.high.shift(1).rolling(BREAKOUT).max()
-    df['prior_lo']=df.low.shift(1).rolling(BREAKOUT).min()
-    days=(df.ts.iloc[-1]-df.ts.iloc[0])/86400 if len(df)>1 else 0
-    return df,days
+BREAKOUT = 20
+ATR_LEN = 20
+VOL_LEN = 20
+DAILY_EMA = 20
 
-def daily_bias(sym):
-    end=int(time.time()); rows=[]
-    while len(rows)<220:
-        p={'symbol':sym+'-USDT','type':'1day','endAt':end}
-        r=S.get(BASE,params=p,timeout=20); r.raise_for_status(); d=r.json().get('data',[])
-        if not d: break
-        rows+=d; mn=min(int(x[0]) for x in d); end=mn-1; time.sleep(.03)
-    if not rows:return None
-    df=pd.DataFrame(rows,columns=['ts','open','close','high','low','volume','turnover'])
-    for c in df.columns:df[c]=pd.to_numeric(df[c],errors='coerce')
-    df=df.sort_values('ts').drop_duplicates('ts').reset_index(drop=True)
-    if len(df) and int(time.time())<int(df.iloc[-1].ts)+86400:df=df.iloc[:-1]
-    df['ema']=df.close.ewm(span=20,adjust=False).mean()
-    return df[['ts','ema']]
+HOLD = 30
+TP_SCENARIOS = [1.0, 1.5, 2.0, 3.0]
 
-def bias_at(daily,ts):
-    x=daily[daily.ts<ts]
-    if len(x)<2:return 0
-    return 1 if x.ema.iloc[-1]>x.ema.iloc[-2] else -1
+FEE_PCT = 0.10
+SLIPPAGE_PCT = 0.05
 
-def simulate(df,idx,side,tp_mult):
-    entry=float(df.close.iloc[idx]); atr=float(df.atr.iloc[idx]); sl=entry-side*atr; tp=entry+side*atr*tp_mult
-    cost=(FEE+SLIPPAGE)/100/(atr/entry)
-    last=idx+HOLD
-    if last>=len(df):return ('OPEN_AT_DATASET_END',None,None)
-    for j in range(idx+1,last+1):
-        hi=float(df.high.iloc[j]);lo=float(df.low.iloc[j])
-        hit_sl=(lo<=sl) if side==1 else (hi>=sl)
-        hit_tp=(hi>=tp) if side==1 else (lo<=tp)
-        if hit_sl and hit_tp:return ('SL',-1,-1-cost)
-        if hit_sl:return ('SL',-1,-1-cost)
-        if hit_tp:return ('TP',tp_mult,tp_mult-cost)
-    return ('TIMEOUT',0,-cost)
+URL = "https://api.kucoin.com/api/v1/market/candles"
+
+
+def fetch_symbol(sym):
+    symbol = sym + "-USDT"
+    rows = []
+    end_at = int(time.time())
+
+    target = TARGET_DAYS * 6
+    seen = set()
+
+    for _ in range(10):
+        params = {
+            "symbol": symbol,
+            "type": "4hour",
+            "endAt": end_at
+        }
+
+        try:
+            r = requests.get(URL, params=params, timeout=20)
+            r.raise_for_status()
+            data = r.json().get("data", [])
+        except Exception:
+            break
+
+        if not data:
+            break
+
+        for x in data:
+            ts = int(x[0])
+            if ts not in seen:
+                seen.add(ts)
+                rows.append(x)
+
+        oldest = min(int(x[0]) for x in data)
+
+        if len(rows) >= target:
+            break
+
+        new_end = oldest - 1
+        if new_end >= end_at:
+            break
+
+        end_at = new_end
+        time.sleep(0.15)
+
+    if len(rows) < 100:
+        return None
+
+    # KuCoin format:
+    # [time, open, close, high, low, volume, turnover]
+    df = pd.DataFrame(
+        rows,
+        columns=["time","open","close","high","low","volume","turnover"]
+    )
+
+    for c in ["open","close","high","low","volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df["time"] = pd.to_datetime(
+        df["time"], unit="s", utc=True
+    )
+
+    df = df.sort_values("time").drop_duplicates("time").reset_index(drop=True)
+
+    # Remove current incomplete 4H candle
+    now = pd.Timestamp.now(tz="UTC")
+    if len(df):
+        last_end = df["time"].iloc[-1] + pd.Timedelta(hours=4)
+        if now < last_end:
+            df = df.iloc[:-1].copy()
+
+    if len(df) < 100:
+        return None
+
+    days = (
+        df["time"].iloc[-1] - df["time"].iloc[0]
+    ).total_seconds() / 86400
+
+    # ATR using True Range
+    prev_close = df["close"].shift(1)
+
+    tr1 = df["high"] - df["low"]
+    tr2 = (df["high"] - prev_close).abs()
+    tr3 = (df["low"] - prev_close).abs()
+
+    df["tr"] = pd.concat(
+        [tr1, tr2, tr3], axis=1
+    ).max(axis=1)
+
+    df["atr"] = df["tr"].rolling(
+        ATR_LEN,
+        min_periods=ATR_LEN
+    ).mean()
+
+    df["vol_ma"] = df["volume"].rolling(
+        VOL_LEN,
+        min_periods=VOL_LEN
+    ).mean()
+
+    return df, days
+
+
+def daily_bias(df):
+    d = df.set_index("time").resample("1D").agg({
+        "close": "last"
+    }).dropna()
+
+    d["ema"] = d["close"].ewm(
+        span=DAILY_EMA,
+        adjust=False
+    ).mean()
+
+    return d
+
+
+def build_bias(df):
+    d = daily_bias(df)
+
+    bias = {}
+
+    for t, row in d.iterrows():
+        bias[t] = (
+            "LONG"
+            if row["close"] > row["ema"]
+            else "SHORT"
+        )
+
+    return bias
+
+
+def get_bias(bias, ts):
+    day = pd.Timestamp(ts).floor("D")
+    return bias.get(day)
+
+
+def detect_events(df):
+    events = []
+
+    if len(df) <= BREAKOUT + ATR_LEN + VOL_LEN:
+        return events
+
+    for i in range(
+        max(BREAKOUT, ATR_LEN, VOL_LEN),
+        len(df)
+    ):
+        close = float(df["close"].iloc[i])
+        atr = float(df["atr"].iloc[i])
+        vol = float(df["volume"].iloc[i])
+        vol_ma = float(df["vol_ma"].iloc[i])
+
+        if not np.isfinite(atr) or atr <= 0:
+            continue
+
+        if not np.isfinite(vol_ma) or vol_ma <= 0:
+            continue
+
+        prior_high = float(
+            df["high"].iloc[i-BREAKOUT:i].max()
+        )
+
+        prior_low = float(
+            df["low"].iloc[i-BREAKOUT:i].min()
+        )
+
+        # Breakout requires previous range only.
+        long_break = close > prior_high
+        short_break = close < prior_low
+
+        volume_ok = vol > vol_ma
+
+        if not volume_ok:
+            continue
+
+        if long_break:
+            events.append({
+                "idx": i,
+                "time": df["time"].iloc[i],
+                "dir": "LONG",
+                "entry": close,
+                "atr": atr
+            })
+
+        elif short_break:
+            events.append({
+                "idx": i,
+                "time": df["time"].iloc[i],
+                "dir": "SHORT",
+                "entry": close,
+                "atr": atr
+            })
+
+    return events
+
+
+def simulate(df, event, tp_mult):
+    i = event["idx"]
+    entry = event["entry"]
+    atr = event["atr"]
+    direction = event["dir"]
+
+    if direction == "LONG":
+        sl = entry - atr
+        tp = entry + atr * tp_mult
+    else:
+        sl = entry + atr
+        tp = entry - atr * tp_mult
+
+    last = i + HOLD
+
+    # Need the complete HOLD window.
+    if last >= len(df):
+        return {
+            "status": "OPEN_AT_DATASET_END",
+            "gross_r": None,
+            "net_r": None,
+            "ambiguous": False
+        }
+
+    cost_pct = (FEE_PCT + SLIPPAGE_PCT) / 100.0
+    risk_pct = atr / entry
+
+    if risk_pct <= 0:
+        return {
+            "status": "INVALID",
+            "gross_r": None,
+            "net_r": None,
+            "ambiguous": False
+        }
+
+    cost_r = cost_pct / risk_pct
+
+    for j in range(i + 1, i + HOLD + 1):
+
+        high = float(df["high"].iloc[j])
+        low = float(df["low"].iloc[j])
+
+        if direction == "LONG":
+            hit_sl = low <= sl
+            hit_tp = high >= tp
+        else:
+            hit_sl = high >= sl
+            hit_tp = low <= tp
+
+        # SL-first exactly as frozen engine.
+        if hit_sl and hit_tp:
+            return {
+                "status": "SL",
+                "gross_r": -1.0,
+                "net_r": -1.0 - cost_r,
+                "ambiguous": True
+            }
+
+        if hit_sl:
+            return {
+                "status": "SL",
+                "gross_r": -1.0,
+                "net_r": -1.0 - cost_r,
+                "ambiguous": False
+            }
+
+        if hit_tp:
+            return {
+                "status": "TP",
+                "gross_r": tp_mult,
+                "net_r": tp_mult - cost_r,
+                "ambiguous": False
+            }
+
+    # Full HOLD completed with no SL/TP.
+    return {
+        "status": "TIMEOUT",
+        "gross_r": 0.0,
+        "net_r": -cost_r,
+        "ambiguous": False
+    }
+
+
+def max_drawdown(values):
+    if not values:
+        return 0.0
+
+    eq = np.cumsum(values)
+    peak = np.maximum.accumulate(eq)
+    dd = eq - peak
+
+    return float(dd.min())
+
 
 def main():
-    print('SETUP V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT')
-    print('Frozen: 4H | breakout=20 | ATR=20 | volume=20 | daily EMA20 bias | HOLD=30 | Long/Short')
-    data={}; audits={}
-    for s in SYMS:
-        try:
-            z=fetch(s)
-            if z:data[s],audits[s]=z
-        except Exception as e: print('FETCH_ERROR',s,str(e)[:100])
-    usable={s:d for s,(d,days) in data.items() if days>=MIN_DAYS}
-    print('DATA',len(data),'loaded;',len(usable),'sufficient')
-    events=[]
-    for s,df in usable.items():
-        daily=daily_bias(s)
-        if daily is None: continue
-        # keep only events with full future HOLD available
-        for i in range(max(BREAKOUT,ATR_N,VOL_N),len(df)-HOLD):
-            c=float(df.close.iloc[i]); atr=float(df.atr.iloc[i]); vm=float(df.vol_ma.iloc[i]); v=float(df.volume.iloc[i])
-            if not np.isfinite(atr) or atr<=0 or not np.isfinite(vm) or vm<=0: continue
-            b=bias_at(daily,int(df.ts.iloc[i]));
-            long_ok=c>float(df.prior_hi.iloc[i]) and (c-float(df.open.iloc[i]))>atr and v>vm and b==1
-            short_ok=c<float(df.prior_lo.iloc[i]) and (float(df.open.iloc[i])-c)>atr and v>vm and b==-1
-            if long_ok: events.append((s,i,1))
-            elif short_ok: events.append((s,i,-1))
-    print('EVENTS',len(events))
-    for tp in TP_SCENARIOS:
-        outcomes=[]
-        for s,i,side in events:
-            outcomes.append((s,)+simulate(usable[s],i,side,tp))
-        closed=[x for x in outcomes if x[1]!='OPEN_AT_DATASET_END']
-        gross=[x[2] for x in closed]; net=[x[3] for x in closed]
-        wins=sum(x>0 for x in gross); losses=sum(x<0 for x in gross)
-        gp=sum(x for x in gross if x>0); gl=-sum(x for x in gross if x<0)
-        ngp=sum(x for x in net if x>0); ngl=-sum(x for x in net if x<0)
-        eq=np.cumsum(net); dd=eq-np.maximum.accumulate(eq); maxdd=float(dd.min()) if len(dd) else 0
-        print(f'\nTP {tp}R | TRADED {len(closed)} TP {sum(x[1]=="TP" for x in closed)} SL {sum(x[1]=="SL" for x in closed)} TIMEOUT {sum(x[1]=="TIMEOUT" for x in closed)} OPEN_AT_END {len(outcomes)-len(closed)}')
-        print(f'GROSS_EXP {np.mean(gross) if gross else 0:.4f} NET_EXP {np.mean(net) if net else 0:.4f} GROSS_TOTAL {sum(gross):.2f} NET_TOTAL {sum(net):.2f} PF {gp/gl if gl else float("inf"):.3f} NET_PF {ngp/ngl if ngl else float("inf"):.3f} MAXDD {maxdd:.2f} WR {wins/len(closed)*100 if closed else 0:.2f}%')
-    print('\nDONE — Candidate 4 baseline IS run; no optimization.')
 
-if __name__=='__main__':main()
+    print(
+        "SETUP V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT"
+    )
+    print(
+        "Frozen: 4H | breakout=20 | ATR=20 | volume=20 | "
+        "daily EMA20 bias | HOLD=30 | Long/Short"
+    )
+
+    data = {}
+
+    for sym in SYMS:
+        result = fetch_symbol(sym)
+
+        if result is None:
+            continue
+
+        df, days = result
+
+        # FIX: result is always unpacked as (df, days).
+        data[sym] = {
+            "df": df,
+            "days": days
+        }
+
+    usable = {
+        s: v["df"]
+        for s, v in data.items()
+        if v["days"] >= MIN_DAYS
+    }
+
+    print(
+        f"DATA {len(data)} loaded; "
+        f"{len(usable)} sufficient"
+    )
+
+    if not usable:
+        print("NO SUFFICIENT DATA")
+        return
+
+    common = None
+
+    for df in usable.values():
+        ts = set(df["time"])
+        common = ts if common is None else common & ts
+
+    common = sorted(common)
+
+    if not common:
+        print("NO COMMON TIMESTAMPS")
+        return
+
+    print(
+        f"COMMON_TIMESTAMPS {len(common)} "
+        f"{common[0]} -> {common[-1]}"
+    )
+
+    # Daily bias for each symbol.
+    biases = {
+        s: build_bias(df)
+        for s, df in usable.items()
+    }
+
+    all_events = []
+
+    # Signal events must have full HOLD future data.
+    # This prevents OPEN_AT_DATASET_END from entering results.
+    last_allowed = common[-1] - pd.Timedelta(
+        hours=4 * HOLD
+    )
+
+    for sym, df in usable.items():
+
+        events = detect_events(df)
+
+        for e in events:
+
+            if e["time"] not in common:
+                continue
+
+            if e["time"] > last_allowed:
+                continue
+
+            bias = get_bias(
+                biases[sym],
+                e["time"]
+            )
+
+            if bias != e["dir"]:
+                continue
+
+            all_events.append({
+                "sym": sym,
+                **e
+            })
+
+    all_events.sort(
+        key=lambda x: (x["time"], x["sym"])
+    )
+
+    print(
+        f"DETECTED_EVENTS {len(all_events)}"
+    )
+
+    for tp_mult in TP_SCENARIOS:
+
+        results = []
+
+        for e in all_events:
+
+            df = usable[e["sym"]]
+
+            r = simulate(
+                df,
+                e,
+                tp_mult
+            )
+
+            if r["status"] == "INVALID":
+                continue
+
+            results.append({
+                "sym": e["sym"],
+                **r
+            })
+
+        traded = [
+            x for x in results
+            if x["status"] in
+            ("TP", "SL", "TIMEOUT")
+        ]
+
+        tp = sum(
+            x["status"] == "TP"
+            for x in traded
+        )
+
+        sl = sum(
+            x["status"] == "SL"
+            for x in traded
+        )
+
+        timeout = sum(
+            x["status"] == "TIMEOUT"
+            for x in traded
+        )
+
+        ambiguous = sum(
+            x["ambiguous"]
+            for x in traded
+        )
+
+        gross = [
+            x["gross_r"]
+            for x in traded
+        ]
+
+        net = [
+            x["net_r"]
+            for x in traded
+        ]
+
+        gross_total = sum(gross)
+        net_total = sum(net)
+
+        gross_exp = (
+            gross_total / len(gross)
+            if gross else 0.0
+        )
+
+        net_exp = (
+            net_total / len(net)
+            if net else 0.0
+        )
+
+        gross_profit = sum(
+            x for x in gross if x > 0
+        )
+
+        gross_loss = -sum(
+            x for x in gross if x < 0
+        )
+
+        net_profit = sum(
+            x for x in net if x > 0
+        )
+
+        net_loss = -sum(
+            x for x in net if x < 0
+        )
+
+        gross_pf = (
+            gross_profit / gross_loss
+            if gross_loss > 0 else float("inf")
+        )
+
+        net_pf = (
+            net_profit / net_loss
+            if net_loss > 0 else float("inf")
+        )
+
+        wr = (
+            tp / len(traded) * 100
+            if traded else 0.0
+        )
+
+        dd = max_drawdown(net)
+
+        print()
+        print(
+            f"TP {tp_mult:g} R | "
+            f"TRADED {len(traded)} "
+            f"TP {tp} SL {sl} TIMEOUT {timeout} "
+            f"OPEN_AT_END 0 AMBIGUOUS {ambiguous}"
+        )
+
+        print(
+            f"GROSS_EXP {gross_exp:.4f} "
+            f"NET_EXP {net_exp:.4f} "
+            f"GROSS_TOTAL {gross_total:.2f} "
+            f"NET_TOTAL {net_total:.2f} "
+            f"PF {gross_pf:.3f} "
+            f"NET_PF {net_pf:.3f} "
+            f"MAXDD {dd:.2f}"
+        )
+
+        print(f"WR {wr:.2f}%")
+
+        print("PER_SYMBOL")
+
+        by_symbol = {}
+
+        for x in traded:
+            sym = x["sym"]
+
+            if sym not in by_symbol:
+                by_symbol[sym] = {}
+
+            status = x["status"]
+            by_symbol[sym][status] = (
+                by_symbol[sym].get(status, 0) + 1
+            )
+
+        for sym in sorted(by_symbol):
+            print(sym, by_symbol[sym])
+
+    print()
+    print("DONE — send complete Test RUN output for review")
+
+
+if __name__ == "__main__":
+    main()
