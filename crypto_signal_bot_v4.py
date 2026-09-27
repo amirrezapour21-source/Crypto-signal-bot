@@ -1,117 +1,188 @@
+"""
+SETUP V4 — CANDIDATE 5
+EMA TREND PULLBACK + RSI RE-ENTRY
+
+Research only.
+Independent candidate.
+No V3 logic.
+No Candidate 1/2/3/4 logic.
+
+Frozen research parameters:
+TIMEFRAME = 4H
+EMA_FAST = 50
+EMA_SLOW = 200
+RSI_PERIOD = 14
+ATR_PERIOD = 20
+
+Pullback:
+LONG  -> close > EMA200, EMA50 > EMA200,
+         previous close <= previous EMA50,
+         current close > EMA50,
+         RSI >= 50
+
+SHORT -> close < EMA200, EMA50 < EMA200,
+         previous close >= previous EMA50,
+         current close < EMA50,
+         RSI <= 50
+
+Risk:
+SL = 1 ATR
+TP = 1 / 1.5 / 2 / 3 R
+HOLD = 30 candles
+
+Costs:
+fee = 0.10%
+slippage = 0.05%
+
+Execution:
+- causal
+- entry at signal candle close
+- same-candle SL first
+- TIMEOUT = 0R
+- incomplete forward window = OPEN_AT_DATASET_END
+"""
+
+import time
+import math
 import requests
-import pandas as pd
 import numpy as np
-import time as time_module
+import pandas as pd
+
 
 # ============================================================
-# SETUP V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT
-# Frozen: 4H | breakout=20 | ATR=20 | volume=20
-# daily EMA20 bias | HOLD=30 | Long/Short
+# CONFIG
 # ============================================================
 
-SYMS = [
-    "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
-    "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT",
-    "DOT-USDT", "NEAR-USDT", "APT-USDT", "ARB-USDT",
-    "OP-USDT", "SUI-USDT", "INJ-USDT", "TIA-USDT",
-    "SEI-USDT", "FIL-USDT", "ATOM-USDT", "LTC-USDT",
-    "ETC-USDT", "TRX-USDT", "ICP-USDT", "AAVE-USDT",
-    "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT",
-    "GRT-USDT", "ALGO-USDT", "VET-USDT", "HBAR-USDT",
-    "EGLD-USDT", "XLM-USDT", "THETA-USDT", "SAND-USDT",
-    "MANA-USDT", "AXS-USDT", "CHZ-USDT"
-]
+BASE_URL = "https://api.kucoin.com"
+
+TIMEFRAME = "4hour"
 
 TARGET_DAYS = 730
 MIN_DAYS = 180
 
-BREAKOUT = 20
-ATR_LEN = 20
-VOL_LEN = 20
-DAILY_EMA = 20
+EMA_FAST = 50
+EMA_SLOW = 200
 
-HOLD = 30
+RSI_PERIOD = 14
+ATR_PERIOD = 20
+
+SL_ATR = 1.0
 
 TP_SCENARIOS = [1.0, 1.5, 2.0, 3.0]
 
-FEE_PCT = 0.10
-SLIPPAGE_PCT = 0.05
+HOLD_BARS = 30
 
-BASE_URL = "https://api.kucoin.com/api/v1/market/candles"
-INTERVAL = "4hour"
+FEE_RATE = 0.0010
+SLIPPAGE_RATE = 0.0005
+
+# Same research universe used in previous candidates
+SYMBOLS = [
+    "BTC-USDT",
+    "ETH-USDT",
+    "SOL-USDT",
+    "BNB-USDT",
+    "XRP-USDT",
+    "DOGE-USDT",
+    "ADA-USDT",
+    "LINK-USDT",
+    "AVAX-USDT",
+    "DOT-USDT",
+    "NEAR-USDT",
+    "APT-USDT",
+    "ARB-USDT",
+    "OP-USDT",
+    "SUI-USDT",
+    "INJ-USDT",
+    "TIA-USDT",
+    "SEI-USDT",
+    "FIL-USDT",
+    "ATOM-USDT",
+    "LTC-USDT",
+    "ETC-USDT",
+    "TRX-USDT",
+    "ICP-USDT",
+    "AAVE-USDT",
+    "UNI-USDT",
+    "RUNE-USDT",
+    "GRT-USDT",
+    "ALGO-USDT",
+    "VET-USDT",
+    "HBAR-USDT",
+    "EGLD-USDT",
+    "XLM-USDT",
+    "THETA-USDT",
+    "SAND-USDT",
+    "MANA-USDT",
+    "AXS-USDT",
+    "CHZ-USDT",
+]
 
 
 # ============================================================
-# DATA FETCH
+# KUCOIN DATA
 # ============================================================
 
 def fetch_history(symbol, target_days=TARGET_DAYS):
 
-    end_at = int(time_module.time())
+    end_at = int(time.time())
     start_at = end_at - target_days * 86400
 
-    rows = []
-    current_end = end_at
+    all_rows = []
+    current_start = start_at
 
-    while current_end > start_at:
+    page_seconds = 1500 * 4 * 3600
+
+    while current_start < end_at:
+
+        current_end = min(current_start + page_seconds, end_at)
 
         params = {
             "symbol": symbol,
-            "type": INTERVAL,
-            "startAt": start_at,
-            "endAt": current_end
+            "type": TIMEFRAME,
+            "startAt": current_start,
+            "endAt": current_end,
         }
 
         try:
             r = requests.get(
-                BASE_URL,
+                f"{BASE_URL}/api/v1/market/candles",
                 params=params,
-                timeout=20
+                timeout=20,
             )
-
             r.raise_for_status()
-
             payload = r.json()
 
-            if payload.get("code") != "200000":
-                break
-
-            batch = payload.get("data", [])
-
-            if not batch:
-                break
-
-            rows.extend(batch)
-
-            timestamps = []
-
-            for row in batch:
-                try:
-                    timestamps.append(int(row[0]))
-                except Exception:
-                    continue
-
-            if not timestamps:
-                break
-
-            oldest = min(timestamps)
-
-            if oldest <= start_at:
-                break
-
-            current_end = oldest - 1
-
-            time_module.sleep(0.15)
-
         except Exception as e:
-            print(f"{symbol} fetch error: {e}")
+            print(f"{symbol} DATA ERROR: {e}")
             break
 
-    if not rows:
-        return None, 0
+        if payload.get("code") != "200000":
+            print(f"{symbol} KUCOIN ERROR: {payload}")
+            break
+
+        rows = payload.get("data", [])
+
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+
+        newest = max(int(row[0]) for row in rows)
+
+        next_start = newest + 4 * 3600
+
+        if next_start <= current_start:
+            break
+
+        current_start = next_start
+
+        time.sleep(0.08)
+
+    if not all_rows:
+        return None
 
     df = pd.DataFrame(
-        rows,
+        all_rows,
         columns=[
             "time",
             "open",
@@ -119,282 +190,224 @@ def fetch_history(symbol, target_days=TARGET_DAYS):
             "high",
             "low",
             "volume",
-            "turnover"
-        ]
+            "turnover",
+        ],
     )
 
-    # ========================================================
-    # TIMESTAMP
-    # KuCoin candles use UNIX timestamp in seconds
-    # ========================================================
-
-    df["time"] = pd.to_numeric(
-        df["time"],
-        errors="coerce"
-    )
-
-    df = df.dropna(
-        subset=["time"]
-    )
+    # KuCoin timestamp = milliseconds
+    df["time"] = pd.to_numeric(df["time"], errors="coerce")
 
     df["time"] = pd.to_datetime(
         df["time"],
         unit="s",
-        utc=True
+        errors="coerce",
+        utc=True,
     )
 
-    # Numeric OHLCV
-    for col in [
-        "open",
-        "close",
-        "high",
-        "low",
-        "volume",
-        "turnover"
-    ]:
-        df[col] = pd.to_numeric(
-            df[col],
-            errors="coerce"
-        )
+    # Safety correction:
+    # KuCoin normally returns seconds for this endpoint.
+    # If dates are obviously invalid, retry interpreting as ms.
+    if df["time"].notna().any():
+        max_year = df["time"].dt.year.max()
+
+        if max_year > 2035:
+            raw_time = pd.to_numeric(
+                df["time"].astype("int64"),
+                errors="coerce",
+            )
+
+            df["time"] = pd.to_datetime(
+                raw_time,
+                unit="ms",
+                errors="coerce",
+                utc=True,
+            )
+
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
     df = df.dropna(
-        subset=[
-            "open",
-            "close",
-            "high",
-            "low",
-            "volume"
-        ]
+        subset=["time", "open", "high", "low", "close"]
     )
 
-    df = df.drop_duplicates(
-        subset=["time"]
-    )
+    df = df.sort_values("time")
+    df = df.drop_duplicates("time")
 
-    df = df.sort_values(
-        "time"
-    ).reset_index(drop=True)
-
-    # --------------------------------------------------------
-    # Drop incomplete current 4H candle
-    # --------------------------------------------------------
-
+    # Remove currently incomplete candle
     now = pd.Timestamp.now(tz="UTC")
 
-    if len(df) > 0:
+    df = df[
+        df["time"] + pd.Timedelta(hours=4) <= now
+    ].copy()
 
-        last_time = df.iloc[-1]["time"]
+    if df.empty:
+        return None
 
-        if last_time + pd.Timedelta(hours=4) > now:
-            df = df.iloc[:-1].copy()
+    # Exact target coverage window
+    cutoff = now - pd.Timedelta(days=target_days)
 
-    if len(df) == 0:
-        return None, 0
+    df = df[df["time"] >= cutoff].copy()
 
-    days = (
-        df["time"].iloc[-1] -
-        df["time"].iloc[0]
-    ).total_seconds() / 86400
+    df = df.reset_index(drop=True)
 
-    return df, days
+    return df
 
 
 # ============================================================
 # INDICATORS
 # ============================================================
 
-def add_indicators(df):
+def calculate_indicators(df):
 
     df = df.copy()
 
-    # --------------------------------------------------------
-    # ATR
-    # --------------------------------------------------------
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
 
-    prev_close = df["close"].shift(1)
+    df["ema50"] = close.ewm(
+        span=EMA_FAST,
+        adjust=False
+    ).mean()
 
-    tr1 = df["high"] - df["low"]
+    df["ema200"] = close.ewm(
+        span=EMA_SLOW,
+        adjust=False
+    ).mean()
 
-    tr2 = (
-        df["high"] - prev_close
-    ).abs()
+    delta = close.diff()
 
-    tr3 = (
-        df["low"] - prev_close
-    ).abs()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
-    df["TR"] = pd.concat(
+    avg_gain = gain.ewm(
+        alpha=1 / RSI_PERIOD,
+        adjust=False
+    ).mean()
+
+    avg_loss = loss.ewm(
+        alpha=1 / RSI_PERIOD,
+        adjust=False
+    ).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+
+    df["rsi"] = 100 - (
+        100 / (1 + rs)
+    )
+
+    prev_close = close.shift(1)
+
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+
+    tr = pd.concat(
         [tr1, tr2, tr3],
         axis=1
     ).max(axis=1)
 
-    df["ATR"] = (
-        df["TR"]
-        .rolling(ATR_LEN)
-        .mean()
-    )
-
-    # --------------------------------------------------------
-    # Volume MA
-    # --------------------------------------------------------
-
-    df["VOL_MA"] = (
-        df["volume"]
-        .rolling(VOL_LEN)
-        .mean()
-    )
-
-    # ========================================================
-    # CAUSAL DAILY EMA20 BIAS
-    #
-    # IMPORTANT:
-    # The current day's unfinished/future daily close
-    # must NEVER be used by a 4H candle from that same day.
-    #
-    # Therefore the daily bias is shifted by one full day.
-    # ========================================================
-
-    daily = (
-        df.set_index("time")
-        .resample("1D")
-        .agg({
-            "close": "last"
-        })
-        .dropna()
-    )
-
-    daily["EMA20"] = (
-        daily["close"]
-        .ewm(
-            span=DAILY_EMA,
-            adjust=False
-        )
-        .mean()
-    )
-
-    daily["DAILY_BIAS"] = np.where(
-        daily["close"] > daily["EMA20"],
-        "LONG",
-        "SHORT"
-    )
-
-    # --------------------------------------------------------
-    # CRITICAL CAUSALITY FIX
-    # Only the previous completed daily candle is visible.
-    # --------------------------------------------------------
-
-    daily["DAILY_BIAS_CAUSAL"] = (
-        daily["DAILY_BIAS"].shift(1)
-    )
-
-    daily_bias = (
-        daily["DAILY_BIAS_CAUSAL"]
-        .reindex(
-            df["time"].dt.floor("D"),
-            method="ffill"
-        )
-    )
-
-    df["DAILY_BIAS"] = (
-        daily_bias.to_numpy()
-    )
+    df["atr"] = tr.rolling(
+        ATR_PERIOD
+    ).mean()
 
     return df
 
 
 # ============================================================
-# SIGNAL DETECTION
+# CAUSAL SIGNAL DETECTOR
 # ============================================================
 
 def detect_events(df):
 
     events = []
 
-    df = df.copy()
+    # Indicators at current candle are allowed.
+    # Future candles are never accessed here.
 
-    # Previous 20-bar Donchian boundaries
-    df["DONCHIAN_HIGH"] = (
-        df["high"]
-        .shift(1)
-        .rolling(BREAKOUT)
-        .max()
-    )
+    for i in range(1, len(df)):
 
-    df["DONCHIAN_LOW"] = (
-        df["low"]
-        .shift(1)
-        .rolling(BREAKOUT)
-        .min()
-    )
+        row = df.iloc[i]
+        prev = df.iloc[i - 1]
 
-    for i in range(len(df)):
-
-        if i < max(
-            BREAKOUT,
-            ATR_LEN,
-            VOL_LEN
-        ):
+        if not np.isfinite(row["ema50"]):
             continue
 
-        atr = df.iloc[i]["ATR"]
-        vol_ma = df.iloc[i]["VOL_MA"]
-
-        if pd.isna(atr) or atr <= 0:
+        if not np.isfinite(row["ema200"]):
             continue
 
-        if pd.isna(vol_ma) or vol_ma <= 0:
+        if not np.isfinite(row["rsi"]):
             continue
 
-        close = df.iloc[i]["close"]
-        volume = df.iloc[i]["volume"]
+        if not np.isfinite(row["atr"]):
+            continue
 
-        previous_high = (
-            df.iloc[i]["DONCHIAN_HIGH"]
-        )
-
-        previous_low = (
-            df.iloc[i]["DONCHIAN_LOW"]
-        )
-
-        daily_bias = (
-            df.iloc[i]["DAILY_BIAS"]
-        )
+        if row["atr"] <= 0:
+            continue
 
         # ----------------------------------------------------
         # LONG
         # ----------------------------------------------------
 
-        if (
-            close > previous_high
-            and volume > vol_ma
-            and daily_bias == "LONG"
-        ):
+        long_trend = (
+            row["close"] > row["ema200"]
+            and row["ema50"] > row["ema200"]
+        )
 
-            events.append({
-                "idx": i,
-                "time": df.iloc[i]["time"],
-                "dir": "LONG",
-                "entry": close,
-                "atr": atr
-            })
+        long_pullback_reclaim = (
+            prev["close"] <= prev["ema50"]
+            and row["close"] > row["ema50"]
+        )
+
+        long_rsi = row["rsi"] >= 50
+
+        if (
+            long_trend
+            and long_pullback_reclaim
+            and long_rsi
+        ):
+            events.append(
+                {
+                    "idx": i,
+                    "time": row["time"],
+                    "dir": "LONG",
+                    "entry": float(row["close"]),
+                    "atr": float(row["atr"]),
+                }
+            )
+
+            continue
 
         # ----------------------------------------------------
         # SHORT
         # ----------------------------------------------------
 
-        elif (
-            close < previous_low
-            and volume > vol_ma
-            and daily_bias == "SHORT"
-        ):
+        short_trend = (
+            row["close"] < row["ema200"]
+            and row["ema50"] < row["ema200"]
+        )
 
-            events.append({
-                "idx": i,
-                "time": df.iloc[i]["time"],
-                "dir": "SHORT",
-                "entry": close,
-                "atr": atr
-            })
+        short_pullback_reclaim = (
+            prev["close"] >= prev["ema50"]
+            and row["close"] < row["ema50"]
+        )
+
+        short_rsi = row["rsi"] <= 50
+
+        if (
+            short_trend
+            and short_pullback_reclaim
+            and short_rsi
+        ):
+            events.append(
+                {
+                    "idx": i,
+                    "time": row["time"],
+                    "dir": "SHORT",
+                    "entry": float(row["close"]),
+                    "atr": float(row["atr"]),
+                }
+            )
 
     return events
 
@@ -403,11 +416,7 @@ def detect_events(df):
 # TRADE SIMULATION
 # ============================================================
 
-def simulate_trade(
-    df,
-    event,
-    tp_r
-):
+def simulate_trade(df, event, tp_r):
 
     idx = event["idx"]
     direction = event["dir"]
@@ -415,153 +424,134 @@ def simulate_trade(
     entry = float(event["entry"])
     atr = float(event["atr"])
 
+    if not np.isfinite(entry) or not np.isfinite(atr):
+        return {
+            "status": "AMBIGUOUS",
+            "gross_r": 0.0,
+            "net_r": 0.0,
+        }
+
+    sl_distance = SL_ATR * atr
+    tp_distance = tp_r * sl_distance
+
     if direction == "LONG":
 
-        sl = entry - atr
-        tp = entry + tp_r * atr
+        sl = entry - sl_distance
+        tp = entry + tp_distance
 
     else:
 
-        sl = entry + atr
-        tp = entry - tp_r * atr
+        sl = entry + sl_distance
+        tp = entry - tp_distance
 
-    last_idx = min(
-        idx + HOLD,
-        len(df) - 1
-    )
+    last_idx = idx + HOLD_BARS
 
-    exit_idx = None
-    exit_price = None
-    outcome = None
+    if last_idx >= len(df):
 
-    for j in range(
-        idx + 1,
-        last_idx + 1
-    ):
+        return {
+            "status": "OPEN_AT_DATASET_END",
+            "gross_r": 0.0,
+            "net_r": 0.0,
+        }
+
+    exit_status = "TIMEOUT"
+    gross_r = 0.0
+    exit_price = float(df.iloc[last_idx]["close"])
+
+    bars_held = HOLD_BARS
+
+    for j in range(idx + 1, last_idx + 1):
 
         candle = df.iloc[j]
 
         high = float(candle["high"])
         low = float(candle["low"])
 
-        # ----------------------------------------------------
-        # LONG
-        # ----------------------------------------------------
-
         if direction == "LONG":
 
             hit_sl = low <= sl
             hit_tp = high >= tp
 
-            # Same-candle SL-first
+            # Same candle: SL first
             if hit_sl:
 
-                exit_idx = j
+                exit_status = "SL"
                 exit_price = sl
-                outcome = "SL"
-
+                bars_held = j - idx
+                gross_r = -1.0
                 break
 
             if hit_tp:
 
-                exit_idx = j
+                exit_status = "TP"
                 exit_price = tp
-                outcome = "TP"
-
+                bars_held = j - idx
+                gross_r = tp_r
                 break
-
-        # ----------------------------------------------------
-        # SHORT
-        # ----------------------------------------------------
 
         else:
 
             hit_sl = high >= sl
             hit_tp = low <= tp
 
-            # Same-candle SL-first
+            # Same candle: SL first
             if hit_sl:
 
-                exit_idx = j
+                exit_status = "SL"
                 exit_price = sl
-                outcome = "SL"
-
+                bars_held = j - idx
+                gross_r = -1.0
                 break
 
             if hit_tp:
 
-                exit_idx = j
+                exit_status = "TP"
                 exit_price = tp
-                outcome = "TP"
-
+                bars_held = j - idx
+                gross_r = tp_r
                 break
 
-    # --------------------------------------------------------
-    # TIMEOUT
-    # --------------------------------------------------------
+    # If neither SL nor TP was hit
+    if exit_status == "TIMEOUT":
 
-    if exit_idx is None:
-
-        if idx + HOLD >= len(df):
-
-            return {
-                "status": "OPEN_AT_DATASET_END"
-            }
-
-        exit_idx = idx + HOLD
-
-        exit_price = float(
-            df.iloc[exit_idx]["close"]
-        )
-
-        outcome = "TIMEOUT"
+        if direction == "LONG":
+            gross_r = (
+                (exit_price - entry)
+                / sl_distance
+            )
+        else:
+            gross_r = (
+                (entry - exit_price)
+                / sl_distance
+            )
 
     # --------------------------------------------------------
-    # Gross R
+    # COST MODEL
     # --------------------------------------------------------
 
-    risk = atr
-
-    if direction == "LONG":
-
-        gross_r = (
-            exit_price - entry
-        ) / risk
-
-    else:
-
-        gross_r = (
-            entry - exit_price
-        ) / risk
-
-    # --------------------------------------------------------
-    # Fees + slippage
-    # --------------------------------------------------------
-
-    total_cost_pct = (
-        FEE_PCT + SLIPPAGE_PCT
-    ) / 100.0
-
-    round_trip_cost = (
-        2 * total_cost_pct
+    # Approximate round-trip trading cost.
+    # Fee + slippage on entry and exit.
+    notional_cost = (
+        2 * (FEE_RATE + SLIPPAGE_RATE)
     )
+
+    risk_fraction = sl_distance / entry
 
     cost_r = (
-        entry * round_trip_cost
-    ) / risk
-
-    net_r = (
-        gross_r - cost_r
+        notional_cost / risk_fraction
+        if risk_fraction > 0
+        else 0.0
     )
 
+    net_r = gross_r - cost_r
+
     return {
-        "status": "TRADED",
-        "entry_time": event["time"],
-        "exit_time": df.iloc[exit_idx]["time"],
-        "dir": direction,
-        "outcome": outcome,
-        "gross_r": gross_r,
-        "net_r": net_r
+        "status": exit_status,
+        "gross_r": float(gross_r),
+        "net_r": float(net_r),
+        "bars_held": int(bars_held),
+        "entry": entry,
+        "exit": float(exit_price),
     }
 
 
@@ -569,112 +559,79 @@ def simulate_trade(
 # METRICS
 # ============================================================
 
-def calc_metrics(trades):
+def profit_factor(values):
 
-    if not trades:
+    gains = sum(x for x in values if x > 0)
+    losses = abs(sum(x for x in values if x < 0))
 
-        return {
-            "n_traded": 0,
-            "n_open_at_end": 0,
-            "win_rate": 0,
-            "gross_exp": 0,
-            "net_exp": 0,
-            "gross_total": 0,
-            "net_total": 0,
-            "gross_pf": 0,
-            "net_pf": 0,
-            "gross_max_dd": 0,
-            "net_max_dd": 0
-        }
+    if losses == 0:
+        return float("inf") if gains > 0 else 0.0
 
-    gross = np.array(
-        [
-            x["gross_r"]
-            for x in trades
-        ],
-        dtype=float
-    )
+    return gains / losses
 
-    net = np.array(
-        [
-            x["net_r"]
-            for x in trades
-        ],
-        dtype=float
-    )
 
-    wins = np.sum(
-        gross > 0
-    )
+def max_drawdown(values):
 
-    gross_positive = gross[
-        gross > 0
-    ].sum()
+    if not values:
+        return 0.0
 
-    gross_negative = abs(
-        gross[gross < 0].sum()
-    )
+    equity = 0.0
+    peak = 0.0
+    max_dd = 0.0
 
-    net_positive = net[
-        net > 0
-    ].sum()
+    for r in values:
 
-    net_negative = abs(
-        net[net < 0].sum()
-    )
+        equity += r
 
-    gross_pf = (
-        gross_positive /
-        gross_negative
-        if gross_negative > 0
-        else np.inf
-    )
+        if equity > peak:
+            peak = equity
 
-    net_pf = (
-        net_positive /
-        net_negative
-        if net_negative > 0
-        else np.inf
-    )
+        dd = equity - peak
 
-    gross_curve = np.cumsum(
-        gross
-    )
+        if dd < max_dd:
+            max_dd = dd
 
-    net_curve = np.cumsum(
-        net
-    )
+    return max_dd
 
-    gross_peak = np.maximum.accumulate(
-        gross_curve
-    )
 
-    net_peak = np.maximum.accumulate(
-        net_curve
-    )
+def summarize(trades):
 
-    gross_dd = (
-        gross_curve -
-        gross_peak
-    )
+    traded = [
+        t for t in trades
+        if t["status"] != "OPEN_AT_DATASET_END"
+        and t["status"] != "AMBIGUOUS"
+    ]
 
-    net_dd = (
-        net_curve -
-        net_peak
+    if not traded:
+        return None
+
+    gross = [t["gross_r"] for t in traded]
+    net = [t["net_r"] for t in traded]
+
+    wins = sum(
+        1 for x in gross
+        if x > 0
     )
 
     return {
-        "n_traded": len(trades),
-        "n_open_at_end": 0,
-        "win_rate": wins / len(trades),
-        "gross_exp": gross.mean(),
-        "net_exp": net.mean(),
-        "gross_total": gross.sum(),
-        "net_total": net.sum(),
-        "gross_pf": gross_pf,
-        "net_pf": net_pf,
-        "gross_max_dd": gross_dd.min(),
-        "net_max_dd": net_dd.min()
+        "n_traded": len(traded),
+        "n_open_at_end": sum(
+            t["status"] == "OPEN_AT_DATASET_END"
+            for t in trades
+        ),
+        "n_ambiguous": sum(
+            t["status"] == "AMBIGUOUS"
+            for t in trades
+        ),
+        "WR": wins / len(traded),
+        "GrossExp": np.mean(gross),
+        "NetExp": np.mean(net),
+        "GrossTotal": np.sum(gross),
+        "NetTotal": np.sum(net),
+        "GrossPF": profit_factor(gross),
+        "NetPF": profit_factor(net),
+        "GrossMaxDD": max_drawdown(gross),
+        "NetMaxDD": max_drawdown(net),
     }
 
 
@@ -684,225 +641,245 @@ def calc_metrics(trades):
 
 def main():
 
+    print("=" * 80)
+    print("SETUP V4 — CANDIDATE 5")
+    print("EMA TREND PULLBACK + RSI RE-ENTRY")
+    print("=" * 80)
+
     print(
-        "SETUP V4 — CANDIDATE 4 — "
-        "DONCHIAN VOLATILITY BREAKOUT"
+        f"4H | EMA={EMA_FAST}/{EMA_SLOW} | "
+        f"RSI={RSI_PERIOD} | ATR={ATR_PERIOD} | "
+        f"SL={SL_ATR} ATR | HOLD={HOLD_BARS}"
     )
 
     print(
-        "Frozen: 4H | breakout=20 | ATR=20 | "
-        "volume=20 | daily EMA20 bias | "
-        "HOLD=30 | Long/Short"
+        f"TP={TP_SCENARIOS} | "
+        f"Fee={FEE_RATE:.4f} | "
+        f"Slippage={SLIPPAGE_RATE:.4f}"
     )
+
+    print()
 
     data = {}
 
-    loaded = 0
     sufficient = 0
 
-    # --------------------------------------------------------
-    # Fetch all symbols
-    # --------------------------------------------------------
+    for symbol in SYMBOLS:
 
-    for symbol in SYMS:
-
-        df, days = fetch_history(
+        df = fetch_history(
             symbol,
             TARGET_DAYS
         )
 
-        if df is None:
+        if df is None or df.empty:
+
+            print(
+                f"{symbol:12s} DATA FAILED"
+            )
+
             continue
 
-        loaded += 1
+        first = df["time"].iloc[0]
+        last = df["time"].iloc[-1]
 
-        data[symbol] = {
-            "df": df,
-            "days": days
-        }
+        days = (
+            last - first
+        ).total_seconds() / 86400
 
         if days >= MIN_DAYS:
+
             sufficient += 1
 
+            df = calculate_indicators(df)
+
+            data[symbol] = df
+
+            print(
+                f"{symbol:12s} "
+                f"{len(df):5d} candles | "
+                f"{days:6.1f} days | SUFFICIENT"
+            )
+
+        else:
+
+            print(
+                f"{symbol:12s} "
+                f"{len(df):5d} candles | "
+                f"{days:6.1f} days | "
+                f"INSUFFICIENT"
+            )
+
+    print()
     print(
-        f"DATA {loaded} loaded; "
+        f"DATA: {len(data)} loaded | "
         f"{sufficient} sufficient"
     )
 
-    if sufficient == 0:
-
-        print(
-            "NO SUFFICIENT DATA"
-        )
-
-        return
-
     # --------------------------------------------------------
-    # Filter usable symbols
+    # DETECTION
     # --------------------------------------------------------
 
-    usable = {
-        symbol: item
-        for symbol, item in data.items()
-        if item["days"] >= MIN_DAYS
-    }
+    all_events = {}
 
-    all_results = {}
+    total_events = 0
 
-    # --------------------------------------------------------
-    # Run strategy
-    # --------------------------------------------------------
+    for symbol, df in data.items():
 
-    for symbol, item in usable.items():
+        events = detect_events(df)
 
-        df = item["df"]
+        all_events[symbol] = events
 
-        df = add_indicators(
-            df
-        )
+        total_events += len(events)
 
-        events = detect_events(
-            df
-        )
-
-        # Exclude final HOLD candles
-        # so every event has complete
-        # forward data.
-
-        max_event_idx = (
-            len(df) -
-            HOLD -
-            1
-        )
-
-        events = [
-            e
+        long_count = sum(
+            e["dir"] == "LONG"
             for e in events
-            if e["idx"] <= max_event_idx
-        ]
-
-        print(
-            f"{symbol}: "
-            f"{len(df)} candles | "
-            f"{item['days']:.0f}d | "
-            f"{len(events)} events"
         )
 
-        for tp_r in TP_SCENARIOS:
+        short_count = sum(
+            e["dir"] == "SHORT"
+            for e in events
+        )
 
-            trades = []
+        print(
+            f"{symbol:12s} "
+            f"events={len(events):4d} "
+            f"LONG={long_count:4d} "
+            f"SHORT={short_count:4d}"
+        )
+
+    print()
+    print(
+        f"TOTAL EVENTS: {total_events}"
+    )
+
+    # --------------------------------------------------------
+    # SIMULATION
+    # --------------------------------------------------------
+
+    for tp_r in TP_SCENARIOS:
+
+        portfolio_trades = []
+
+        print()
+        print("=" * 80)
+        print(f"TP SCENARIO = {tp_r:.1f}R")
+        print("=" * 80)
+
+        for symbol, events in all_events.items():
+
+            df = data[symbol]
+
+            symbol_trades = []
 
             for event in events:
 
-                result = simulate_trade(
+                trade = simulate_trade(
                     df,
                     event,
                     tp_r
                 )
 
-                if result["status"] == "TRADED":
+                trade["symbol"] = symbol
+                trade["dir"] = event["dir"]
+                trade["time"] = event["time"]
 
-                    trades.append(
-                        result
-                    )
+                symbol_trades.append(trade)
+                portfolio_trades.append(trade)
 
-            metrics = calc_metrics(
-                trades
+            summary = summarize(
+                symbol_trades
             )
 
-            all_results.setdefault(
-                tp_r,
-                []
-            ).extend(
-                trades
+            if summary:
+
+                print(
+                    f"{symbol:12s} "
+                    f"N={summary['n_traded']:4d} "
+                    f"WR={summary['WR']:.3f} "
+                    f"GrossE={summary['GrossExp']:+.4f} "
+                    f"NetE={summary['NetExp']:+.4f} "
+                    f"NetPF={summary['NetPF']:.3f}"
+                )
+
+        portfolio = summarize(
+            portfolio_trades
+        )
+
+        print()
+        print("PORTFOLIO SUMMARY")
+
+        if portfolio:
+
+            print(
+                f"n_traded      = "
+                f"{portfolio['n_traded']}"
             )
 
             print(
-                f"  TP {tp_r}R | "
-                f"traded={metrics['n_traded']} | "
-                f"WR={metrics['win_rate']:.3f} | "
-                f"GrossExp={metrics['gross_exp']:.4f}R | "
-                f"NetExp={metrics['net_exp']:.4f}R"
+                f"n_open_end    = "
+                f"{portfolio['n_open_at_end']}"
             )
 
-    # --------------------------------------------------------
-    # Portfolio summary
-    # --------------------------------------------------------
+            print(
+                f"n_ambiguous   = "
+                f"{portfolio['n_ambiguous']}"
+            )
 
-    print("")
+            print(
+                f"WR            = "
+                f"{portfolio['WR']:.4f}"
+            )
+
+            print(
+                f"Gross Exp     = "
+                f"{portfolio['GrossExp']:+.4f}R"
+            )
+
+            print(
+                f"Net Exp       = "
+                f"{portfolio['NetExp']:+.4f}R"
+            )
+
+            print(
+                f"Gross Total   = "
+                f"{portfolio['GrossTotal']:+.2f}R"
+            )
+
+            print(
+                f"Net Total     = "
+                f"{portfolio['NetTotal']:+.2f}R"
+            )
+
+            print(
+                f"Gross PF      = "
+                f"{portfolio['GrossPF']:.3f}"
+            )
+
+            print(
+                f"Net PF        = "
+                f"{portfolio['NetPF']:.3f}"
+            )
+
+            print(
+                f"Gross MaxDD   = "
+                f"{portfolio['GrossMaxDD']:+.2f}R"
+            )
+
+            print(
+                f"Net MaxDD     = "
+                f"{portfolio['NetMaxDD']:+.2f}R"
+            )
+
+    print()
+    print("=" * 80)
+    print("CANDIDATE 5 IS TEST COMPLETE")
+    print("=" * 80)
     print(
-        "===== PORTFOLIO SUMMARY ====="
+        "IMPORTANT: Do NOT optimize parameters from this run."
     )
-
-    for tp_r in TP_SCENARIOS:
-
-        trades = all_results.get(
-            tp_r,
-            []
-        )
-
-        metrics = calc_metrics(
-            trades
-        )
-
-        print("")
-        print(
-            f"TP {tp_r}R"
-        )
-
-        print(
-            f"n_traded       = "
-            f"{metrics['n_traded']}"
-        )
-
-        print(
-            f"WR             = "
-            f"{metrics['win_rate']:.4f}"
-        )
-
-        print(
-            f"Gross Exp      = "
-            f"{metrics['gross_exp']:.4f}R"
-        )
-
-        print(
-            f"Net Exp        = "
-            f"{metrics['net_exp']:.4f}R"
-        )
-
-        print(
-            f"Gross Total    = "
-            f"{metrics['gross_total']:.2f}R"
-        )
-
-        print(
-            f"Net Total      = "
-            f"{metrics['net_total']:.2f}R"
-        )
-
-        print(
-            f"Gross PF       = "
-            f"{metrics['gross_pf']:.3f}"
-        )
-
-        print(
-            f"Net PF         = "
-            f"{metrics['net_pf']:.3f}"
-        )
-
-        print(
-            f"Gross MaxDD    = "
-            f"{metrics['gross_max_dd']:.2f}R"
-        )
-
-        print(
-            f"Net MaxDD      = "
-            f"{metrics['net_max_dd']:.2f}R"
-        )
-
-    print("")
     print(
-        "===== TEST RUN COMPLETE ====="
+        "If IS shows a credible net edge, run independent OOS."
     )
 
 
