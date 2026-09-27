@@ -59,7 +59,11 @@ def ret(df,i,n): return (df["r"][i][4]-df["r"][i-n][4])/df["r"][i-n][4]
 
 def detect(dfs):
     common=set.intersection(*(set(x["map"]) for x in dfs.values()))
-    times=sorted(common); scan=times[-RANKING_LOOKBACK:]
+    times=sorted(common)
+    # Trade-validation tail guard: scan only timestamps with a full HOLD window ahead.
+    # Keeps exactly the frozen 100-timestamp scan window while eliminating OPEN_AT_DATASET_END.
+    eligible=times[:-HOLD] if len(times)>HOLD else []
+    scan=eligible[-RANKING_LOOKBACK:]
     pos={t:i for i,t in enumerate(times)}
     events=[]; prev=set()
     for t in scan:
@@ -130,7 +134,7 @@ def simulate(m,dfs,tp):
     return 0,"TIMEOUT",-cost,cost,False
 
 def main():
-    print("SETUP F — UNIFIED VALIDATION ENGINE — CORRECTED v3")
+    print("SETUP F — UNIFIED VALIDATION ENGINE — CORRECTED v4")
     print("Spec: 4H | 40 symbols | MOM=20 | lookback=100 | TOP_N=3 | new-entry only | Long-only | HOLD=30")
     raw={}; dfs={}; audits={}
     for sym in SYMS:
