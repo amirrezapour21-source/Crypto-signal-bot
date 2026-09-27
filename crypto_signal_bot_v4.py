@@ -1,18 +1,25 @@
-import time
 import requests
-import numpy as np
 import pandas as pd
+import numpy as np
+import time as time_module
 
 # ============================================================
-# V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT
-# Frozen Spec — no optimization
+# SETUP V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT
+# Frozen: 4H | breakout=20 | ATR=20 | volume=20
+# daily EMA20 bias | HOLD=30 | Long/Short
 # ============================================================
 
 SYMS = [
-    "ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT","NEAR",
-    "APT","ARB","OP","SUI","INJ","TIA","SEI","FIL","ATOM","LTC",
-    "ETC","TRX","ICP","AAVE","UNI","MKR","RUNE","FTM","GRT","ALGO",
-    "VET","HBAR","EGLD","XLM","THETA","SAND","MANA","AXS","CHZ"
+    "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT",
+    "DOGE-USDT", "ADA-USDT", "LINK-USDT", "AVAX-USDT",
+    "DOT-USDT", "NEAR-USDT", "APT-USDT", "ARB-USDT",
+    "OP-USDT", "SUI-USDT", "INJ-USDT", "TIA-USDT",
+    "SEI-USDT", "FIL-USDT", "ATOM-USDT", "LTC-USDT",
+    "ETC-USDT", "TRX-USDT", "ICP-USDT", "AAVE-USDT",
+    "UNI-USDT", "MKR-USDT", "RUNE-USDT", "FTM-USDT",
+    "GRT-USDT", "ALGO-USDT", "VET-USDT", "HBAR-USDT",
+    "EGLD-USDT", "XLM-USDT", "THETA-USDT", "SAND-USDT",
+    "MANA-USDT", "AXS-USDT", "CHZ-USDT"
 ]
 
 TARGET_DAYS = 730
@@ -24,193 +31,354 @@ VOL_LEN = 20
 DAILY_EMA = 20
 
 HOLD = 30
+
 TP_SCENARIOS = [1.0, 1.5, 2.0, 3.0]
 
 FEE_PCT = 0.10
 SLIPPAGE_PCT = 0.05
 
-URL = "https://api.kucoin.com/api/v1/market/candles"
+BASE_URL = "https://api.kucoin.com/api/v1/market/candles"
+
+INTERVAL = "4hour"
 
 
-def fetch_symbol(sym):
-    symbol = sym + "-USDT"
+# ============================================================
+# DATA FETCH
+# ============================================================
+
+def fetch_history(symbol, target_days=TARGET_DAYS):
+
+    end_at = int(time_module.time())
+    start_at = end_at - target_days * 86400
+
     rows = []
-    end_at = int(time.time())
 
-    target = TARGET_DAYS * 6
-    seen = set()
+    current_end = end_at
 
-    for _ in range(10):
+    while current_end > start_at:
+
         params = {
             "symbol": symbol,
-            "type": "4hour",
-            "endAt": end_at
+            "type": INTERVAL,
+            "startAt": start_at,
+            "endAt": current_end
         }
 
         try:
-            r = requests.get(URL, params=params, timeout=20)
+            r = requests.get(
+                BASE_URL,
+                params=params,
+                timeout=20
+            )
+
             r.raise_for_status()
-            data = r.json().get("data", [])
-        except Exception:
+
+            payload = r.json()
+
+            if payload.get("code") != "200000":
+                break
+
+            batch = payload.get("data", [])
+
+            if not batch:
+                break
+
+            rows.extend(batch)
+
+            # KuCoin candles are:
+            # [time, open, close, high, low, volume, turnover]
+
+            timestamps = []
+
+            for row in batch:
+                try:
+                    timestamps.append(int(row[0]))
+                except Exception:
+                    continue
+
+            if not timestamps:
+                break
+
+            oldest = min(timestamps)
+
+            if oldest <= start_at:
+                break
+
+            # Move pagination window backward
+            current_end = oldest - 1
+
+            # Avoid API hammering
+            time_module.sleep(0.15)
+
+        except Exception as e:
+            print(f"{symbol} fetch error: {e}")
             break
 
-        if not data:
-            break
-
-        for x in data:
-            ts = int(x[0])
-            if ts not in seen:
-                seen.add(ts)
-                rows.append(x)
-
-        oldest = min(int(x[0]) for x in data)
-
-        if len(rows) >= target:
-            break
-
-        new_end = oldest - 1
-        if new_end >= end_at:
-            break
-
-        end_at = new_end
-        time.sleep(0.15)
-
-    if len(rows) < 100:
-        return None
+    if not rows:
+        return None, 0
 
     df = pd.DataFrame(
         rows,
-        columns=["time","open","close","high","low","volume","turnover"]
+        columns=[
+            "time",
+            "open",
+            "close",
+            "high",
+            "low",
+            "volume",
+            "turnover"
+        ]
     )
 
-    # FIXED: Added "time" to numeric coercion to prevent string parsing errors
-    for c in ["time","open","close","high","low","volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    # ========================================================
+    # IMPORTANT TIMESTAMP FIX
+    # KuCoin /market/candles returns UNIX timestamp in seconds
+    # ========================================================
+
+    df["time"] = pd.to_numeric(
+        df["time"],
+        errors="coerce"
+    )
+
+    df = df.dropna(subset=["time"])
 
     df["time"] = pd.to_datetime(
-        df["time"], unit="ms", utc=True
+        df["time"],
+        unit="s",
+        utc=True
     )
 
-    df = df.sort_values("time").drop_duplicates("time").reset_index(drop=True)
+    # Numeric coercion
+    for col in [
+        "open",
+        "close",
+        "high",
+        "low",
+        "volume",
+        "turnover"
+    ]:
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
+
+    df = df.dropna(
+        subset=[
+            "open",
+            "close",
+            "high",
+            "low",
+            "volume"
+        ]
+    )
+
+    # Remove duplicates
+    df = df.drop_duplicates(
+        subset=["time"]
+    )
+
+    # Chronological order
+    df = df.sort_values(
+        "time"
+    ).reset_index(drop=True)
+
+    # --------------------------------------------------------
+    # Drop incomplete current 4H candle
+    # --------------------------------------------------------
 
     now = pd.Timestamp.now(tz="UTC")
-    if len(df):
-        last_end = df["time"].iloc[-1] + pd.Timedelta(hours=4)
-        if now < last_end:
+
+    if len(df) > 0:
+        last_time = df.iloc[-1]["time"]
+
+        if last_time + pd.Timedelta(hours=4) > now:
             df = df.iloc[:-1].copy()
 
-    if len(df) < 100:
-        return None
+    if len(df) == 0:
+        return None, 0
 
     days = (
-        df["time"].iloc[-1] - df["time"].iloc[0]
+        df["time"].iloc[-1] -
+        df["time"].iloc[0]
     ).total_seconds() / 86400
-
-    prev_close = df["close"].shift(1)
-
-    tr1 = df["high"] - df["low"]
-    tr2 = (df["high"] - prev_close).abs()
-    tr3 = (df["low"] - prev_close).abs()
-
-    df["tr"] = pd.concat(
-        [tr1, tr2, tr3], axis=1
-    ).max(axis=1)
-
-    df["atr"] = df["tr"].rolling(
-        ATR_LEN,
-        min_periods=ATR_LEN
-    ).mean()
-
-    df["vol_ma"] = df["volume"].rolling(
-        VOL_LEN,
-        min_periods=VOL_LEN
-    ).mean()
 
     return df, days
 
 
-def daily_bias(df):
-    d = df.set_index("time").resample("1D").agg({
-        "close": "last"
-    }).dropna()
+# ============================================================
+# INDICATORS
+# ============================================================
 
-    d["ema"] = d["close"].ewm(
-        span=DAILY_EMA,
-        adjust=False
-    ).mean()
+def add_indicators(df):
 
-    return d
+    df = df.copy()
 
+    # --------------------------------------------------------
+    # True Range / ATR
+    # --------------------------------------------------------
 
-def build_bias(df):
-    d = daily_bias(df)
-    bias = {}
+    prev_close = df["close"].shift(1)
 
-    for t, row in d.iterrows():
-        bias[t] = (
-            "LONG"
-            if row["close"] > row["ema"]
-            else "SHORT"
+    tr1 = df["high"] - df["low"]
+
+    tr2 = (
+        df["high"] -
+        prev_close
+    ).abs()
+
+    tr3 = (
+        df["low"] -
+        prev_close
+    ).abs()
+
+    df["TR"] = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
+
+    df["ATR"] = (
+        df["TR"]
+        .rolling(ATR_LEN)
+        .mean()
+    )
+
+    # --------------------------------------------------------
+    # Volume average
+    # --------------------------------------------------------
+
+    df["VOL_MA"] = (
+        df["volume"]
+        .rolling(VOL_LEN)
+        .mean()
+    )
+
+    # --------------------------------------------------------
+    # Daily EMA20 bias
+    # --------------------------------------------------------
+
+    daily = (
+        df.set_index("time")
+        .resample("1D")
+        .agg({
+            "close": "last"
+        })
+        .dropna()
+    )
+
+    daily["EMA20"] = (
+        daily["close"]
+        .ewm(
+            span=DAILY_EMA,
+            adjust=False
         )
+        .mean()
+    )
 
-    return bias
+    daily["DAILY_BIAS"] = np.where(
+        daily["close"] > daily["EMA20"],
+        "LONG",
+        "SHORT"
+    )
+
+    # Map daily bias back to each 4H candle
+    daily_bias = daily["DAILY_BIAS"].reindex(
+        df["time"].dt.floor("D"),
+        method="ffill"
+    )
+
+    df["DAILY_BIAS"] = (
+        daily_bias
+        .to_numpy()
+    )
+
+    return df
 
 
-def get_bias(bias, ts):
-    day = pd.Timestamp(ts).floor("D")
-    return bias.get(day)
-
+# ============================================================
+# SIGNAL DETECTION
+# ============================================================
 
 def detect_events(df):
+
     events = []
 
-    if len(df) <= BREAKOUT + ATR_LEN + VOL_LEN:
-        return events
+    df = df.copy()
 
-    for i in range(
-        max(BREAKOUT, ATR_LEN, VOL_LEN),
-        len(df)
-    ):
-        close = float(df["close"].iloc[i])
-        atr = float(df["atr"].iloc[i])
-        vol = float(df["volume"].iloc[i])
-        vol_ma = float(df["vol_ma"].iloc[i])
+    # Previous 20-bar Donchian boundaries
+    df["DONCHIAN_HIGH"] = (
+        df["high"]
+        .shift(1)
+        .rolling(BREAKOUT)
+        .max()
+    )
 
-        if not np.isfinite(atr) or atr <= 0:
+    df["DONCHIAN_LOW"] = (
+        df["low"]
+        .shift(1)
+        .rolling(BREAKOUT)
+        .min()
+    )
+
+    for i in range(len(df)):
+
+        # Need enough history
+        if i < max(
+            BREAKOUT,
+            ATR_LEN,
+            VOL_LEN
+        ):
             continue
 
-        if not np.isfinite(vol_ma) or vol_ma <= 0:
+        atr = df.iloc[i]["ATR"]
+        vol_ma = df.iloc[i]["VOL_MA"]
+
+        if pd.isna(atr) or atr <= 0:
             continue
 
-        prior_high = float(
-            df["high"].iloc[i-BREAKOUT:i].max()
-        )
-
-        prior_low = float(
-            df["low"].iloc[i-BREAKOUT:i].min()
-        )
-
-        long_break = close > prior_high
-        short_break = close < prior_low
-
-        volume_ok = vol > vol_ma
-
-        if not volume_ok:
+        if pd.isna(vol_ma) or vol_ma <= 0:
             continue
 
-        if long_break:
+        close = df.iloc[i]["close"]
+        high = df.iloc[i]["high"]
+        low = df.iloc[i]["low"]
+        volume = df.iloc[i]["volume"]
+
+        previous_high = df.iloc[i]["DONCHIAN_HIGH"]
+        previous_low = df.iloc[i]["DONCHIAN_LOW"]
+
+        daily_bias = df.iloc[i]["DAILY_BIAS"]
+
+        # ----------------------------------------------------
+        # LONG
+        # ----------------------------------------------------
+
+        if (
+            close > previous_high
+            and volume > vol_ma
+            and daily_bias == "LONG"
+        ):
+
             events.append({
                 "idx": i,
-                "time": df["time"].iloc[i],
+                "time": df.iloc[i]["time"],
                 "dir": "LONG",
                 "entry": close,
                 "atr": atr
             })
 
-        elif short_break:
+        # ----------------------------------------------------
+        # SHORT
+        # ----------------------------------------------------
+
+        elif (
+            close < previous_low
+            and volume > vol_ma
+            and daily_bias == "SHORT"
+        ):
+
             events.append({
                 "idx": i,
-                "time": df["time"].iloc[i],
+                "time": df.iloc[i]["time"],
                 "dir": "SHORT",
                 "entry": close,
                 "atr": atr
@@ -219,342 +387,465 @@ def detect_events(df):
     return events
 
 
-def simulate(df, event, tp_mult):
-    i = event["idx"]
-    entry = event["entry"]
-    atr = event["atr"]
+# ============================================================
+# TRADE SIMULATION
+# ============================================================
+
+def simulate_trade(
+    df,
+    event,
+    tp_r
+):
+
+    idx = event["idx"]
     direction = event["dir"]
 
+    entry = float(event["entry"])
+    atr = float(event["atr"])
+
     if direction == "LONG":
+
         sl = entry - atr
-        tp = entry + atr * tp_mult
+        tp = entry + tp_r * atr
+
     else:
+
         sl = entry + atr
-        tp = entry - atr * tp_mult
+        tp = entry - tp_r * atr
 
-    last = i + HOLD
+    last_idx = min(
+        idx + HOLD,
+        len(df) - 1
+    )
 
-    if last >= len(df):
-        return {
-            "status": "OPEN_AT_DATASET_END",
-            "gross_r": None,
-            "net_r": None,
-            "ambiguous": False
-        }
+    exit_idx = None
+    exit_price = None
+    outcome = None
 
-    cost_pct = (FEE_PCT + SLIPPAGE_PCT) / 100.0
-    risk_pct = atr / entry
+    for j in range(
+        idx + 1,
+        last_idx + 1
+    ):
 
-    if risk_pct <= 0:
-        return {
-            "status": "INVALID",
-            "gross_r": None,
-            "net_r": None,
-            "ambiguous": False
-        }
+        candle = df.iloc[j]
 
-    cost_r = cost_pct / risk_pct
+        high = float(candle["high"])
+        low = float(candle["low"])
 
-    for j in range(i + 1, i + HOLD + 1):
-
-        high = float(df["high"].iloc[j])
-        low = float(df["low"].iloc[j])
+        # ----------------------------------------------------
+        # LONG
+        # ----------------------------------------------------
 
         if direction == "LONG":
+
             hit_sl = low <= sl
             hit_tp = high >= tp
+
+            # Same-candle SL-first
+            if hit_sl:
+                exit_idx = j
+                exit_price = sl
+                outcome = "SL"
+                break
+
+            if hit_tp:
+                exit_idx = j
+                exit_price = tp
+                outcome = "TP"
+                break
+
+        # ----------------------------------------------------
+        # SHORT
+        # ----------------------------------------------------
+
         else:
+
             hit_sl = high >= sl
             hit_tp = low <= tp
 
-        if hit_sl and hit_tp:
+            # Same-candle SL-first
+            if hit_sl:
+                exit_idx = j
+                exit_price = sl
+                outcome = "SL"
+                break
+
+            if hit_tp:
+                exit_idx = j
+                exit_price = tp
+                outcome = "TP"
+                break
+
+    # --------------------------------------------------------
+    # TIMEOUT
+    # --------------------------------------------------------
+
+    if exit_idx is None:
+
+        if idx + HOLD >= len(df):
             return {
-                "status": "SL",
-                "gross_r": -1.0,
-                "net_r": -1.0 - cost_r,
-                "ambiguous": True
+                "status": "OPEN_AT_DATASET_END"
             }
 
-        if hit_sl:
-            return {
-                "status": "SL",
-                "gross_r": -1.0,
-                "net_r": -1.0 - cost_r,
-                "ambiguous": False
-            }
+        exit_idx = idx + HOLD
+        exit_price = float(
+            df.iloc[exit_idx]["close"]
+        )
 
-        if hit_tp:
-            return {
-                "status": "TP",
-                "gross_r": tp_mult,
-                "net_r": tp_mult - cost_r,
-                "ambiguous": False
-            }
+        outcome = "TIMEOUT"
+
+    # --------------------------------------------------------
+    # Gross R
+    # --------------------------------------------------------
+
+    risk = atr
+
+    if direction == "LONG":
+        gross_r = (
+            exit_price - entry
+        ) / risk
+    else:
+        gross_r = (
+            entry - exit_price
+        ) / risk
+
+    # --------------------------------------------------------
+    # Fees + slippage
+    # --------------------------------------------------------
+
+    total_cost_pct = (
+        FEE_PCT + SLIPPAGE_PCT
+    ) / 100.0
+
+    # Approximate round-trip percentage cost
+    round_trip_cost = (
+        2 * total_cost_pct
+    )
+
+    # Convert percentage cost to R
+    cost_r = (
+        entry * round_trip_cost
+    ) / risk
+
+    net_r = gross_r - cost_r
 
     return {
-        "status": "TIMEOUT",
-        "gross_r": 0.0,
-        "net_r": -cost_r,
-        "ambiguous": False
+        "status": "TRADED",
+        "entry_time": event["time"],
+        "exit_time": df.iloc[exit_idx]["time"],
+        "dir": direction,
+        "outcome": outcome,
+        "gross_r": gross_r,
+        "net_r": net_r
     }
 
 
-def max_drawdown(values):
-    if not values:
-        return 0.0
+# ============================================================
+# METRICS
+# ============================================================
 
-    eq = np.cumsum(values)
-    peak = np.maximum.accumulate(eq)
-    dd = eq - peak
+def calc_metrics(trades):
 
-    return float(dd.min())
+    if not trades:
 
+        return {
+            "n_traded": 0,
+            "n_open_at_end": 0,
+            "win_rate": 0,
+            "gross_exp": 0,
+            "net_exp": 0,
+            "gross_total": 0,
+            "net_total": 0,
+            "gross_pf": 0,
+            "net_pf": 0,
+            "gross_max_dd": 0,
+            "net_max_dd": 0
+        }
+
+    gross = np.array(
+        [x["gross_r"] for x in trades],
+        dtype=float
+    )
+
+    net = np.array(
+        [x["net_r"] for x in trades],
+        dtype=float
+    )
+
+    wins = np.sum(
+        gross > 0
+    )
+
+    gross_positive = gross[
+        gross > 0
+    ].sum()
+
+    gross_negative = abs(
+        gross[gross < 0].sum()
+    )
+
+    net_positive = net[
+        net > 0
+    ].sum()
+
+    net_negative = abs(
+        net[net < 0].sum()
+    )
+
+    gross_pf = (
+        gross_positive / gross_negative
+        if gross_negative > 0
+        else np.inf
+    )
+
+    net_pf = (
+        net_positive / net_negative
+        if net_negative > 0
+        else np.inf
+    )
+
+    gross_curve = np.cumsum(gross)
+    net_curve = np.cumsum(net)
+
+    gross_peak = np.maximum.accumulate(
+        gross_curve
+    )
+
+    net_peak = np.maximum.accumulate(
+        net_curve
+    )
+
+    gross_dd = (
+        gross_curve -
+        gross_peak
+    )
+
+    net_dd = (
+        net_curve -
+        net_peak
+    )
+
+    return {
+        "n_traded": len(trades),
+        "n_open_at_end": 0,
+        "win_rate": wins / len(trades),
+        "gross_exp": gross.mean(),
+        "net_exp": net.mean(),
+        "gross_total": gross.sum(),
+        "net_total": net.sum(),
+        "gross_pf": gross_pf,
+        "net_pf": net_pf,
+        "gross_max_dd": gross_dd.min(),
+        "net_max_dd": net_dd.min()
+    }
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
 
     print(
-        "SETUP V4 — CANDIDATE 4 — DONCHIAN VOLATILITY BREAKOUT"
+        "SETUP V4 — CANDIDATE 4 — "
+        "DONCHIAN VOLATILITY BREAKOUT"
     )
+
     print(
-        "Frozen: 4H | breakout=20 | ATR=20 | volume=20 | "
-        "daily EMA20 bias | HOLD=30 | Long/Short"
+        "Frozen: 4H | breakout=20 | ATR=20 | "
+        "volume=20 | daily EMA20 bias | "
+        "HOLD=30 | Long/Short"
     )
 
     data = {}
 
-    for sym in SYMS:
-        result = fetch_symbol(sym)
+    loaded = 0
+    sufficient = 0
 
-        if result is None:
+    # --------------------------------------------------------
+    # Fetch all symbols
+    # --------------------------------------------------------
+
+    for symbol in SYMS:
+
+        df, days = fetch_history(
+            symbol,
+            TARGET_DAYS
+        )
+
+        if df is None:
             continue
 
-        df, days = result
+        loaded += 1
 
-        data[sym] = {
+        data[symbol] = {
             "df": df,
             "days": days
         }
 
+        if days >= MIN_DAYS:
+            sufficient += 1
+
+    print(
+        f"DATA {loaded} loaded; "
+        f"{sufficient} sufficient"
+    )
+
+    if sufficient == 0:
+
+        print(
+            "NO SUFFICIENT DATA"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # Filter usable symbols
+    # --------------------------------------------------------
+
     usable = {
-        s: v["df"]
-        for s, v in data.items()
-        if v["days"] >= MIN_DAYS
+        symbol: item
+        for symbol, item in data.items()
+        if item["days"] >= MIN_DAYS
     }
 
-    print(
-        f"DATA {len(data)} loaded; "
-        f"{len(usable)} sufficient"
-    )
+    all_results = {}
 
-    if not usable:
-        print("NO SUFFICIENT DATA")
-        return
+    # --------------------------------------------------------
+    # Run strategy
+    # --------------------------------------------------------
 
-    common = None
+    for symbol, item in usable.items():
 
-    for df in usable.values():
-        ts = set(df["time"])
-        common = ts if common is None else common & ts
+        df = item["df"]
 
-    common = sorted(common)
-
-    if not common:
-        print("NO COMMON TIMESTAMPS")
-        return
-
-    print(
-        f"COMMON_TIMESTAMPS {len(common)} "
-        f"{common[0]} -> {common[-1]}"
-    )
-
-    biases = {
-        s: build_bias(df)
-        for s, df in usable.items()
-    }
-
-    all_events = []
-
-    last_allowed = common[-1] - pd.Timedelta(
-        hours=4 * HOLD
-    )
-
-    for sym, df in usable.items():
+        df = add_indicators(df)
 
         events = detect_events(df)
 
-        for e in events:
+        # Exclude final HOLD candles so every event
+        # has complete forward data.
+        max_event_idx = len(df) - HOLD - 1
 
-            if e["time"] not in common:
-                continue
-
-            if e["time"] > last_allowed:
-                continue
-
-            bias = get_bias(
-                biases[sym],
-                e["time"]
-            )
-
-            if bias != e["dir"]:
-                continue
-
-            all_events.append({
-                "sym": sym,
-                **e
-            })
-
-    all_events.sort(
-        key=lambda x: (x["time"], x["sym"])
-    )
-
-    print(
-        f"DETECTED_EVENTS {len(all_events)}"
-    )
-
-    for tp_mult in TP_SCENARIOS:
-
-        results = []
-
-        for e in all_events:
-
-            df = usable[e["sym"]]
-
-            r = simulate(
-                df,
-                e,
-                tp_mult
-            )
-
-            if r["status"] == "INVALID":
-                continue
-
-            results.append({
-                "sym": e["sym"],
-                **r
-            })
-
-        traded = [
-            x for x in results
-            if x["status"] in
-            ("TP", "SL", "TIMEOUT")
+        events = [
+            e for e in events
+            if e["idx"] <= max_event_idx
         ]
 
-        tp = sum(
-            x["status"] == "TP"
-            for x in traded
-        )
-
-        sl = sum(
-            x["status"] == "SL"
-            for x in traded
-        )
-
-        timeout = sum(
-            x["status"] == "TIMEOUT"
-            for x in traded
-        )
-
-        ambiguous = sum(
-            x["ambiguous"]
-            for x in traded
-        )
-
-        gross = [
-            x["gross_r"]
-            for x in traded
-        ]
-
-        net = [
-            x["net_r"]
-            for x in traded
-        ]
-
-        gross_total = sum(gross)
-        net_total = sum(net)
-
-        gross_exp = (
-            gross_total / len(gross)
-            if gross else 0.0
-        )
-
-        net_exp = (
-            net_total / len(net)
-            if net else 0.0
-        )
-
-        gross_profit = sum(
-            x for x in gross if x > 0
-        )
-
-        gross_loss = -sum(
-            x for x in gross if x < 0
-        )
-
-        net_profit = sum(
-            x for x in net if x > 0
-        )
-
-        net_loss = -sum(
-            x for x in net if x < 0
-        )
-
-        gross_pf = (
-            gross_profit / gross_loss
-            if gross_loss > 0 else float("inf")
-        )
-
-        net_pf = (
-            net_profit / net_loss
-            if net_loss > 0 else float("inf")
-        )
-
-        wr = (
-            tp / len(traded) * 100
-            if traded else 0.0
-        )
-
-        dd = max_drawdown(net)
-
-        print()
         print(
-            f"TP {tp_mult:g} R | "
-            f"TRADED {len(traded)} "
-            f"TP {tp} SL {sl} TIMEOUT {timeout} "
-            f"OPEN_AT_END 0 AMBIGUOUS {ambiguous}"
+            f"{symbol}: "
+            f"{len(df)} candles | "
+            f"{item['days']:.0f}d | "
+            f"{len(events)} events"
+        )
+
+        for tp_r in TP_SCENARIOS:
+
+            trades = []
+
+            for event in events:
+
+                result = simulate_trade(
+                    df,
+                    event,
+                    tp_r
+                )
+
+                if result["status"] == "TRADED":
+                    trades.append(result)
+
+            metrics = calc_metrics(
+                trades
+            )
+
+            all_results.setdefault(
+                tp_r,
+                []
+            ).extend(trades)
+
+            print(
+                f"  TP {tp_r}R | "
+                f"traded={metrics['n_traded']} | "
+                f"WR={metrics['win_rate']:.3f} | "
+                f"GrossExp={metrics['gross_exp']:.4f}R | "
+                f"NetExp={metrics['net_exp']:.4f}R"
+            )
+
+    # --------------------------------------------------------
+    # Portfolio summary
+    # --------------------------------------------------------
+
+    print("")
+    print("===== PORTFOLIO SUMMARY =====")
+
+    for tp_r in TP_SCENARIOS:
+
+        trades = all_results.get(
+            tp_r,
+            []
+        )
+
+        metrics = calc_metrics(
+            trades
+        )
+
+        print("")
+        print(
+            f"TP {tp_r}R"
         )
 
         print(
-            f"GROSS_EXP {gross_exp:.4f} "
-            f"NET_EXP {net_exp:.4f} "
-            f"GROSS_TOTAL {gross_total:.2f} "
-            f"NET_TOTAL {net_total:.2f} "
-            f"PF {gross_pf:.3f} "
-            f"NET_PF {net_pf:.3f} "
-            f"MAXDD {dd:.2f}"
+            f"n_traded       = "
+            f"{metrics['n_traded']}"
         )
 
-        print(f"WR {wr:.2f}%")
+        print(
+            f"WR             = "
+            f"{metrics['win_rate']:.4f}"
+        )
 
-        print("PER_SYMBOL")
+        print(
+            f"Gross Exp      = "
+            f"{metrics['gross_exp']:.4f}R"
+        )
 
-        by_symbol = {}
+        print(
+            f"Net Exp        = "
+            f"{metrics['net_exp']:.4f}R"
+        )
 
-        for x in traded:
-            sym = x["sym"]
+        print(
+            f"Gross Total    = "
+            f"{metrics['gross_total']:.2f}R"
+        )
 
-            if sym not in by_symbol:
-                by_symbol[sym] = {}
+        print(
+            f"Net Total      = "
+            f"{metrics['net_total']:.2f}R"
+        )
 
-            status = x["status"]
-            by_symbol[sym][status] = (
-                by_symbol[sym].get(status, 0) + 1
-            )
+        print(
+            f"Gross PF       = "
+            f"{metrics['gross_pf']:.3f}"
+        )
 
-        for sym in sorted(by_symbol):
-            print(sym, by_symbol[sym])
+        print(
+            f"Net PF         = "
+            f"{metrics['net_pf']:.3f}"
+        )
 
-    print()
-    print("DONE — send complete Test RUN output for review")
+        print(
+            f"Gross MaxDD    = "
+            f"{metrics['gross_max_dd']:.2f}R"
+        )
+
+        print(
+            f"Net MaxDD      = "
+            f"{metrics['net_max_dd']:.2f}R"
+        )
+
+    print("")
+    print("===== TEST RUN COMPLETE =====")
 
 
 if __name__ == "__main__":
