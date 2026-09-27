@@ -78,24 +78,21 @@ def fetch_symbol(sym):
     if len(rows) < 100:
         return None
 
-    # KuCoin format:
-    # [time, open, close, high, low, volume, turnover]
     df = pd.DataFrame(
         rows,
         columns=["time","open","close","high","low","volume","turnover"]
     )
 
-    for c in ["open","close","high","low","volume"]:
+    # FIXED: Added "time" to numeric coercion to prevent string parsing errors
+    for c in ["time","open","close","high","low","volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # FIXED: unit changed from "s" to "ms" for KuCoin timestamp
     df["time"] = pd.to_datetime(
         df["time"], unit="ms", utc=True
     )
 
     df = df.sort_values("time").drop_duplicates("time").reset_index(drop=True)
 
-    # Remove current incomplete 4H candle
     now = pd.Timestamp.now(tz="UTC")
     if len(df):
         last_end = df["time"].iloc[-1] + pd.Timedelta(hours=4)
@@ -109,7 +106,6 @@ def fetch_symbol(sym):
         df["time"].iloc[-1] - df["time"].iloc[0]
     ).total_seconds() / 86400
 
-    # ATR using True Range
     prev_close = df["close"].shift(1)
 
     tr1 = df["high"] - df["low"]
@@ -148,7 +144,6 @@ def daily_bias(df):
 
 def build_bias(df):
     d = daily_bias(df)
-
     bias = {}
 
     for t, row in d.iterrows():
