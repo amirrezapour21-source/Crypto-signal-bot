@@ -1,20 +1,10 @@
 # CANDIDATE 6 — 5-FOLD WALK-FORWARD VALIDATION
-import math
 import urllib.request
 import json
 import numpy as np
 import pandas as pd
 
-# Frozen Candidate 6 Spec
-TF = '4hour'
-BB_PERIOD = 20
-BB_STD = 2.0
-RSI_PERIOD = 14
-RSI_LONG = 30.0
-RSI_SHORT = 70.0
-ATR_PERIOD = 20
-ADX_PERIOD = 14
-ADX_MAX = 30.0
+TF = '4h'
 SL_ATR_MULT = 1.25
 HOLD_LIMIT = 30
 TOTAL_COST_R = 0.003
@@ -28,7 +18,7 @@ SYMBOLS = [
 ]
 
 def fetch_candles(symbol):
-    url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol}&type={TF}"
+    url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol}&type=4hour"
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
@@ -44,17 +34,12 @@ def fetch_candles(symbol):
         pass
     return pd.DataFrame()
 
-def apply_indicators(df):
-    df['bb_mid'] = df['close'].rolling(BB_PERIOD).mean()
-    df['bb_std'] = df['close'].rolling(BB_PERIOD).std()
-    df['bb_upper'] = df['bb_mid'] + (BB_STD * df['bb_std'])
-    df['bb_lower'] = df['bb_mid'] - (BB_STD * df['bb_std'])
-    
+def compute_indicators(df):
     delta = df['close'].diff()
     gain = delta.where(delta > 0, 0.0)
     loss = (-delta).where(delta < 0, 0.0)
-    avg_gain = gain.rolling(RSI_PERIOD).mean()
-    avg_loss = loss.rolling(RSI_PERIOD).mean()
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     df['rsi'] = 100 - (100 / (1 + rs))
     
@@ -62,10 +47,7 @@ def apply_indicators(df):
     tr2 = (df['high'] - df['close'].shift()).abs()
     tr3 = (df['low'] - df['close'].shift()).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    df['atr'] = tr.rolling(ATR_PERIOD).mean()
-    
-    # ADX simplification placeholder
-    df['adx'] = 20.0
+    df['atr'] = tr.rolling(20).mean()
     return df
 
 print("========================================================================")
@@ -75,8 +57,8 @@ print("========================================================================"
 data_cache = {}
 for s in SYMBOLS:
     df = fetch_candles(s)
-    if not df.empty and len(df) >= 200:
-        data_cache[s] = apply_indicators(df)
+    if not df.empty and len(df) > 100:
+        data_cache[s] = compute_indicators(df)
 
 folds = [
     (0.0, 0.50, 0.50, 0.60),
@@ -90,7 +72,7 @@ fold_summaries = []
 
 for idx, (is_start, is_end, oos_start, oos_end) in enumerate(folds, 1):
     fold_trades = []
-    open_at_fold_end_count = 0
+    open_count = 0
     
     for s, df in data_cache.items():
         n = len(df)
@@ -102,8 +84,8 @@ for idx, (is_start, is_end, oos_start, oos_end) in enumerate(folds, 1):
             if pd.isna(row['rsi']) or pd.isna(row['atr']):
                 continue
                 
-            is_long = row['rsi'] <= RSI_LONG
-            is_short = row['rsi'] >= RSI_SHORT
+            is_long = row['rsi'] <= 30.0
+            is_short = row['rsi'] >= 70.0
             
             if not is_long and not is_short:
                 continue
@@ -137,7 +119,7 @@ for idx, (is_start, is_end, oos_start, oos_end) in enumerate(folds, 1):
                         break
             if is_open:
                 outcome = -TOTAL_COST_R
-                open_at_fold_end_count += 1
+                open_count += 1
                 
             fold_trades.append(outcome)
             
@@ -155,7 +137,7 @@ for idx, (is_start, is_end, oos_start, oos_end) in enumerate(folds, 1):
     
     print(f"\n--- OOS FOLD {idx} ({oos_start*100:.0f}%-{oos_end*100:.0f}%) ---")
     print(f"traded           = {traded}")
-    print(f"open_at_fold_end = {open_at_fold_end_count}")
+    print(f"open_at_fold_end = {open_count}")
     print(f"WR               = {wr:.4f}")
     print(f"NetExp           = {net_exp:+.4f}R")
     print(f"NetPF            = {net_pf:.3f}")
