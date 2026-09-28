@@ -2162,5 +2162,39 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "CRO_1790634020",
+    "symbol": "CRO",
+    "coin_id": "crypto-com-chain",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.06929725391594124,
+    "sl": 0.07079092219459598,
+    "tp1": 0.06529573832598368,
+    "tp2": 0.06050145467711983,
+    "signal_time": "2026-09-28T22:20:20.151785+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "CC_1790634020",
+    "symbol": "CC",
+    "coin_id": "canton-network",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 0.12862,
+    "sl": 0.1276726633699889,
+    "tp1": 0.13451522861100082,
+    "tp2": 0.13997238176432641,
+    "signal_time": "2026-09-28T22:20:20.154549+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
