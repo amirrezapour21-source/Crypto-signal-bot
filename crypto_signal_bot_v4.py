@@ -2,53 +2,41 @@
 # SETUP V4 — CANDIDATE 6
 # VOLATILITY EXHAUSTION MEAN REVERSION
 # ============================================================
+# Stage:
+# 730D DATA FIX + IS/OOS VALIDATION
 #
-# Research-only strategy.
-#
-# Frozen research specification:
-#   TF              = 4H
-#   BB_PERIOD       = 20
-#   BB_STD          = 2.0
-#   RSI_PERIOD      = 14
-#   RSI_LONG        = 30
-#   RSI_SHORT       = 70
-#   ATR_PERIOD      = 20
-#   ADX_PERIOD      = 14
-#   ADX_MAX         = 30
-#   SL_ATR          = 1.25
-#   HOLD_BARS       = 30
-#
-# Entry:
-#   LONG:
-#       previous close < previous lower BB
+# Frozen Strategy:
+# 4H
+# BB(20, 2.0)
+# RSI(14)
+# ATR(20)
+# ADX(14)
+# ADX < 30
+# Long: previous close < previous lower BB
 #       current close >= current lower BB
 #       previous RSI <= 30
 #       current ADX < 30
+# Short: inverse
 #
-#   SHORT:
-#       previous close > previous upper BB
-#       current close <= current upper BB
-#       previous RSI >= 70
-#       current ADX < 30
-#
-# Execution:
-#   entry = signal candle close
-#   SL = 1.25 ATR
-#   TP = 1 / 1.5 / 2 / 3 R
-#   same-candle SL-first
-#   timeout = 0R
-#   incomplete final HOLD window = OPEN_AT_DATASET_END
+# Risk:
+# SL = 1.25 ATR
+# TP = 1 / 1.5 / 2 / 3 R
+# HOLD = 30 candles
 #
 # Costs:
-#   fee = 0.10%
-#   slippage = 0.05%
+# Fee = 0.10% per side
+# Slippage = 0.05% per side
+# Total cost = 0.30% = 0.003R
 #
 # IMPORTANT:
-#   No parameter optimization.
-#   No post-hoc filters.
-#   No look-ahead.
-#   IS discovery only.
-#
+# - No parameter optimization
+# - No short-only selection
+# - No additional filters
+# - No overlap lock
+# - Causal detection
+# - Same-candle SL-first
+# - Entry candle is NOT scanned for exits
+# - Last incomplete HOLD => OPEN_AT_DATASET_END
 # ============================================================
 
 import time
@@ -56,6 +44,8 @@ import math
 import requests
 import numpy as np
 import pandas as pd
+from datetime import datetime, timezone
+
 
 # ============================================================
 # CONFIG
@@ -63,6 +53,38 @@ import pandas as pd
 
 BASE_URL = "https://api.kucoin.com"
 
+INTERVAL = "4hour"
+INTERVAL_MS = 4 * 60 * 60 * 1000
+
+TARGET_DAYS = 730
+TARGET_CANDLES = int(TARGET_DAYS * 24 / 4)
+
+PAGE_LIMIT = 1500
+
+BB_PERIOD = 20
+BB_STD = 2.0
+
+RSI_PERIOD = 14
+ATR_PERIOD = 20
+ADX_PERIOD = 14
+
+ADX_MAX = 30.0
+RSI_LONG_MAX = 30.0
+RSI_SHORT_MIN = 70.0
+
+SL_ATR = 1.25
+
+HOLD_BARS = 30
+
+FEE_PER_SIDE = 0.001
+SLIPPAGE_PER_SIDE = 0.0005
+
+TOTAL_COST_R = 2 * (FEE_PER_SIDE + SLIPPAGE_PER_SIDE)
+
+TP_MULTIPLIERS = [1.0, 1.5, 2.0, 3.0]
+
+# Frozen valid universe for Candidate 6.
+# TON / MATIC / MKR were rejected by current KuCoin API.
 SYMBOLS = [
     "BTC-USDT",
     "ETH-USDT",
@@ -94,245 +116,232 @@ SYMBOLS = [
     "PEPE-USDT",
     "SHIB-USDT",
     "TRX-USDT",
-    "TON-USDT",
     "HBAR-USDT",
     "VET-USDT",
     "ALGO-USDT",
-    "MATIC-USDT",
     "STX-USDT",
     "RUNE-USDT",
-    "MKR-USDT",
 ]
 
-# 4H
-KLINE_TYPE = "4hour"
-
-TARGET_DAYS = 730
-
-# Strategy
-BB_PERIOD = 20
-BB_STD = 2.0
-
-RSI_PERIOD = 14
-RSI_LONG = 30.0
-RSI_SHORT = 70.0
-
-ATR_PERIOD = 20
-
-ADX_PERIOD = 14
-ADX_MAX = 30.0
-
-SL_ATR = 1.25
-HOLD_BARS = 30
-
-TP_MULTIPLIERS = [1.0, 1.5, 2.0, 3.0]
-
-# Costs
-FEE_RATE = 0.0010
-SLIPPAGE_RATE = 0.0005
-
-# KuCoin limits
-KUCOIN_MAX_CANDLES = 1500
-
-REQUEST_SLEEP = 0.12
-REQUEST_TIMEOUT = 20
 
 # ============================================================
-# HTTP
+# HELPERS
 # ============================================================
 
-session = requests.Session()
+def utc_str(ms):
+    return datetime.fromtimestamp(
+        ms / 1000,
+        tz=timezone.utc
+    ).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def kucoin_get(endpoint, params=None, retries=5):
-    last_error = None
-
-    for attempt in range(retries):
-        try:
-            r = session.get(
-                BASE_URL + endpoint,
-                params=params,
-                timeout=REQUEST_TIMEOUT,
-            )
-
-            if r.status_code == 200:
-                payload = r.json()
-
-                if payload.get("code") == "200000":
-                    return payload.get("data", [])
-
-                last_error = RuntimeError(
-                    f"KuCoin API error: {payload}"
-                )
-
-            else:
-                last_error = RuntimeError(
-                    f"HTTP {r.status_code}: {r.text[:300]}"
-                )
-
-        except Exception as e:
-            last_error = e
-
-        time.sleep(1.0 + attempt)
-
-    raise last_error
+def safe_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return np.nan
 
 
 # ============================================================
-# DATA LAYER
+# KUCOIN DATA
 # ============================================================
+
+def fetch_kucoin_page(symbol, start_ms, end_ms):
+    url = f"{BASE_URL}/api/v1/market/candles"
+
+    params = {
+        "symbol": symbol,
+        "type": INTERVAL,
+        "startAt": int(start_ms / 1000),
+        "endAt": int(end_ms / 1000),
+    }
+
+    r = requests.get(url, params=params, timeout=30)
+    r.raise_for_status()
+
+    payload = r.json()
+
+    if payload.get("code") != "200000":
+        raise RuntimeError(
+            f"{symbol}: API error: {payload}"
+        )
+
+    return payload.get("data", [])
+
 
 def fetch_history(symbol, target_days=730):
     """
-    Fetch approximately target_days of 4H candles.
+    Robust chronological pagination.
 
-    KuCoin response:
-        [time, open, close, high, low, volume, turnover]
-
-    Data returned:
-        oldest -> newest
+    IMPORTANT:
+    We intentionally fetch old -> new windows.
+    This avoids the previous bug where repeatedly changing
+    startAt against 'now' returned the same latest 1500 candles.
     """
 
-    now = int(time.time())
-    start_at = now - int(target_days * 86400)
+    target_ms = target_days * 24 * 60 * 60 * 1000
 
-    rows = []
-    cursor_start = start_at
+    now_ms = int(time.time() * 1000)
 
-    max_iterations = 100
+    desired_start = now_ms - target_ms
 
-    for _ in range(max_iterations):
+    # Small safety margin around boundaries.
+    desired_start -= 2 * INTERVAL_MS
 
-        data = kucoin_get(
-            "/api/v1/market/candles",
-            {
-                "symbol": symbol,
-                "type": KLINE_TYPE,
-                "startAt": cursor_start,
-                "endAt": now,
-            },
+    all_rows = []
+
+    cursor = desired_start
+
+    pages = 0
+
+    while cursor < now_ms:
+        window_end = min(
+            cursor + (PAGE_LIMIT - 1) * INTERVAL_MS,
+            now_ms
         )
 
-        if not data:
+        rows = fetch_kucoin_page(
+            symbol,
+            cursor,
+            window_end
+        )
+
+        pages += 1
+
+        if not rows:
             break
 
-        rows.extend(data)
+        all_rows.extend(rows)
 
         parsed_times = []
 
-        for row in data:
+        for row in rows:
             try:
-                parsed_times.append(int(row[0]))
+                parsed_times.append(int(row[0]) * 1000)
             except Exception:
                 pass
 
         if not parsed_times:
             break
 
-        oldest = min(parsed_times)
+        newest = max(parsed_times)
 
-        # Prevent pagination stall
-        if oldest <= cursor_start:
+        # Hard anti-stall protection.
+        if newest < cursor:
             break
 
-        cursor_start = oldest - 4 * 3600
+        next_cursor = newest + INTERVAL_MS
 
-        # We already have enough data
-        if oldest <= start_at:
+        if next_cursor <= cursor:
             break
 
-        if len(rows) >= 10000:
+        cursor = next_cursor
+
+        # If we have passed now, stop.
+        if cursor >= now_ms:
             break
 
-        time.sleep(REQUEST_SLEEP)
+        time.sleep(0.08)
 
-    if not rows:
-        return pd.DataFrame()
+    if not all_rows:
+        raise RuntimeError(f"{symbol}: no data")
 
     records = []
 
-    for row in rows:
-        try:
-            ts = int(row[0])
+    for row in all_rows:
+        if len(row) < 6:
+            continue
 
-            records.append(
-                {
-                    "timestamp": ts,
-                    "open": float(row[1]),
-                    "close": float(row[2]),
-                    "high": float(row[3]),
-                    "low": float(row[4]),
-                    "volume": float(row[5]),
-                    "turnover": float(row[6]),
-                }
-            )
+        try:
+            ts = int(row[0]) * 1000
+
+            records.append({
+                "timestamp": ts,
+                "open": float(row[1]),
+                "close": float(row[2]),
+                "high": float(row[3]),
+                "low": float(row[4]),
+                "volume": float(row[5]),
+            })
+
         except Exception:
             continue
 
-    if not records:
-        return pd.DataFrame()
-
     df = pd.DataFrame(records)
+
+    if df.empty:
+        raise RuntimeError(f"{symbol}: parsed dataframe empty")
 
     df = df.drop_duplicates("timestamp")
     df = df.sort_values("timestamp").reset_index(drop=True)
 
-    # Remove candles outside requested range
-    df = df[df["timestamp"] >= start_at].copy()
+    # Remove current incomplete candle.
+    current_floor = (now_ms // INTERVAL_MS) * INTERVAL_MS
 
-    # --------------------------------------------------------
-    # Remove incomplete current candle
-    # --------------------------------------------------------
-
-    current_4h_start = (int(time.time()) // (4 * 3600)) * (4 * 3600)
-
-    df = df[df["timestamp"] < current_4h_start].copy()
+    df = df[df["timestamp"] < current_floor].copy()
 
     df = df.reset_index(drop=True)
 
-    return df
+    # Keep approximately target_days, but retain enough boundary
+    # data to guarantee causal indicators.
+    cutoff = now_ms - target_ms - 2 * INTERVAL_MS
+
+    df = df[df["timestamp"] >= cutoff].copy()
+
+    df = df.reset_index(drop=True)
+
+    if len(df) < 180:
+        raise RuntimeError(
+            f"{symbol}: insufficient history: {len(df)} candles"
+        )
+
+    return df, pages
 
 
 # ============================================================
 # DATA AUDIT
 # ============================================================
 
-def audit_data(df):
-    if df.empty:
-        return {
-            "sufficient": False,
-            "monotonic": False,
-            "no_duplicates": False,
-            "gap_count": None,
-            "days": 0.0,
-        }
+def audit_dataframe(df):
+    ts = df["timestamp"].astype(np.int64).values
 
-    ts = df["timestamp"].astype(np.int64)
+    monotonic = bool(np.all(np.diff(ts) > 0))
 
-    monotonic = bool(ts.is_monotonic_increasing)
-    no_duplicates = bool(ts.nunique() == len(ts))
+    duplicates = int(df["timestamp"].duplicated().sum())
 
-    diffs = ts.diff().dropna()
+    diffs = np.diff(ts)
 
-    expected = 4 * 3600
+    gap_count = int(
+        np.sum(diffs != INTERVAL_MS)
+    )
 
-    gap_count = int((diffs != expected).sum())
+    gap_examples = []
 
-    days = 0.0
+    bad_idx = np.where(diffs != INTERVAL_MS)[0]
 
-    if len(df) > 1:
-        days = float(
-            (ts.iloc[-1] - ts.iloc[0]) / 86400.0
-        )
+    for i in bad_idx[:5]:
+        gap_examples.append({
+            "from": utc_str(ts[i]),
+            "to": utc_str(ts[i + 1]),
+            "hours": round(
+                (ts[i + 1] - ts[i]) / 3600000,
+                2
+            )
+        })
 
-    sufficient = bool(days >= 180.0)
+    days = (
+        (df["timestamp"].iloc[-1]
+         - df["timestamp"].iloc[0])
+        / 86400000
+    )
 
     return {
-        "sufficient": sufficient,
-        "monotonic": monotonic,
-        "no_duplicates": no_duplicates,
-        "gap_count": gap_count,
+        "candles": len(df),
         "days": days,
+        "monotonic": monotonic,
+        "duplicates": duplicates,
+        "gap_count": gap_count,
+        "gap_examples": gap_examples,
     }
 
 
@@ -340,1238 +349,1201 @@ def audit_data(df):
 # INDICATORS
 # ============================================================
 
-def true_range(df):
+def calculate_indicators(df):
+    out = df.copy()
 
-    prev_close = df["close"].shift(1)
+    close = out["close"]
+    high = out["high"]
+    low = out["low"]
 
-    tr1 = df["high"] - df["low"]
+    # -------------------------
+    # Bollinger Bands
+    # -------------------------
 
-    tr2 = (df["high"] - prev_close).abs()
+    out["bb_mid"] = (
+        close
+        .rolling(BB_PERIOD)
+        .mean()
+    )
 
-    tr3 = (df["low"] - prev_close).abs()
+    out["bb_std"] = (
+        close
+        .rolling(BB_PERIOD)
+        .std(ddof=0)
+    )
 
-    return pd.concat(
-        [tr1, tr2, tr3],
-        axis=1,
-    ).max(axis=1)
+    out["bb_upper"] = (
+        out["bb_mid"]
+        + BB_STD * out["bb_std"]
+    )
 
+    out["bb_lower"] = (
+        out["bb_mid"]
+        - BB_STD * out["bb_std"]
+    )
 
-def calculate_atr(df, period=20):
+    # -------------------------
+    # RSI
+    # -------------------------
 
-    tr = true_range(df)
+    delta = close.diff()
 
-    # Wilder-style ATR using EWM alpha=1/period
-    atr = tr.ewm(
-        alpha=1.0 / period,
-        adjust=False,
-        min_periods=period,
-    ).mean()
-
-    return atr
-
-
-def calculate_rsi(df, period=14):
-
-    delta = df["close"].diff()
-
-    gain = delta.clip(lower=0.0)
-
-    loss = -delta.clip(upper=0.0)
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
     avg_gain = gain.ewm(
-        alpha=1.0 / period,
+        alpha=1 / RSI_PERIOD,
         adjust=False,
-        min_periods=period,
+        min_periods=RSI_PERIOD
     ).mean()
 
     avg_loss = loss.ewm(
-        alpha=1.0 / period,
+        alpha=1 / RSI_PERIOD,
         adjust=False,
-        min_periods=period,
+        min_periods=RSI_PERIOD
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+    rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    rsi = 100.0 - (100.0 / (1.0 + rs))
-
-    # Handle persistent gains/losses
-    rsi = rsi.where(
-        avg_loss != 0,
-        100.0,
+    out["rsi"] = 100 - (
+        100 / (1 + rs)
     )
 
-    rsi = rsi.where(
-        avg_gain != 0,
-        0.0,
+    # Handle pure up/down edge cases.
+    out.loc[
+        (avg_loss == 0) & (avg_gain > 0),
+        "rsi"
+    ] = 100
+
+    out.loc[
+        (avg_gain == 0) & (avg_loss > 0),
+        "rsi"
+    ] = 0
+
+    # -------------------------
+    # ATR
+    # -------------------------
+
+    prev_close = close.shift(1)
+
+    tr1 = high - low
+
+    tr2 = (high - prev_close).abs()
+
+    tr3 = (low - prev_close).abs()
+
+    tr = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
+
+    out["atr"] = (
+        tr
+        .ewm(
+            alpha=1 / ATR_PERIOD,
+            adjust=False,
+            min_periods=ATR_PERIOD
+        )
+        .mean()
     )
 
-    both_zero = (
-        (avg_gain == 0) &
-        (avg_loss == 0)
-    )
-
-    rsi = rsi.where(
-        ~both_zero,
-        50.0,
-    )
-
-    return rsi
-
-
-def calculate_adx(df, period=14):
-
-    high = df["high"]
-    low = df["low"]
-    close = df["close"]
+    # -------------------------
+    # ADX
+    # -------------------------
 
     up_move = high.diff()
 
     down_move = -low.diff()
 
+    plus_dm = np.where(
+        (up_move > down_move) & (up_move > 0),
+        up_move,
+        0.0
+    )
+
+    minus_dm = np.where(
+        (down_move > up_move) & (down_move > 0),
+        down_move,
+        0.0
+    )
+
     plus_dm = pd.Series(
-        np.where(
-            (up_move > down_move) &
-            (up_move > 0),
-            up_move,
-            0.0,
-        ),
-        index=df.index,
+        plus_dm,
+        index=out.index
     )
 
     minus_dm = pd.Series(
-        np.where(
-            (down_move > up_move) &
-            (down_move > 0),
-            down_move,
-            0.0,
-        ),
-        index=df.index,
+        minus_dm,
+        index=out.index
     )
 
-    tr = true_range(df)
-
-    atr = tr.ewm(
-        alpha=1.0 / period,
-        adjust=False,
-        min_periods=period,
-    ).mean()
-
-    plus_di = (
-        100.0 *
-        plus_dm.ewm(
-            alpha=1.0 / period,
+    atr_for_adx = (
+        tr
+        .ewm(
+            alpha=1 / ADX_PERIOD,
             adjust=False,
-            min_periods=period,
-        ).mean()
-        / atr
-    )
-
-    minus_di = (
-        100.0 *
-        minus_dm.ewm(
-            alpha=1.0 / period,
-            adjust=False,
-            min_periods=period,
-        ).mean()
-        / atr
-    )
-
-    denominator = (
-        plus_di + minus_di
-    ).replace(0.0, np.nan)
-
-    dx = (
-        100.0 *
-        (plus_di - minus_di).abs()
-        / denominator
-    )
-
-    adx = dx.ewm(
-        alpha=1.0 / period,
-        adjust=False,
-        min_periods=period,
-    ).mean()
-
-    return adx
-
-
-def add_indicators(df):
-
-    df = df.copy()
-
-    middle = (
-        df["close"]
-        .rolling(
-            BB_PERIOD,
-            min_periods=BB_PERIOD,
+            min_periods=ADX_PERIOD
         )
         .mean()
     )
 
-    std = (
-        df["close"]
-        .rolling(
-            BB_PERIOD,
-            min_periods=BB_PERIOD,
+    plus_di = (
+        100
+        * plus_dm.ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
+        ).mean()
+        / atr_for_adx.replace(0, np.nan)
+    )
+
+    minus_di = (
+        100
+        * minus_dm.ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
+        ).mean()
+        / atr_for_adx.replace(0, np.nan)
+    )
+
+    dx = (
+        100
+        * (plus_di - minus_di).abs()
+        / (plus_di + minus_di).replace(0, np.nan)
+    )
+
+    out["adx"] = (
+        dx
+        .ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
         )
-        .std(ddof=0)
+        .mean()
     )
 
-    df["bb_mid"] = middle
-    df["bb_upper"] = middle + BB_STD * std
-    df["bb_lower"] = middle - BB_STD * std
-
-    df["rsi"] = calculate_rsi(
-        df,
-        RSI_PERIOD,
-    )
-
-    df["atr"] = calculate_atr(
-        df,
-        ATR_PERIOD,
-    )
-
-    df["adx"] = calculate_adx(
-        df,
-        ADX_PERIOD,
-    )
-
-    return df
+    return out
 
 
 # ============================================================
-# SIGNAL DETECTION
+# CAUSAL SIGNAL DETECTION
 # ============================================================
 
-def detect_events(df):
-    """
-    Strictly causal.
-
-    Event at i uses:
-        previous candle indicators/close
-        current candle close and current indicators
-
-    No future candle is used.
-    """
-
+def detect_events(df, symbol):
     events = []
 
-    if len(df) < 100:
-        return events
+    # Start sufficiently late so all indicators are valid.
+    start_idx = max(
+        BB_PERIOD,
+        RSI_PERIOD,
+        ATR_PERIOD,
+        ADX_PERIOD
+    ) + 5
 
-    for i in range(1, len(df)):
-
+    for i in range(start_idx, len(df)):
         prev = df.iloc[i - 1]
         cur = df.iloc[i]
 
-        required_prev = [
+        values = [
             prev["close"],
             prev["bb_lower"],
-            prev["bb_upper"],
-            prev["rsi"],
-        ]
-
-        required_cur = [
             cur["close"],
             cur["bb_lower"],
-            cur["bb_upper"],
-            cur["rsi"],
-            cur["atr"],
+            prev["rsi"],
             cur["adx"],
+            cur["atr"],
         ]
 
-        if not all(
-            np.isfinite(x)
-            for x in required_prev + required_cur
-        ):
+        if not all(np.isfinite(v) for v in values):
             continue
 
-        # ----------------------------------------------------
+        # -------------------------
         # LONG
-        # ----------------------------------------------------
+        # -------------------------
 
         long_signal = (
             prev["close"] < prev["bb_lower"]
-            and cur["close"] >= cur["bb_lower"]
-            and prev["rsi"] <= RSI_LONG
-            and cur["adx"] < ADX_MAX
+            and
+            cur["close"] >= cur["bb_lower"]
+            and
+            prev["rsi"] <= RSI_LONG_MAX
+            and
+            cur["adx"] < ADX_MAX
         )
 
-        # ----------------------------------------------------
+        # -------------------------
         # SHORT
-        # ----------------------------------------------------
+        # -------------------------
 
         short_signal = (
             prev["close"] > prev["bb_upper"]
-            and cur["close"] <= cur["bb_upper"]
-            and prev["rsi"] >= RSI_SHORT
-            and cur["adx"] < ADX_MAX
+            and
+            cur["close"] <= cur["bb_upper"]
+            and
+            prev["rsi"] >= RSI_SHORT_MIN
+            and
+            cur["adx"] < ADX_MAX
         )
 
         if long_signal:
-            events.append(
-                {
-                    "idx": i,
-                    "timestamp": int(cur["timestamp"]),
-                    "direction": "LONG",
-                    "atr": float(cur["atr"]),
-                    "entry": float(cur["close"]),
-                    "rsi": float(prev["rsi"]),
-                    "adx": float(cur["adx"]),
-                    "reason": "BB_REENTRY_RSI_EXHAUSTION",
-                }
-            )
+            events.append({
+                "symbol": symbol,
+                "idx": i,
+                "timestamp": int(cur["timestamp"]),
+                "direction": "LONG",
+                "entry": float(cur["close"]),
+                "atr": float(cur["atr"]),
+                "rsi": float(cur["rsi"]),
+                "adx": float(cur["adx"]),
+            })
 
         elif short_signal:
-            events.append(
-                {
-                    "idx": i,
-                    "timestamp": int(cur["timestamp"]),
-                    "direction": "SHORT",
-                    "atr": float(cur["atr"]),
-                    "entry": float(cur["close"]),
-                    "rsi": float(prev["rsi"]),
-                    "adx": float(cur["adx"]),
-                    "reason": "BB_REENTRY_RSI_EXHAUSTION",
-                }
-            )
+            events.append({
+                "symbol": symbol,
+                "idx": i,
+                "timestamp": int(cur["timestamp"]),
+                "direction": "SHORT",
+                "entry": float(cur["close"]),
+                "atr": float(cur["atr"]),
+                "rsi": float(cur["rsi"]),
+                "adx": float(cur["adx"]),
+            })
 
     return events
 
 
 # ============================================================
-# TRADE SIMULATION
+# TRADE SIMULATOR
 # ============================================================
 
-def simulate_trade(
-    df,
-    event,
-    tp_multiple,
-):
-    """
-    Entry at event candle close.
+def simulate_trade(df, event, tp_r):
+    idx = event["idx"]
 
-    Important:
-    The entry candle itself is NOT used for TP/SL evaluation.
-    Exit scanning starts from the next candle.
-
-    This avoids artificially assuming that the trade could
-    enter at the close and also have captured the same candle's
-    high/low before entry.
-    """
-
-    idx = int(event["idx"])
-
-    entry = float(event["entry"])
-    atr = float(event["atr"])
+    entry = event["entry"]
+    atr = event["atr"]
     direction = event["direction"]
 
     if not np.isfinite(entry) or not np.isfinite(atr):
         return {
-            "status": "INVALID",
+            **event,
+            "status": "AMBIGUOUS",
+            "result_r": np.nan,
         }
 
     if atr <= 0:
         return {
-            "status": "INVALID",
+            **event,
+            "status": "AMBIGUOUS",
+            "result_r": np.nan,
         }
-
-    risk = SL_ATR * atr
 
     if direction == "LONG":
-
-        sl = entry - risk
-        tp = entry + tp_multiple * risk
-
-        # Apply adverse execution slippage to stop/TP
-        sl_exec = sl * (1.0 - SLIPPAGE_RATE)
-        tp_exec = tp * (1.0 - SLIPPAGE_RATE)
+        sl = entry - SL_ATR * atr
+        tp = entry + tp_r * SL_ATR * atr
 
     else:
+        sl = entry + SL_ATR * atr
+        tp = entry - tp_r * SL_ATR * atr
 
-        sl = entry + risk
-        tp = entry - tp_multiple * risk
+    first_exit_idx = idx + 1
+    last_exit_idx = idx + HOLD_BARS
 
-        sl_exec = sl * (1.0 + SLIPPAGE_RATE)
-        tp_exec = tp * (1.0 + SLIPPAGE_RATE)
-
-    last_available = len(df) - 1
-
-    full_exit_idx = idx + HOLD_BARS
-
-    # --------------------------------------------------------
-    # Not enough future candles
-    # --------------------------------------------------------
-
-    if full_exit_idx > last_available:
-
+    # Not enough future data for complete HOLD.
+    if last_exit_idx >= len(df):
         return {
+            **event,
+            "sl": sl,
+            "tp": tp,
             "status": "OPEN_AT_DATASET_END",
-            "entry_idx": idx,
-            "entry_time": int(df.iloc[idx]["timestamp"]),
-            "direction": direction,
+            "result_r": np.nan,
+            "exit_idx": len(df) - 1,
+            "exit_timestamp": int(
+                df["timestamp"].iloc[-1]
+            ),
         }
 
-    # --------------------------------------------------------
-    # Scan future candles
-    # --------------------------------------------------------
-
-    for j in range(idx + 1, full_exit_idx + 1):
-
+    for j in range(
+        first_exit_idx,
+        last_exit_idx + 1
+    ):
         candle = df.iloc[j]
 
-        high = float(candle["high"])
-        low = float(candle["low"])
-
-        hit_sl = False
-        hit_tp = False
+        high = candle["high"]
+        low = candle["low"]
 
         if direction == "LONG":
 
             hit_sl = low <= sl
             hit_tp = high >= tp
 
+            # Frozen rule:
+            # same candle => SL first.
+            if hit_sl:
+                return {
+                    **event,
+                    "sl": sl,
+                    "tp": tp,
+                    "status": "SL",
+                    "result_r": -1.0,
+                    "exit_idx": j,
+                    "exit_timestamp": int(
+                        candle["timestamp"]
+                    ),
+                }
+
+            if hit_tp:
+                return {
+                    **event,
+                    "sl": sl,
+                    "tp": tp,
+                    "status": "TP",
+                    "result_r": float(tp_r),
+                    "exit_idx": j,
+                    "exit_timestamp": int(
+                        candle["timestamp"]
+                    ),
+                }
+
         else:
 
             hit_sl = high >= sl
             hit_tp = low <= tp
 
-        # ----------------------------------------------------
-        # Same-candle ambiguity:
-        # SL FIRST
-        # ----------------------------------------------------
+            if hit_sl:
+                return {
+                    **event,
+                    "sl": sl,
+                    "tp": tp,
+                    "status": "SL",
+                    "result_r": -1.0,
+                    "exit_idx": j,
+                    "exit_timestamp": int(
+                        candle["timestamp"]
+                    ),
+                }
 
-        if hit_sl:
+            if hit_tp:
+                return {
+                    **event,
+                    "sl": sl,
+                    "tp": tp,
+                    "status": "TP",
+                    "result_r": float(tp_r),
+                    "exit_idx": j,
+                    "exit_timestamp": int(
+                        candle["timestamp"]
+                    ),
+                }
 
-            gross_r = -1.0
-
-            # Approximate cost as entry + exit transaction cost.
-            net_r = (
-                gross_r
-                - 2.0 * FEE_RATE
-                - 2.0 * SLIPPAGE_RATE
-            )
-
-            return {
-                "status": "SL",
-                "entry_idx": idx,
-                "exit_idx": j,
-                "entry_time": int(df.iloc[idx]["timestamp"]),
-                "exit_time": int(candle["timestamp"]),
-                "direction": direction,
-                "gross_r": gross_r,
-                "net_r": net_r,
-                "bars_held": j - idx,
-            }
-
-        if hit_tp:
-
-            gross_r = float(tp_multiple)
-
-            net_r = (
-                gross_r
-                - 2.0 * FEE_RATE
-                - 2.0 * SLIPPAGE_RATE
-            )
-
-            return {
-                "status": "TP",
-                "entry_idx": idx,
-                "exit_idx": j,
-                "entry_time": int(df.iloc[idx]["timestamp"]),
-                "exit_time": int(candle["timestamp"]),
-                "direction": direction,
-                "gross_r": gross_r,
-                "net_r": net_r,
-                "bars_held": j - idx,
-            }
-
-    # --------------------------------------------------------
-    # Timeout
-    # --------------------------------------------------------
-
-    exit_idx = full_exit_idx
-
-    candle = df.iloc[exit_idx]
+    # Full HOLD completed.
+    exit_idx = last_exit_idx
 
     return {
+        **event,
+        "sl": sl,
+        "tp": tp,
         "status": "TIMEOUT",
-        "entry_idx": idx,
+        "result_r": 0.0,
         "exit_idx": exit_idx,
-        "entry_time": int(df.iloc[idx]["timestamp"]),
-        "exit_time": int(candle["timestamp"]),
-        "direction": direction,
-        "gross_r": 0.0,
-        "net_r": (
-            -2.0 * FEE_RATE
-            -2.0 * SLIPPAGE_RATE
+        "exit_timestamp": int(
+            df["timestamp"].iloc[exit_idx]
         ),
-        "bars_held": HOLD_BARS,
     }
 
 
 # ============================================================
-# MAX DRAWDOWN
-# ============================================================
-
-def calculate_max_dd(values):
-
-    if not values:
-        return 0.0
-
-    equity = 0.0
-    peak = 0.0
-    max_dd = 0.0
-
-    for value in values:
-
-        equity += float(value)
-
-        if equity > peak:
-            peak = equity
-
-        dd = equity - peak
-
-        if dd < max_dd:
-            max_dd = dd
-
-    return float(max_dd)
-
-
-# ============================================================
-# METRICS
+# PORTFOLIO METRICS
 # ============================================================
 
 def calculate_metrics(trades):
-
-    traded = [
-        t for t in trades
-        if t["status"] in {
-            "TP",
-            "SL",
-            "TIMEOUT",
-        }
-    ]
-
-    open_end = [
-        t for t in trades
-        if t["status"] == "OPEN_AT_DATASET_END"
-    ]
-
-    ambiguous = [
-        t for t in trades
-        if t["status"] == "AMBIGUOUS"
-    ]
-
-    n = len(traded)
-
-    if n == 0:
-
+    if not trades:
         return {
             "n_traded": 0,
-            "open_end": len(open_end),
-            "ambiguous": len(ambiguous),
-            "wr": 0.0,
-            "gross_exp": 0.0,
-            "net_exp": 0.0,
+            "open_at_end": 0,
+            "ambiguous": 0,
+            "wr": np.nan,
+            "gross_exp": np.nan,
+            "net_exp": np.nan,
             "gross_total": 0.0,
             "net_total": 0.0,
-            "gross_pf": 0.0,
-            "net_pf": 0.0,
+            "gross_pf": np.nan,
+            "net_pf": np.nan,
             "gross_maxdd": 0.0,
             "net_maxdd": 0.0,
         }
 
-    gross = [
-        float(t["gross_r"])
-        for t in traded
-    ]
+    df = pd.DataFrame(trades)
 
-    net = [
-        float(t["net_r"])
-        for t in traded
-    ]
+    open_end = int(
+        (df["status"] == "OPEN_AT_DATASET_END").sum()
+    )
 
-    wins = [
-        x for x in gross
-        if x > 0
-    ]
+    ambiguous = int(
+        (df["status"] == "AMBIGUOUS").sum()
+    )
 
-    gross_losses = [
-        abs(x) for x in gross
-        if x < 0
-    ]
+    closed = df[
+        df["status"].isin(
+            ["TP", "SL", "TIMEOUT"]
+        )
+    ].copy()
 
-    net_wins = [
-        x for x in net
-        if x > 0
-    ]
+    if closed.empty:
+        return {
+            "n_traded": 0,
+            "open_at_end": open_end,
+            "ambiguous": ambiguous,
+            "wr": np.nan,
+            "gross_exp": np.nan,
+            "net_exp": np.nan,
+            "gross_total": 0.0,
+            "net_total": 0.0,
+            "gross_pf": np.nan,
+            "net_pf": np.nan,
+            "gross_maxdd": 0.0,
+            "net_maxdd": 0.0,
+        }
 
-    net_losses = [
-        abs(x) for x in net
-        if x < 0
-    ]
+    # Deterministic chronological order.
+    closed = closed.sort_values(
+        ["exit_timestamp", "timestamp", "symbol"]
+    ).reset_index(drop=True)
 
-    gross_profit = sum(wins)
-    gross_loss = sum(gross_losses)
+    gross = closed["result_r"].astype(float)
 
-    net_profit = sum(net_wins)
-    net_loss = sum(net_losses)
+    net = gross - TOTAL_COST_R
+
+    gross_total = float(gross.sum())
+    net_total = float(net.sum())
+
+    gross_exp = float(gross.mean())
+    net_exp = float(net.mean())
+
+    wins_gross = gross[gross > 0].sum()
+    losses_gross = -gross[gross < 0].sum()
+
+    wins_net = net[net > 0].sum()
+    losses_net = -net[net < 0].sum()
 
     gross_pf = (
-        gross_profit / gross_loss
-        if gross_loss > 0
-        else float("inf")
+        float(wins_gross / losses_gross)
+        if losses_gross > 0
+        else np.inf
     )
 
     net_pf = (
-        net_profit / net_loss
-        if net_loss > 0
-        else float("inf")
+        float(wins_net / losses_net)
+        if losses_net > 0
+        else np.inf
     )
 
+    gross_curve = gross.cumsum()
+
+    net_curve = net.cumsum()
+
+    gross_dd = (
+        gross_curve
+        - gross_curve.cummax()
+    )
+
+    net_dd = (
+        net_curve
+        - net_curve.cummax()
+    )
+
+    gross_maxdd = float(gross_dd.min())
+    net_maxdd = float(net_dd.min())
+
+    wins = int((gross > 0).sum())
+
+    wr = float(wins / len(closed))
+
     return {
-        "n_traded": n,
-        "open_end": len(open_end),
-        "ambiguous": len(ambiguous),
-
-        "wr": len(wins) / n,
-
-        "gross_exp": float(np.mean(gross)),
-        "net_exp": float(np.mean(net)),
-
-        "gross_total": float(sum(gross)),
-        "net_total": float(sum(net)),
-
-        "gross_pf": float(gross_pf),
-        "net_pf": float(net_pf),
-
-        "gross_maxdd": calculate_max_dd(gross),
-        "net_maxdd": calculate_max_dd(net),
+        "n_traded": len(closed),
+        "open_at_end": open_end,
+        "ambiguous": ambiguous,
+        "wr": wr,
+        "gross_exp": gross_exp,
+        "net_exp": net_exp,
+        "gross_total": gross_total,
+        "net_total": net_total,
+        "gross_pf": gross_pf,
+        "net_pf": net_pf,
+        "gross_maxdd": gross_maxdd,
+        "net_maxdd": net_maxdd,
     }
 
 
 # ============================================================
-# SYMBOL TEST
+# FORMAT
 # ============================================================
 
-def run_symbol(symbol, df):
+def fmt(x, digits=4):
+    if x is None or not np.isfinite(x):
+        return "N/A"
 
-    audit = audit_data(df)
+    return f"{x:.{digits}f}"
 
-    if not audit["sufficient"]:
-        return {
-            "symbol": symbol,
-            "status": "INSUFFICIENT_HISTORY",
-            "audit": audit,
-            "events": [],
-            "results": {},
-        }
 
-    if not audit["monotonic"] or not audit["no_duplicates"]:
-        return {
-            "symbol": symbol,
-            "status": "DATA_AUDIT_FAIL",
-            "audit": audit,
-            "events": [],
-            "results": {},
-        }
+def print_metrics(label, metrics):
+    print(f"\n{label}")
 
-    if audit["gap_count"] > 0:
-        return {
-            "symbol": symbol,
-            "status": "DATA_GAP",
-            "audit": audit,
-            "events": [],
-            "results": {},
-        }
+    print(
+        f"n_traded={metrics['n_traded']} | "
+        f"open_end={metrics['open_at_end']} | "
+        f"ambiguous={metrics['ambiguous']}"
+    )
 
-    df = add_indicators(df)
+    print(
+        f"WR={fmt(metrics['wr'])} | "
+        f"GrossExp={fmt(metrics['gross_exp'])}R | "
+        f"NetExp={fmt(metrics['net_exp'])}R"
+    )
 
-    events = detect_events(df)
+    print(
+        f"GrossTotal={fmt(metrics['gross_total'], 2)}R | "
+        f"NetTotal={fmt(metrics['net_total'], 2)}R"
+    )
 
-    results = {}
+    print(
+        f"GrossPF={fmt(metrics['gross_pf'], 3)} | "
+        f"NetPF={fmt(metrics['net_pf'], 3)}"
+    )
 
-    for tp in TP_MULTIPLIERS:
+    print(
+        f"GrossMaxDD={fmt(metrics['gross_maxdd'], 2)}R | "
+        f"NetMaxDD={fmt(metrics['net_maxdd'], 2)}R"
+    )
 
-        trades = []
+
+# ============================================================
+# SPLIT
+# ============================================================
+
+def build_common_timestamps(data):
+    sets = []
+
+    for symbol, df in data.items():
+        sets.append(
+            set(
+                df["timestamp"].astype(int).tolist()
+            )
+        )
+
+    if not sets:
+        return []
+
+    common = set.intersection(*sets)
+
+    return sorted(common)
+
+
+def get_split(common_timestamps):
+    if len(common_timestamps) < 100:
+        raise RuntimeError(
+            "Too few common timestamps for IS/OOS split."
+        )
+
+    split_idx = int(
+        len(common_timestamps) * 0.70
+    )
+
+    split_idx = max(
+        1,
+        min(
+            split_idx,
+            len(common_timestamps) - 1
+        )
+    )
+
+    is_end = common_timestamps[
+        split_idx - 1
+    ]
+
+    oos_start = common_timestamps[
+        split_idx
+    ]
+
+    oos_end = common_timestamps[-1]
+
+    return is_end, oos_start, oos_end
+
+
+# ============================================================
+# VALIDATION
+# ============================================================
+
+def run_period(
+    data,
+    events_by_symbol,
+    start_ts,
+    end_ts,
+    period_name
+):
+    all_trades = []
+
+    for symbol in sorted(events_by_symbol.keys()):
+
+        df = data[symbol]
+
+        events = events_by_symbol[symbol]
 
         for event in events:
 
-            trade = simulate_trade(
-                df,
-                event,
-                tp,
-            )
+            ts = event["timestamp"]
 
-            if trade["status"] != "INVALID":
-                trades.append(trade)
+            if ts < start_ts:
+                continue
 
-        results[tp] = calculate_metrics(trades)
+            if ts > end_ts:
+                continue
 
-    return {
-        "symbol": symbol,
-        "status": "OK",
-        "audit": audit,
-        "events": events,
-        "results": results,
-    }
+            for tp_r in TP_MULTIPLIERS:
+
+                trade = simulate_trade(
+                    df,
+                    event,
+                    tp_r
+                )
+
+                trade["tp_r"] = tp_r
+                trade["period"] = period_name
+
+                all_trades.append(trade)
+
+    results = {}
+
+    for tp_r in TP_MULTIPLIERS:
+
+        subset = [
+            x for x in all_trades
+            if x["tp_r"] == tp_r
+        ]
+
+        results[tp_r] = calculate_metrics(
+            subset
+        )
+
+    return all_trades, results
 
 
 # ============================================================
-# PORTFOLIO AGGREGATION
+# DIRECTION METRICS
 # ============================================================
 
-def aggregate_portfolio(symbol_results):
-
-    portfolio = {}
-
-    for tp in TP_MULTIPLIERS:
-
-        all_trades = []
-
-        for result in symbol_results:
-
-            if result["status"] != "OK":
-                continue
-
-            symbol = result["symbol"]
-
-            df_events = result["events"]
-
-            # Reconstruct trade list from stored symbol data
-            # through the stored metric values is insufficient,
-            # so this aggregation is performed separately below.
-            #
-            # This block intentionally remains empty.
-            _ = symbol
-            _ = df_events
-
-        portfolio[tp] = None
-
-    return portfolio
-
-
-# ============================================================
-# PORTFOLIO RUN
-# ============================================================
-
-def run_all():
-
-    print("=" * 72)
-    print("SETUP V4 — CANDIDATE 6")
-    print("VOLATILITY EXHAUSTION MEAN REVERSION")
-    print("=" * 72)
-
-    print("")
-    print("FROZEN SPEC")
-    print(f"TF              : {KLINE_TYPE}")
-    print(f"BB               : {BB_PERIOD}, {BB_STD} std")
-    print(f"RSI              : {RSI_PERIOD}")
-    print(f"RSI LONG         : <= {RSI_LONG}")
-    print(f"RSI SHORT        : >= {RSI_SHORT}")
-    print(f"ATR              : {ATR_PERIOD}")
-    print(f"ADX              : {ADX_PERIOD}")
-    print(f"ADX MAX          : < {ADX_MAX}")
-    print(f"SL               : {SL_ATR} ATR")
-    print(f"HOLD             : {HOLD_BARS}")
-    print(f"TP               : {TP_MULTIPLIERS}")
-    print(f"FEE              : {FEE_RATE * 100:.2f}%")
-    print(f"SLIPPAGE         : {SLIPPAGE_RATE * 100:.2f}%")
-    print("")
-
-    symbol_results = []
-
-    total_loaded = 0
-    total_sufficient = 0
-    total_events = 0
-
-    # --------------------------------------------------------
-    # FETCH + TEST
-    # --------------------------------------------------------
-
-    for n, symbol in enumerate(SYMBOLS, 1):
-
-        print(
-            f"[{n:02d}/{len(SYMBOLS)}] "
-            f"Loading {symbol} ..."
-        )
-
-        try:
-
-            df = fetch_history(
-                symbol,
-                TARGET_DAYS,
-            )
-
-            if df.empty:
-
-                print(
-                    f"    -> EMPTY"
-                )
-
-                symbol_results.append(
-                    {
-                        "symbol": symbol,
-                        "status": "EMPTY",
-                        "audit": {},
-                        "events": [],
-                        "results": {},
-                    }
-                )
-
-                continue
-
-            total_loaded += 1
-
-            result = run_symbol(
-                symbol,
-                df,
-            )
-
-            symbol_results.append(result)
-
-            if result["status"] == "OK":
-
-                total_sufficient += 1
-
-                n_events = len(
-                    result["events"]
-                )
-
-                total_events += n_events
-
-                audit = result["audit"]
-
-                print(
-                    f"    candles={len(df)} "
-                    f"days={audit['days']:.1f} "
-                    f"gaps={audit['gap_count']} "
-                    f"events={n_events}"
-                )
-
-            else:
-
-                print(
-                    f"    -> {result['status']}"
-                )
-
-        except Exception as e:
-
-            print(
-                f"    -> ERROR: {type(e).__name__}: {e}"
-            )
-
-            symbol_results.append(
-                {
-                    "symbol": symbol,
-                    "status": "ERROR",
-                    "audit": {},
-                    "events": [],
-                    "results": {},
-                }
-            )
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # Re-simulate trades for portfolio metrics.
-    #
-    # This is intentionally deterministic and uses exactly
-    # the same event list and simulator as symbol-level tests.
-    # --------------------------------------------------------
-
-    portfolio_metrics = {}
-
-    for tp in TP_MULTIPLIERS:
-
-        all_trades = []
-
-        for result in symbol_results:
-
-            if result["status"] != "OK":
-                continue
-
-            symbol = result["symbol"]
-
-            # We need the original dataframe again only if
-            # portfolio trade-level data is required.
-            # To avoid duplicate API calls, store dataframes
-            # in memory below.
-            _ = symbol
-
-        portfolio_metrics[tp] = {
-            "trades": [],
-        }
-
-    # --------------------------------------------------------
-    # Re-run using in-memory dataframes for exact portfolio
-    # aggregation.
-    # --------------------------------------------------------
-
-    portfolio_trade_map = {
-        tp: []
-        for tp in TP_MULTIPLIERS
-    }
-
-    per_symbol_rows = []
-
-    # Fetching again would be wasteful. Therefore build
-    # deterministic portfolio metrics directly from the
-    # symbol metrics using weighted trade counts/returns.
-    #
-    # For MaxDD we need chronological trades. We reconstruct
-    # them below from fresh local data only if needed.
-    #
-    # Since the GitHub runner has enough time, perform a second
-    # deterministic pass over the already-known symbols.
-    #
-    # This also gives us a complete portfolio chronology.
-
-    print("")
-    print("Building portfolio trade ledger ...")
-
-    valid_symbols = [
-        r["symbol"]
-        for r in symbol_results
-        if r["status"] == "OK"
-    ]
-
-    portfolio_ledger = {
-        tp: []
-        for tp in TP_MULTIPLIERS
-    }
-
-    for n, symbol in enumerate(valid_symbols, 1):
-
-        print(
-            f"  Portfolio pass "
-            f"[{n:02d}/{len(valid_symbols)}] "
-            f"{symbol}"
-        )
-
-        try:
-
-            df = fetch_history(
-                symbol,
-                TARGET_DAYS,
-            )
-
-            if df.empty:
-                continue
-
-            df = add_indicators(df)
-
-            events = detect_events(df)
-
-            for tp in TP_MULTIPLIERS:
-
-                for event in events:
-
-                    trade = simulate_trade(
-                        df,
-                        event,
-                        tp,
-                    )
-
-                    trade["symbol"] = symbol
-
-                    portfolio_ledger[tp].append(
-                        trade
-                    )
-
-        except Exception as e:
-
-            print(
-                f"    portfolio pass error: {e}"
-            )
-
-    # --------------------------------------------------------
-    # Portfolio metrics
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 72)
-    print("PORTFOLIO RESULTS")
-    print("=" * 72)
-
-    for tp in TP_MULTIPLIERS:
-
-        ledger = portfolio_ledger[tp]
-
-        metrics = calculate_metrics(
-            ledger
-        )
-
-        portfolio_metrics[tp] = metrics
-
-        print("")
-        print(f"TP = {tp}R")
-        print(
-            f"  n_traded       = {metrics['n_traded']}"
-        )
-        print(
-            f"  open_end       = {metrics['open_end']}"
-        )
-        print(
-            f"  ambiguous      = {metrics['ambiguous']}"
-        )
-        print(
-            f"  WR             = {metrics['wr']:.4f}"
-        )
-        print(
-            f"  Gross Exp      = {metrics['gross_exp']:+.4f}R"
-        )
-        print(
-            f"  Net Exp        = {metrics['net_exp']:+.4f}R"
-        )
-        print(
-            f"  Gross Total    = {metrics['gross_total']:+.2f}R"
-        )
-        print(
-            f"  Net Total      = {metrics['net_total']:+.2f}R"
-        )
-        print(
-            f"  Gross PF       = {metrics['gross_pf']:.3f}"
-        )
-        print(
-            f"  Net PF         = {metrics['net_pf']:.3f}"
-        )
-        print(
-            f"  Gross MaxDD    = {metrics['gross_maxdd']:+.2f}R"
-        )
-        print(
-            f"  Net MaxDD      = {metrics['net_maxdd']:+.2f}R"
-        )
-
-    # --------------------------------------------------------
-    # Per-symbol summary
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 72)
-    print("PER-SYMBOL RESULTS — TP 2R")
-    print("=" * 72)
-
-    tp_for_symbol = 2.0
-
-    for result in symbol_results:
-
-        if result["status"] != "OK":
-            continue
-
-        symbol = result["symbol"]
-
-        m = result["results"].get(
-            tp_for_symbol
-        )
-
-        if not m:
-            continue
-
-        print(
-            f"{symbol:12s} "
-            f"events={len(result['events']):4d} "
-            f"traded={m['n_traded']:4d} "
-            f"WR={m['wr']:.3f} "
-            f"NetE={m['net_exp']:+.4f}R "
-            f"NetPF={m['net_pf']:.3f} "
-            f"NetTotal={m['net_total']:+.2f}R"
-        )
-
-    # --------------------------------------------------------
-    # Direction split
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 72)
-    print("DIRECTION SPLIT — TP 2R")
-    print("=" * 72)
-
-    tp = 2.0
-
-    direction_groups = {
-        "LONG": [],
-        "SHORT": [],
-    }
-
-    for trade in portfolio_ledger[tp]:
-
-        if trade["status"] in {
+def direction_metrics(trades, direction):
+    subset = [
+        x for x in trades
+        if x["direction"] == direction
+        and x["status"] in [
             "TP",
             "SL",
-            "TIMEOUT",
-        }:
-
-            direction_groups[
-                trade["direction"]
-            ].append(trade)
-
-    for direction, trades in direction_groups.items():
-
-        m = calculate_metrics(trades)
-
-        print("")
-        print(direction)
-
-        print(
-            f"  n_traded    = {m['n_traded']}"
-        )
-
-        print(
-            f"  WR          = {m['wr']:.4f}"
-        )
-
-        print(
-            f"  Gross Exp   = {m['gross_exp']:+.4f}R"
-        )
-
-        print(
-            f"  Net Exp     = {m['net_exp']:+.4f}R"
-        )
-
-        print(
-            f"  Net Total   = {m['net_total']:+.2f}R"
-        )
-
-        print(
-            f"  Net PF      = {m['net_pf']:.3f}"
-        )
-
-        print(
-            f"  Net MaxDD   = {m['net_maxdd']:+.2f}R"
-        )
-
-    # --------------------------------------------------------
-    # Signal diagnostics
-    # --------------------------------------------------------
-
-    all_events = []
-
-    for result in symbol_results:
-
-        if result["status"] == "OK":
-
-            for event in result["events"]:
-
-                event_copy = dict(event)
-
-                event_copy[
-                    "symbol"
-                ] = result["symbol"]
-
-                all_events.append(
-                    event_copy
-                )
-
-    long_events = [
-        e for e in all_events
-        if e["direction"] == "LONG"
+            "TIMEOUT"
+        ]
     ]
 
-    short_events = [
-        e for e in all_events
-        if e["direction"] == "SHORT"
-    ]
-
-    print("")
-    print("=" * 72)
-    print("SIGNAL DIAGNOSTICS")
-    print("=" * 72)
-
-    print(
-        f"Total events       = {len(all_events)}"
-    )
-
-    print(
-        f"Long events        = {len(long_events)}"
-    )
-
-    print(
-        f"Short events       = {len(short_events)}"
-    )
-
-    if all_events:
-
-        rsis = [
-            e["rsi"]
-            for e in all_events
-            if np.isfinite(e["rsi"])
-        ]
-
-        adxs = [
-            e["adx"]
-            for e in all_events
-            if np.isfinite(e["adx"])
-        ]
-
-        if rsis:
-            print(
-                f"Event RSI mean     = {np.mean(rsis):.2f}"
-            )
-
-        if adxs:
-            print(
-                f"Event ADX mean     = {np.mean(adxs):.2f}"
-            )
-
-    # --------------------------------------------------------
-    # Research decision
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 72)
-    print("RESEARCH DECISION")
-    print("=" * 72)
-
-    # Do NOT optimize or cherry-pick.
-    #
-    # Primary discovery reference:
-    #   TP 2R net expectancy
-    #   TP 2R net PF
-    #
-    # A positive result is not automatically production-ready.
-    # It only earns the right to proceed to OOS validation.
-
-    primary = portfolio_metrics.get(
-        2.0,
-        {}
-    )
-
-    if (
-        primary
-        and primary.get("n_traded", 0) >= 100
-        and primary.get("net_exp", -999) > 0
-        and primary.get("net_pf", 0) > 1.0
-    ):
-
-        print(
-            "STATUS = IS SURVIVES INITIAL DISCOVERY"
-        )
-
-        print(
-            "NEXT   = RUN OOS + WALK-FORWARD VALIDATION"
-        )
-
-    else:
-
-        print(
-            "STATUS = CANDIDATE 6 DOES NOT CLEAR "
-            "INITIAL IS DISCOVERY GATE"
-        )
-
-        print(
-            "NEXT   = ARCHIVE CANDIDATE 6"
-        )
-
-    print("")
-    print("=" * 72)
-    print("RUN COMPLETE")
-    print("=" * 72)
+    return calculate_metrics(subset)
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
+def main():
+
+    print("=" * 78)
+    print(
+        "SETUP V4 — CANDIDATE 6 — "
+        "VOLATILITY EXHAUSTION MEAN REVERSION"
+    )
+    print("730D DATA FIX + IS/OOS VALIDATION")
+    print("=" * 78)
+
+    print("\nFROZEN PARAMETERS")
+    print(f"TIMEFRAME = {INTERVAL}")
+    print(f"TARGET_DAYS = {TARGET_DAYS}")
+    print(f"BB = {BB_PERIOD}, {BB_STD}σ")
+    print(f"RSI = {RSI_PERIOD}")
+    print(f"ATR = {ATR_PERIOD}")
+    print(f"ADX = {ADX_PERIOD}")
+    print(f"ADX_MAX = {ADX_MAX}")
+    print(f"RSI_LONG <= {RSI_LONG_MAX}")
+    print(f"RSI_SHORT >= {RSI_SHORT_MIN}")
+    print(f"SL = {SL_ATR} ATR")
+    print(f"HOLD = {HOLD_BARS}")
+    print(f"TPs = {TP_MULTIPLIERS}")
+    print(f"TOTAL_COST = {TOTAL_COST_R:.4f}R")
+    print("NO PARAMETER OPTIMIZATION")
+    print("NO SHORT-ONLY SELECTION")
+    print("=" * 78)
+
+    data = {}
+    events_by_symbol = {}
+
+    failed = []
+
+    # ========================================================
+    # DATA LOAD
+    # ========================================================
+
+    print("\n[1] FETCHING 730D HISTORY")
+
+    for n, symbol in enumerate(
+        SYMBOLS,
+        start=1
+    ):
+
+        try:
+
+            df, pages = fetch_history(
+                symbol,
+                TARGET_DAYS
+            )
+
+            audit = audit_dataframe(df)
+
+            data[symbol] = df
+
+            print(
+                f"{n:02d}/{len(SYMBOLS)} "
+                f"{symbol}: "
+                f"{audit['candles']} candles | "
+                f"{audit['days']:.1f}d | "
+                f"pages={pages} | "
+                f"gaps={audit['gap_count']}"
+            )
+
+            if not audit["monotonic"]:
+                failed.append(
+                    (symbol, "non_monotonic")
+                )
+
+            if audit["duplicates"] > 0:
+                failed.append(
+                    (symbol, "duplicates")
+                )
+
+            if audit["gap_count"] > 0:
+                failed.append(
+                    (symbol, "gaps")
+                )
+
+        except Exception as e:
+
+            print(
+                f"{n:02d}/{len(SYMBOLS)} "
+                f"{symbol}: FAILED -> {e}"
+            )
+
+            failed.append(
+                (symbol, str(e))
+            )
+
+    # ========================================================
+    # DATA GATE
+    # ========================================================
+
+    print("\n[2] DATA GATE")
+
+    usable = sorted(data.keys())
+
+    print(
+        f"CONFIGURED_SYMBOLS = {len(SYMBOLS)}"
+    )
+
+    print(
+        f"USABLE_SYMBOLS = {len(usable)}"
+    )
+
+    if failed:
+
+        print("\nFAILED SYMBOLS:")
+
+        for symbol, reason in failed:
+            print(
+                f" - {symbol}: {reason}"
+            )
+
+    if len(usable) < 25:
+        raise RuntimeError(
+            "DATA GATE FAILED: fewer than 25 usable symbols."
+        )
+
+    # ========================================================
+    # COMMON TIMESTAMP AUDIT
+    # ========================================================
+
+    common = build_common_timestamps(
+        data
+    )
+
+    print(
+        f"\nCOMMON_TIMESTAMPS = {len(common)}"
+    )
+
+    if len(common) < 1000:
+        raise RuntimeError(
+            "COMMON TIMESTAMP GATE FAILED."
+        )
+
+    print(
+        f"COMMON_START = "
+        f"{utc_str(common[0] * 1)}"
+    )
+
+    print(
+        f"COMMON_END = "
+        f"{utc_str(common[-1] * 1)}"
+    )
+
+    # ========================================================
+    # SPLIT
+    # ========================================================
+
+    is_end, oos_start, oos_end = get_split(
+        common
+    )
+
+    print("\n[3] TIME SPLIT")
+
+    print(
+        f"IS_END   = {utc_str(is_end)}"
+    )
+
+    print(
+        f"OOS_START = {utc_str(oos_start)}"
+    )
+
+    print(
+        f"OOS_END   = {utc_str(oos_end)}"
+    )
+
+    print(
+        "SPLIT = 70% IS / 30% OOS"
+    )
+
+    print(
+        "OOS uses historical warm-up context "
+        "before OOS_START."
+    )
+
+    # ========================================================
+    # INDICATORS + EVENTS
+    # ========================================================
+
+    print("\n[4] CAUSAL SIGNAL DETECTION")
+
+    total_events = 0
+    total_long = 0
+    total_short = 0
+
+    for symbol in usable:
+
+        df = calculate_indicators(
+            data[symbol]
+        )
+
+        data[symbol] = df
+
+        events = detect_events(
+            df,
+            symbol
+        )
+
+        events_by_symbol[symbol] = events
+
+        long_count = sum(
+            x["direction"] == "LONG"
+            for x in events
+        )
+
+        short_count = sum(
+            x["direction"] == "SHORT"
+            for x in events
+        )
+
+        total_events += len(events)
+        total_long += long_count
+        total_short += short_count
+
+        print(
+            f"{symbol}: "
+            f"events={len(events)} | "
+            f"LONG={long_count} | "
+            f"SHORT={short_count}"
+        )
+
+    print("\nTOTAL EVENTS")
+    print(f"TOTAL = {total_events}")
+    print(f"LONG  = {total_long}")
+    print(f"SHORT = {total_short}")
+
+    # ========================================================
+    # IS
+    # ========================================================
+
+    print("\n" + "=" * 78)
+    print("[5] IN-SAMPLE — IS")
+    print("=" * 78)
+
+    is_trades, is_results = run_period(
+        data,
+        events_by_symbol,
+        common[0],
+        is_end,
+        "IS"
+    )
+
+    for tp_r in TP_MULTIPLIERS:
+
+        print_metrics(
+            f"IS — TP {tp_r}R",
+            is_results[tp_r]
+        )
+
+    # ========================================================
+    # IS DIRECTION
+    # ========================================================
+
+    print("\nIS DIRECTION — TP 2R")
+
+    is_tp2 = [
+        x for x in is_trades
+        if x["tp_r"] == 2.0
+    ]
+
+    print_metrics(
+        "IS LONG",
+        direction_metrics(
+            is_tp2,
+            "LONG"
+        )
+    )
+
+    print_metrics(
+        "IS SHORT",
+        direction_metrics(
+            is_tp2,
+            "SHORT"
+        )
+    )
+
+    # ========================================================
+    # OOS
+    # ========================================================
+
+    print("\n" + "=" * 78)
+    print("[6] OUT-OF-SAMPLE — OOS")
+    print("=" * 78)
+
+    oos_trades, oos_results = run_period(
+        data,
+        events_by_symbol,
+        oos_start,
+        oos_end,
+        "OOS"
+    )
+
+    for tp_r in TP_MULTIPLIERS:
+
+        print_metrics(
+            f"OOS — TP {tp_r}R",
+            oos_results[tp_r]
+        )
+
+    # ========================================================
+    # OOS DIRECTION
+    # ========================================================
+
+    print("\nOOS DIRECTION — TP 2R")
+
+    oos_tp2 = [
+        x for x in oos_trades
+        if x["tp_r"] == 2.0
+    ]
+
+    print_metrics(
+        "OOS LONG",
+        direction_metrics(
+            oos_tp2,
+            "LONG"
+        )
+    )
+
+    print_metrics(
+        "OOS SHORT",
+        direction_metrics(
+            oos_tp2,
+            "SHORT"
+        )
+    )
+
+    # ========================================================
+    # FINAL INTEGRITY
+    # ========================================================
+
+    print("\n" + "=" * 78)
+    print("[7] VALIDATION INTEGRITY")
+    print("=" * 78)
+
+    print(
+        f"DATA_VALID_SYMBOLS = {len(usable)}"
+    )
+
+    print(
+        f"COMMON_TIMESTAMPS = {len(common)}"
+    )
+
+    print(
+        f"IS_END = {is_end}"
+    )
+
+    print(
+        f"OOS_START = {oos_start}"
+    )
+
+    print(
+        f"OOS_END = {oos_end}"
+    )
+
+    print(
+        "OOS_WARMUP_CONTEXT = TRUE"
+    )
+
+    print(
+        "CAUSAL_SIGNAL_DETECTION = TRUE"
+    )
+
+    print(
+        "ENTRY_CANDLE_EXIT_SCAN = FALSE"
+    )
+
+    print(
+        "SAME_CANDLE_SL_FIRST = TRUE"
+    )
+
+    print(
+        "NO_PARAMETER_OPTIMIZATION = TRUE"
+    )
+
+    print(
+        "NO_SHORT_ONLY_SELECTION = TRUE"
+    )
+
+    print(
+        "NO_EXTRA_FILTERS = TRUE"
+    )
+
+    print(
+        "NO_OVERLAP_LOCK = TRUE"
+    )
+
+    print(
+        f"TOTAL_COST_R = {TOTAL_COST_R:.4f}"
+    )
+
+    if failed:
+        print(
+            "\nDATA AUDIT WARNING: "
+            f"{len(failed)} symbols failed."
+        )
+    else:
+        print(
+            "\nDATA AUDIT = PASS"
+        )
+
+    # ========================================================
+    # PRELIMINARY DECISION GATE
+    # ========================================================
+
+    oos_tp2 = oos_results[2.0]
+    oos_tp3 = oos_results[3.0]
+
+    print("\n" + "=" * 78)
+    print("[8] RESEARCH GATE")
+    print("=" * 78)
+
+    print(
+        "This gate is descriptive only."
+    )
+
+    print(
+        "No strategy selection is performed automatically."
+    )
+
+    print(
+        "\nTP2R OOS:"
+    )
+
+    print(
+        f"NetExp = "
+        f"{fmt(oos_tp2['net_exp'])}R"
+    )
+
+    print(
+        f"NetPF = "
+        f"{fmt(oos_tp2['net_pf'])}"
+    )
+
+    print(
+        f"NetTotal = "
+        f"{fmt(oos_tp2['net_total'], 2)}R"
+    )
+
+    print(
+        f"NetMaxDD = "
+        f"{fmt(oos_tp2['net_maxdd'], 2)}R"
+    )
+
+    print(
+        "\nTP3R OOS:"
+    )
+
+    print(
+        f"NetExp = "
+        f"{fmt(oos_tp3['net_exp'])}R"
+    )
+
+    print(
+        f"NetPF = "
+        f"{fmt(oos_tp3['net_pf'])}"
+    )
+
+    print(
+        f"NetTotal = "
+        f"{fmt(oos_tp3['net_total'], 2)}R"
+    )
+
+    print(
+        f"NetMaxDD = "
+        f"{fmt(oos_tp3['net_maxdd'], 2)}R"
+    )
+
+    print("\nSTATUS:")
+
+    if (
+        np.isfinite(oos_tp2["net_exp"])
+        and oos_tp2["net_exp"] > 0
+        and oos_tp2["net_pf"] > 1
+        and oos_tp2["net_total"] > 0
+    ):
+        print(
+            "CANDIDATE 6 — OOS POSITIVE AT TP2R"
+        )
+        print(
+            "NEXT GATE = WALK-FORWARD VALIDATION"
+        )
+    else:
+        print(
+            "CANDIDATE 6 — OOS DOES NOT SURVIVE TP2R GATE"
+        )
+        print(
+            "NEXT ACTION = ARCHIVE"
+        )
+
+    print("=" * 78)
+
+
 if __name__ == "__main__":
-    run_all()
+    main()
