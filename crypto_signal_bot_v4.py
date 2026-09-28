@@ -1,10 +1,9 @@
-# CANDIDATE 6 — 5-FOLD WALK-FORWARD VALIDATION
+# CANDIDATE 6 — 5-FOLD WALK-FORWARD VALIDATION (KUCOIN OFFICIAL ENDPOINT)
 import urllib.request
 import json
 import numpy as np
 import pandas as pd
 
-TF = '4h'
 SL_ATR_MULT = 1.25
 HOLD_LIMIT = 30
 TOTAL_COST_R = 0.003
@@ -17,19 +16,20 @@ SYMBOLS = [
     'SHIB-USDT', 'TRX-USDT', 'HBAR-USDT', 'VET-USDT', 'ALGO-USDT', 'STX-USDT', 'RUNE-USDT'
 ]
 
-def fetch_candles(symbol):
+def fetch_kucoin_candles(symbol):
     url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol}&type=4hour"
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
-            if data.get('code') == '200000' and 'data' in data:
-                raw = data['data']
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res = json.loads(response.read().decode())
+            if res.get('code') == '200000' and 'data' in res:
+                raw = res['data']
+                # Kucoin returns newest first, so we reverse to chronological order
                 raw.sort(key=lambda x: int(x[0]))
                 df = pd.DataFrame(raw, columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
                 for col in ['open', 'close', 'high', 'low', 'volume']:
                     df[col] = df[col].astype(float)
-                return df
+                return df[['time', 'open', 'high', 'low', 'close', 'volume']]
     except Exception:
         pass
     return pd.DataFrame()
@@ -51,13 +51,13 @@ def compute_indicators(df):
     return df
 
 print("========================================================================")
-print("CANDIDATE 6 — WALK-FORWARD VALIDATION")
+print("CANDIDATE 6 — WALK-FORWARD VALIDATION (KUCOIN)")
 print("========================================================================")
 
 data_cache = {}
 for s in SYMBOLS:
-    df = fetch_candles(s)
-    if not df.empty and len(df) > 100:
+    df = fetch_kucoin_candles(s)
+    if not df.empty and len(df) > 50:
         data_cache[s] = compute_indicators(df)
 
 folds = [
@@ -146,9 +146,12 @@ for idx, (is_start, is_end, oos_start, oos_end) in enumerate(folds, 1):
     
     fold_summaries.append({'net_exp': net_exp, 'net_pf': net_pf, 'traded': traded})
 
-agg_net_exp = np.mean([f['net_exp'] for f in fold_summaries])
-agg_net_pf = np.mean([f['net_pf'] for f in fold_summaries])
-pos_folds = sum(1 for f in fold_summaries if f['net_exp'] > 0)
+if len(fold_summaries) > 0:
+    agg_net_exp = np.mean([f['net_exp'] for f in fold_summaries])
+    agg_net_pf = np.mean([f['net_pf'] for f in fold_summaries])
+    pos_folds = sum(1 for f in fold_summaries if f['net_exp'] > 0)
+else:
+    agg_net_exp, agg_net_pf, pos_folds = 0.0, 0.0, 0
 
 print("\n========================================================================")
 print("AGGREGATE OOS RESULTS")
