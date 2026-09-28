@@ -2145,5 +2145,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "LINK_1790630423",
+    "symbol": "LINK",
+    "coin_id": "chainlink",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 15.189832643866353,
+    "sl": 15.46193873485844,
+    "tp1": 13.721290539553095,
+    "tp2": 12.133730846573082,
+    "signal_time": "2026-09-28T21:20:23.795071+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
