@@ -2128,5 +2128,22 @@
     "entry_time": "2026-09-28T15:00:00+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "PAXG_1790615655",
+    "symbol": "PAXG",
+    "coin_id": "pax-gold",
+    "direction": "LONG",
+    "strategy_type": "Mean Reversion",
+    "entry": 4132.732876858356,
+    "sl": 4085.7992694251657,
+    "tp1": 4244.36682495527,
+    "tp2": 4361.66368079421,
+    "signal_time": "2026-09-28T17:14:15.197817+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
