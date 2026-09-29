@@ -1,18 +1,14 @@
 # ================================================================
-# V4 — CANDIDATE 8
-# 5-FOLD WALK-FORWARD VALIDATION
-# VOLUME BREAKOUT + RETEST
+# V4 — CANDIDATE 9 — MACD ZERO-LINE TREND CONTINUATION
+# 365D DISCOVERY SCREEN
 #
-# IMPORTANT:
-# - Frozen strategy parameters
-# - No parameter optimization
-# - No extra filters
-# - No overlap lock
-# - Causal detection
-# - Common timestamps
-# - Same-candle SL-first
-# - Entry candle NOT scanned for exits
-# - Cost = 0.003R (FROZEN)
+# NEW STRATEGY FAMILY
+# MACD zero-line momentum + ADX regime + EMA200 HTF direction
+#
+# NO OPTIMIZATION
+# NO EXTRA FILTERS
+# NO OVERLAP LOCK
+# FULLY CAUSAL
 # ================================================================
 
 import time
@@ -23,7 +19,7 @@ import pandas as pd
 
 
 # ================================================================
-# FROZEN UNIVERSE
+# UNIVERSE
 # ================================================================
 
 SYMBOLS = [
@@ -41,39 +37,41 @@ SYMBOLS = [
 # FROZEN PARAMETERS
 # ================================================================
 
-INTERVAL_SEC = 14400       # 4H
-DAYS = 730
+INTERVAL = 14400
+DAYS = 365
 PAGE = 1500
 
-DONCHIAN = 20
-VOLUME_MEDIAN = 20
-ATR_PERIOD = 20
-EMA_PERIOD = 200
+EMA_FAST = 12
+EMA_SLOW = 26
+EMA_TREND = 200
 
-VOLUME_MULT = 1.5
-RETEST_BARS = 5
+ADX_PERIOD = 14
+ADX_MIN = 20.0
+
+ATR_PERIOD = 20
+
+# Volatility / activity confirmation
+ATR_MEDIAN_PERIOD = 20
+VOLUME_MEDIAN_PERIOD = 20
 
 SL_ATR = 1.25
-TP_R = 2.0
 HOLD = 30
 
-# Frozen research cost
+TP_LEVELS = [
+    1.0,
+    1.5,
+    2.0,
+    3.0
+]
+
+# Frozen trading cost
 FEE = 0.001
 SLIPPAGE = 0.002
 COST = FEE + SLIPPAGE
 
-# Five chronological WF folds
-FOLDS = [
-    (0.50, 0.60),
-    (0.60, 0.70),
-    (0.70, 0.80),
-    (0.80, 0.90),
-    (0.90, 1.00)
-]
-
 
 # ================================================================
-# DATA FETCH
+# FETCH
 # ================================================================
 
 def fetch_history(symbol):
@@ -87,7 +85,7 @@ def fetch_history(symbol):
     while cur < now:
 
         end = min(
-            cur + (PAGE - 1) * INTERVAL_SEC,
+            cur + (PAGE - 1) * INTERVAL,
             now
         )
 
@@ -121,7 +119,10 @@ def fetch_history(symbol):
 
                 if payload.get("code") == "200000":
 
-                    out.extend(payload["data"])
+                    out.extend(
+                        payload["data"]
+                    )
+
                     success = True
                     break
 
@@ -133,7 +134,7 @@ def fetch_history(symbol):
         if not success:
             return pd.DataFrame()
 
-        cur = end + INTERVAL_SEC
+        cur = end + INTERVAL
         time.sleep(0.10)
 
     if not out:
@@ -171,21 +172,25 @@ def fetch_history(symbol):
 
     d = (
         d
-        .dropna(subset=[
-            "time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume"
-        ])
+        .dropna(
+            subset=[
+                "time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume"
+            ]
+        )
         .drop_duplicates("time")
         .sort_values("time")
         .reset_index(drop=True)
     )
 
     # Remove incomplete current candle
-    cutoff = (now // INTERVAL_SEC) * INTERVAL_SEC
+    cutoff = (
+        now // INTERVAL
+    ) * INTERVAL
 
     d = d[
         d["time"] < cutoff
@@ -202,27 +207,80 @@ def prepare(d):
 
     d = d.copy()
 
-    # EMA200
-    d["ema200"] = (
+    # ------------------------------------------------------------
+    # EMA
+    # ------------------------------------------------------------
+
+    d["ema12"] = (
         d["close"]
         .ewm(
-            span=EMA_PERIOD,
+            span=EMA_FAST,
             adjust=False
         )
         .mean()
     )
 
-    # True Range
+    d["ema26"] = (
+        d["close"]
+        .ewm(
+            span=EMA_SLOW,
+            adjust=False
+        )
+        .mean()
+    )
+
+    d["ema200"] = (
+        d["close"]
+        .ewm(
+            span=EMA_TREND,
+            adjust=False
+        )
+        .mean()
+    )
+
+    # ------------------------------------------------------------
+    # MACD
+    # ------------------------------------------------------------
+
+    d["macd"] = (
+        d["ema12"] -
+        d["ema26"]
+    )
+
+    d["macd_signal"] = (
+        d["macd"]
+        .ewm(
+            span=9,
+            adjust=False
+        )
+        .mean()
+    )
+
+    d["hist"] = (
+        d["macd"] -
+        d["macd_signal"]
+    )
+
+    # ------------------------------------------------------------
+    # TRUE RANGE
+    # ------------------------------------------------------------
+
     tr = pd.concat(
         [
             d["high"] - d["low"],
-            (d["high"] - d["close"].shift(1)).abs(),
-            (d["low"] - d["close"].shift(1)).abs()
+            (
+                d["high"] -
+                d["close"].shift(1)
+            ).abs(),
+            (
+                d["low"] -
+                d["close"].shift(1)
+            ).abs()
         ],
         axis=1
     ).max(axis=1)
 
-    # Wilder ATR20
+    # Wilder ATR
     d["atr"] = (
         tr
         .ewm(
@@ -233,152 +291,259 @@ def prepare(d):
         .mean()
     )
 
-    # Volume median
-    d["volume_median"] = (
-        d["volume"]
-        .rolling(
-            VOLUME_MEDIAN,
-            min_periods=VOLUME_MEDIAN
-        )
-        .median()
-    )
+    # ------------------------------------------------------------
+    # ATR MEDIAN
+    # ------------------------------------------------------------
 
-    # ATR median
     d["atr_median"] = (
         d["atr"]
         .rolling(
-            ATR_PERIOD,
-            min_periods=ATR_PERIOD
+            ATR_MEDIAN_PERIOD,
+            min_periods=ATR_MEDIAN_PERIOD
         )
         .median()
     )
 
-    # Previous 20-candle Donchian range.
-    # shift(1) guarantees causal calculation.
-    d["high20"] = (
-        d["high"]
-        .shift(1)
+    # ------------------------------------------------------------
+    # VOLUME MEDIAN
+    # ------------------------------------------------------------
+
+    d["volume_median"] = (
+        d["volume"]
         .rolling(
-            DONCHIAN,
-            min_periods=DONCHIAN
+            VOLUME_MEDIAN_PERIOD,
+            min_periods=VOLUME_MEDIAN_PERIOD
         )
-        .max()
+        .median()
     )
 
-    d["low20"] = (
+    # ------------------------------------------------------------
+    # ADX / DI
+    # Wilder implementation
+    # ------------------------------------------------------------
+
+    up_move = (
+        d["high"] -
+        d["high"].shift(1)
+    )
+
+    down_move = (
+        d["low"].shift(1) -
         d["low"]
-        .shift(1)
-        .rolling(
-            DONCHIAN,
-            min_periods=DONCHIAN
+    )
+
+    plus_dm = np.where(
+        (up_move > down_move) &
+        (up_move > 0),
+        up_move,
+        0.0
+    )
+
+    minus_dm = np.where(
+        (down_move > up_move) &
+        (down_move > 0),
+        down_move,
+        0.0
+    )
+
+    plus_dm = pd.Series(
+        plus_dm,
+        index=d.index
+    )
+
+    minus_dm = pd.Series(
+        minus_dm,
+        index=d.index
+    )
+
+    atr_adx = (
+        tr
+        .ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
         )
-        .min()
+        .mean()
+    )
+
+    plus_smoothed = (
+        plus_dm
+        .ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
+        )
+        .mean()
+    )
+
+    minus_smoothed = (
+        minus_dm
+        .ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
+        )
+        .mean()
+    )
+
+    d["plus_di"] = (
+        100 *
+        plus_smoothed /
+        atr_adx
+    )
+
+    d["minus_di"] = (
+        100 *
+        minus_smoothed /
+        atr_adx
+    )
+
+    di_sum = (
+        d["plus_di"] +
+        d["minus_di"]
+    )
+
+    d["dx"] = (
+        100 *
+        (
+            d["plus_di"] -
+            d["minus_di"]
+        ).abs() /
+        di_sum.replace(
+            0,
+            np.nan
+        )
+    )
+
+    d["adx"] = (
+        d["dx"]
+        .ewm(
+            alpha=1 / ADX_PERIOD,
+            adjust=False,
+            min_periods=ADX_PERIOD
+        )
+        .mean()
     )
 
     return d
 
 
 # ================================================================
-# CAUSAL EVENT DETECTION
+# SIGNAL DETECTION
 # ================================================================
 
 def detect_events(d):
 
     events = []
 
-    # EMA200 + rolling indicators need warmup
-    START = 220
+    # EMA200 + ADX require warm-up
+    START = 250
 
     for i in range(
         START,
-        len(d) - RETEST_BARS
+        len(d) - HOLD
     ):
 
         r = d.iloc[i]
+        p = d.iloc[i - 1]
 
-        if (
-            pd.isna(r["high20"])
-            or pd.isna(r["low20"])
-            or pd.isna(r["atr"])
-            or pd.isna(r["atr_median"])
-            or pd.isna(r["volume_median"])
-            or pd.isna(r["ema200"])
+        required = [
+            r["ema12"],
+            r["ema26"],
+            r["ema200"],
+            r["hist"],
+            p["hist"],
+            r["atr"],
+            r["atr_median"],
+            r["volume_median"],
+            r["adx"],
+            r["plus_di"],
+            r["minus_di"]
+        ]
+
+        if any(
+            pd.isna(x)
+            for x in required
         ):
             continue
 
         # ========================================================
-        # LONG BREAKOUT
+        # LONG
+        #
+        # 1. Price above EMA200
+        # 2. EMA12 > EMA26
+        # 3. MACD histogram crosses from <=0 to >0
+        # 4. ADX >= 20
+        # 5. +DI > -DI
+        # 6. ATR >= rolling ATR median
+        # 7. Volume >= rolling volume median
         # ========================================================
 
-        if (
-            r["close"] > r["high20"]
-            and r["volume"] >= VOLUME_MULT * r["volume_median"]
-            and r["atr"] >= r["atr_median"]
-            and r["close"] > r["ema200"]
-        ):
+        long_signal = (
+            r["close"] > r["ema200"]
+            and
+            r["ema12"] > r["ema26"]
+            and
+            p["hist"] <= 0
+            and
+            r["hist"] > 0
+            and
+            r["adx"] >= ADX_MIN
+            and
+            r["plus_di"] > r["minus_di"]
+            and
+            r["atr"] >= r["atr_median"]
+            and
+            r["volume"] >= r["volume_median"]
+        )
 
-            level = float(r["high20"])
+        if long_signal:
 
-            # First valid retest only
-            for j in range(
-                i + 1,
-                min(
-                    i + 1 + RETEST_BARS,
-                    len(d)
-                )
-            ):
+            events.append({
+                "idx": i,
+                "time": int(r["time"]),
+                "side": "LONG"
+            })
 
-                x = d.iloc[j]
-
-                if (
-                    x["low"] <= level
-                    and x["close"] > level
-                ):
-
-                    events.append({
-                        "idx": j,
-                        "time": int(x["time"]),
-                        "side": "LONG"
-                    })
-
-                    break
+            continue
 
         # ========================================================
-        # SHORT BREAKOUT
+        # SHORT
+        #
+        # 1. Price below EMA200
+        # 2. EMA12 < EMA26
+        # 3. MACD histogram crosses from >=0 to <0
+        # 4. ADX >= 20
+        # 5. -DI > +DI
+        # 6. ATR >= rolling ATR median
+        # 7. Volume >= rolling volume median
         # ========================================================
 
-        elif (
-            r["close"] < r["low20"]
-            and r["volume"] >= VOLUME_MULT * r["volume_median"]
-            and r["atr"] >= r["atr_median"]
-            and r["close"] < r["ema200"]
-        ):
+        short_signal = (
+            r["close"] < r["ema200"]
+            and
+            r["ema12"] < r["ema26"]
+            and
+            p["hist"] >= 0
+            and
+            r["hist"] < 0
+            and
+            r["adx"] >= ADX_MIN
+            and
+            r["minus_di"] > r["plus_di"]
+            and
+            r["atr"] >= r["atr_median"]
+            and
+            r["volume"] >= r["volume_median"]
+        )
 
-            level = float(r["low20"])
+        if short_signal:
 
-            # First valid retest only
-            for j in range(
-                i + 1,
-                min(
-                    i + 1 + RETEST_BARS,
-                    len(d)
-                )
-            ):
-
-                x = d.iloc[j]
-
-                if (
-                    x["high"] >= level
-                    and x["close"] < level
-                ):
-
-                    events.append({
-                        "idx": j,
-                        "time": int(x["time"]),
-                        "side": "SHORT"
-                    })
-
-                    break
+            events.append({
+                "idx": i,
+                "time": int(r["time"]),
+                "side": "SHORT"
+            })
 
     return events
 
@@ -387,18 +552,17 @@ def detect_events(d):
 # TRADE SIMULATION
 # ================================================================
 
-def simulate_trade(d, event):
+def simulate_trade(
+    d,
+    event,
+    tp_r
+):
 
     i = event["idx"]
     side = event["side"]
 
-    # Full HOLD window required
     if i + HOLD >= len(d):
-
-        return {
-            "status": "OPEN_AT_DATASET_END",
-            "r": None
-        }
+        return None
 
     entry = float(
         d.iloc[i]["close"]
@@ -410,8 +574,10 @@ def simulate_trade(d, event):
 
     if (
         not np.isfinite(entry)
-        or not np.isfinite(atr)
-        or atr <= 0
+        or
+        not np.isfinite(atr)
+        or
+        atr <= 0
     ):
         return None
 
@@ -420,19 +586,14 @@ def simulate_trade(d, event):
     if side == "LONG":
 
         sl = entry - risk
-        tp = entry + TP_R * risk
+        tp = entry + tp_r * risk
 
     else:
 
         sl = entry + risk
-        tp = entry - TP_R * risk
+        tp = entry - tp_r * risk
 
-    # ============================================================
-    # IMPORTANT:
     # Entry candle is NOT scanned.
-    # Exit scan starts at i+1.
-    # ============================================================
-
     for j in range(
         i + 1,
         i + HOLD + 1
@@ -442,50 +603,112 @@ def simulate_trade(d, event):
 
         if side == "LONG":
 
-            # SL-first if both touched
+            # Same-candle SL-first
             if x["low"] <= sl:
-                return {
-                    "status": "TRADED",
-                    "r": -1.0 - COST
-                }
+
+                return -1.0 - COST
 
             if x["high"] >= tp:
-                return {
-                    "status": "TRADED",
-                    "r": TP_R - COST
-                }
+
+                return tp_r - COST
 
         else:
 
-            # SL-first if both touched
+            # Same-candle SL-first
             if x["high"] >= sl:
-                return {
-                    "status": "TRADED",
-                    "r": -1.0 - COST
-                }
+
+                return -1.0 - COST
 
             if x["low"] <= tp:
-                return {
-                    "status": "TRADED",
-                    "r": TP_R - COST
-                }
+
+                return tp_r - COST
 
     # TIMEOUT
+    return -COST
+
+
+# ================================================================
+# METRICS
+# ================================================================
+
+def metrics(values):
+
+    if not values:
+
+        return {
+            "n": 0,
+            "wr": 0,
+            "exp": 0,
+            "pf": 0,
+            "total": 0,
+            "maxdd": 0
+        }
+
+    a = np.asarray(
+        values,
+        dtype=float
+    )
+
+    wins = a[a > 0]
+    losses = a[a < 0]
+
+    gp = (
+        wins.sum()
+        if len(wins)
+        else 0.0
+    )
+
+    gl = (
+        abs(losses.sum())
+        if len(losses)
+        else 0.0
+    )
+
+    pf = (
+        gp / gl
+        if gl > 0
+        else np.inf
+    )
+
+    equity = np.cumsum(a)
+
+    peak = np.maximum.accumulate(
+        np.insert(
+            equity,
+            0,
+            0.0
+        )
+    )[1:]
+
+    dd = equity - peak
+
     return {
-        "status": "TRADED",
-        "r": -COST
+        "n": len(a),
+        "wr": float(
+            np.mean(a > 0)
+        ),
+        "exp": float(
+            a.mean()
+        ),
+        "pf": float(pf),
+        "total": float(
+            a.sum()
+        ),
+        "maxdd": float(
+            dd.min()
+        )
     }
 
 
 # ================================================================
-# LOAD ALL DATA
+# MAIN
 # ================================================================
 
-print("=" * 72)
-print("V4 — CANDIDATE 8")
-print("5-FOLD WALK-FORWARD VALIDATION")
-print("VOLUME BREAKOUT + RETEST")
-print("=" * 72)
+print("=" * 70)
+print("V4 — CANDIDATE 9")
+print("MACD ZERO-LINE TREND CONTINUATION")
+print("365D DISCOVERY")
+print("=" * 70)
 
 datasets = {}
 
@@ -507,8 +730,8 @@ for symbol in SYMBOLS:
     datasets[symbol] = d
 
     days = (
-        d["time"].iloc[-1]
-        - d["time"].iloc[0]
+        d["time"].iloc[-1] -
+        d["time"].iloc[0]
     ) / 86400
 
     print(
@@ -526,552 +749,226 @@ print(
 
 
 # ================================================================
-# COMMON TIMESTAMP AUDIT
+# DETECT EVENTS
 # ================================================================
 
-common = None
-
-for d in datasets.values():
-
-    ts = set(
-        d["time"].astype(np.int64)
-    )
-
-    if common is None:
-        common = ts
-    else:
-        common &= ts
-
-common = sorted(common)
-
-if len(common) < 1000:
-    raise RuntimeError(
-        "COMMON TIMESTAMP DATA TOO SMALL"
-    )
-
-print(
-    "COMMON TIMESTAMPS =",
-    len(common)
-)
-
-print(
-    "COMMON START =",
-    pd.to_datetime(
-        common[0],
-        unit="s",
-        utc=True
-    )
-)
-
-print(
-    "COMMON END =",
-    pd.to_datetime(
-        common[-1],
-        unit="s",
-        utc=True
-    )
-)
-
-
-# ================================================================
-# GAP AUDIT
-# ================================================================
-
-total_gaps = 0
-gap_symbols = []
-
-for symbol, d in datasets.items():
-
-    t = d["time"].to_numpy()
-
-    diffs = np.diff(t)
-
-    gaps = int(
-        np.sum(
-            diffs != INTERVAL_SEC
-        )
-    )
-
-    if gaps > 0:
-
-        gap_symbols.append(
-            (symbol, gaps)
-        )
-
-        total_gaps += gaps
-
-
-print(
-    "GAP SYMBOLS =",
-    len(gap_symbols)
-)
-
-print(
-    "TOTAL GAPS =",
-    total_gaps
-)
-
-
-# ================================================================
-# EVENT CACHE
-# ================================================================
-
-event_cache = {}
-
-total_events = 0
+all_events = []
 
 for symbol, d in datasets.items():
 
     events = detect_events(d)
 
-    event_cache[symbol] = events
+    for e in events:
 
-    total_events += len(events)
+        e = e.copy()
+        e["symbol"] = symbol
+
+        all_events.append(e)
 
 
-print()
 print(
-    "TOTAL DETECTED EVENTS =",
-    total_events
+    "TOTAL EVENTS =",
+    len(all_events)
+)
+
+print(
+    "LONG EVENTS =",
+    sum(
+        e["side"] == "LONG"
+        for e in all_events
+    )
+)
+
+print(
+    "SHORT EVENTS =",
+    sum(
+        e["side"] == "SHORT"
+        for e in all_events
+    )
 )
 
 
 # ================================================================
-# PORTFOLIO METRICS
+# EVALUATE ALL TP SCENARIOS
 # ================================================================
 
-def calculate_metrics(arr):
+for tp_r in TP_LEVELS:
 
-    if len(arr) == 0:
+    results = []
 
-        return {
-            "n": 0,
-            "wr": 0.0,
-            "exp": 0.0,
-            "pf": 0.0,
-            "total": 0.0,
-            "maxdd": 0.0
-        }
+    for event in all_events:
 
-    arr = np.asarray(
-        arr,
-        dtype=float
-    )
+        d = datasets[
+            event["symbol"]
+        ]
 
-    wins = arr[arr > 0]
-    losses = arr[arr < 0]
-
-    gross_profit = (
-        wins.sum()
-        if len(wins)
-        else 0.0
-    )
-
-    gross_loss = (
-        abs(losses.sum())
-        if len(losses)
-        else 0.0
-    )
-
-    pf = (
-        gross_profit / gross_loss
-        if gross_loss > 0
-        else np.inf
-    )
-
-    equity = np.cumsum(arr)
-
-    running_peak = np.maximum.accumulate(
-        np.insert(
-            equity,
-            0,
-            0.0
+        r = simulate_trade(
+            d,
+            event,
+            tp_r
         )
-    )[1:]
 
-    drawdown = (
-        equity - running_peak
-    )
+        if r is not None:
+            results.append(r)
 
-    maxdd = (
-        float(drawdown.min())
-        if len(drawdown)
-        else 0.0
-    )
-
-    return {
-        "n": len(arr),
-        "wr": float(
-            np.mean(arr > 0)
-        ),
-        "exp": float(
-            arr.mean()
-        ),
-        "pf": float(pf),
-        "total": float(
-            arr.sum()
-        ),
-        "maxdd": maxdd
-    }
-
-
-# ================================================================
-# RUN ONE WALK-FORWARD FOLD
-# ================================================================
-
-def run_fold(
-    fold_id,
-    start_ratio,
-    end_ratio
-):
-
-    start_pos = int(
-        len(common) * start_ratio
-    )
-
-    end_pos = int(
-        len(common) * end_ratio
-    )
-
-    fold_start = common[start_pos]
-    fold_end = common[end_pos - 1]
-
-    returns = []
-
-    events = 0
-    open_end = 0
-    ambiguous = 0
-
-    long_count = 0
-    short_count = 0
-
-    for symbol, d in datasets.items():
-
-        for event in event_cache[symbol]:
-
-            t = event["time"]
-
-            if (
-                t < fold_start
-                or t > fold_end
-            ):
-                continue
-
-            events += 1
-
-            if event["side"] == "LONG":
-                long_count += 1
-            else:
-                short_count += 1
-
-            result = simulate_trade(
-                d,
-                event
-            )
-
-            if result is None:
-
-                ambiguous += 1
-                continue
-
-            if (
-                result["status"]
-                == "OPEN_AT_DATASET_END"
-            ):
-
-                open_end += 1
-                continue
-
-            returns.append(
-                result["r"]
-            )
-
-    metrics = calculate_metrics(
-        returns
-    )
-
-    metrics.update({
-        "fold": fold_id,
-        "start": fold_start,
-        "end": fold_end,
-        "events": events,
-        "open_end": open_end,
-        "ambiguous": ambiguous,
-        "long": long_count,
-        "short": short_count
-    })
-
-    return metrics
-
-
-# ================================================================
-# RUN ALL 5 FOLDS
-# ================================================================
-
-fold_results = []
-
-for k, (a, b) in enumerate(
-    FOLDS,
-    start=1
-):
-
-    result = run_fold(
-        k,
-        a,
-        b
-    )
-
-    fold_results.append(
-        result
-    )
+    m = metrics(results)
 
     print()
-    print("=" * 72)
+    print("=" * 70)
     print(
-        f"FOLD {k} "
-        f"({int(a*100)}%-{int(b*100)}%)"
+        f"TP = {tp_r}R"
     )
-    print("=" * 72)
+    print("=" * 70)
 
     print(
-        "START =",
-        pd.to_datetime(
-            result["start"],
-            unit="s",
-            utc=True
-        )
-    )
-
-    print(
-        "END =",
-        pd.to_datetime(
-            result["end"],
-            unit="s",
-            utc=True
-        )
-    )
-
-    print(
-        "EVENTS =",
-        result["events"]
-    )
-
-    print(
-        "TRADED =",
-        result["n"]
-    )
-
-    print(
-        "OPEN_AT_DATASET_END =",
-        result["open_end"]
-    )
-
-    print(
-        "AMBIGUOUS =",
-        result["ambiguous"]
-    )
-
-    print(
-        "LONG =",
-        result["long"],
-        "| SHORT =",
-        result["short"]
+        "TRADES =",
+        m["n"]
     )
 
     print(
         "WR =",
-        round(result["wr"], 4)
+        round(
+            m["wr"],
+            4
+        )
     )
 
     print(
         "NetExp =",
-        f'{result["exp"]:+.4f}R'
+        f'{m["exp"]:+.4f}R'
     )
 
     print(
         "NetPF =",
-        round(result["pf"], 3)
+        round(
+            m["pf"],
+            3
+        )
     )
 
     print(
         "NetTotalR =",
-        f'{result["total"]:+.2f}R'
+        f'{m["total"]:+.2f}R'
     )
 
     print(
         "MaxDD =",
-        f'{result["maxdd"]:+.2f}R'
+        f'{m["maxdd"]:+.2f}R'
     )
 
 
 # ================================================================
-# AGGREGATE WALK-FORWARD
+# DIRECTION BREAKDOWN — TP2R
+# INFORMATIONAL ONLY
 # ================================================================
 
-all_returns = []
+print()
+print("=" * 70)
+print("TP2R DIRECTION BREAKDOWN")
+print("=" * 70)
 
-for symbol, d in datasets.items():
+for side in [
+    "LONG",
+    "SHORT"
+]:
 
-    for event in event_cache[symbol]:
+    values = []
 
-        t = event["time"]
+    for event in all_events:
 
-        # Only events inside the five WF windows
-        if t < common[int(len(common) * 0.50)]:
+        if event["side"] != side:
             continue
 
-        result = simulate_trade(
+        d = datasets[
+            event["symbol"]
+        ]
+
+        r = simulate_trade(
             d,
-            event
+            event,
+            2.0
         )
 
-        if result is None:
-            continue
+        if r is not None:
+            values.append(r)
 
-        if (
-            result["status"]
-            == "OPEN_AT_DATASET_END"
-        ):
-            continue
+    m = metrics(values)
 
-        all_returns.append(
-            result["r"]
+    print()
+    print(side)
+
+    print(
+        "TRADES =",
+        m["n"]
+    )
+
+    print(
+        "WR =",
+        round(
+            m["wr"],
+            4
         )
-
-
-aggregate = calculate_metrics(
-    all_returns
-)
-
-
-# ================================================================
-# WF FOLD QUALITY
-# ================================================================
-
-positive_folds = sum(
-    1
-    for x in fold_results
-    if (
-        x["exp"] > 0
-        and x["pf"] > 1
     )
-)
 
-
-# ================================================================
-# FINAL REPORT
-# ================================================================
-
-print()
-print("=" * 72)
-print("WALK-FORWARD AGGREGATE")
-print("=" * 72)
-
-print(
-    "TRADES =",
-    aggregate["n"]
-)
-
-print(
-    "WR =",
-    round(
-        aggregate["wr"],
-        4
-    )
-)
-
-print(
-    "NetExp =",
-    f'{aggregate["exp"]:+.4f}R'
-)
-
-print(
-    "NetPF =",
-    round(
-        aggregate["pf"],
-        3
-    )
-)
-
-print(
-    "NetTotalR =",
-    f'{aggregate["total"]:+.2f}R'
-)
-
-print(
-    "MaxDD =",
-    f'{aggregate["maxdd"]:+.2f}R'
-)
-
-print(
-    "POSITIVE FOLDS =",
-    f"{positive_folds}/5"
-)
-
-
-# ================================================================
-# PREDECLARED WF GATE
-#
-# PASS:
-# 1) Aggregate NetExp > 0
-# 2) Aggregate NetPF > 1
-# 3) At least 4/5 folds positive
-#
-# Otherwise FAIL.
-# No parameter changes allowed.
-# ================================================================
-
-wf_pass = (
-    aggregate["exp"] > 0
-    and aggregate["pf"] > 1
-    and positive_folds >= 4
-)
-
-print()
-print("=" * 72)
-
-if wf_pass:
     print(
-        "WF STATUS = PASS"
-    )
-else:
-    print(
-        "WF STATUS = FAIL"
+        "NetExp =",
+        f'{m["exp"]:+.4f}R'
     )
 
-print("=" * 72)
+    print(
+        "NetPF =",
+        round(
+            m["pf"],
+            3
+        )
+    )
+
+    print(
+        "NetTotalR =",
+        f'{m["total"]:+.2f}R'
+    )
+
+    print(
+        "MaxDD =",
+        f'{m["maxdd"]:+.2f}R'
+    )
 
 
 # ================================================================
-# INTEGRITY AUDIT
+# DATA / CAUSAL AUDIT
 # ================================================================
 
 print()
-print("=" * 72)
-print("WALK-FORWARD INTEGRITY AUDIT")
-print("=" * 72)
-
-print(
-    "VALID SYMBOLS =",
-    len(datasets)
-)
-
-print(
-    "COMMON TIMESTAMPS =",
-    len(common)
-)
-
-print(
-    "COMMON TIMESTAMP AUDIT =",
-    "PASS" if total_gaps == 0 else "CHECK"
-)
+print("=" * 70)
+print("DISCOVERY INTEGRITY")
+print("=" * 70)
 
 print(
     "CAUSAL SIGNAL DETECTION = TRUE"
 )
 
 print(
-    "PREVIOUS 20 RANGE SHIFTED = TRUE"
+    "MACD CROSS USES CURRENT + PREVIOUS CLOSED CANDLE = TRUE"
+)
+
+print(
+    "EMA200 = CAUSAL"
+)
+
+print(
+    "ADX = CAUSAL"
+)
+
+print(
+    "ATR = CAUSAL"
+)
+
+print(
+    "VOLUME MEDIAN = CAUSAL"
+)
+
+print(
+    "ATR MEDIAN = CAUSAL"
 )
 
 print(
@@ -1095,39 +992,10 @@ print(
 )
 
 print(
-    "SL_ATR =",
-    SL_ATR
-)
-
-print(
-    "TP_R =",
-    TP_R
-)
-
-print(
-    "HOLD =",
-    HOLD
-)
-
-print(
-    "RETEST_BARS =",
-    RETEST_BARS
-)
-
-print(
-    "VOLUME_MULT =",
-    VOLUME_MULT
-)
-
-print(
     "TOTAL COST R =",
     COST
 )
 
-print(
-    "WF FOLDS = 5"
-)
-
-print("=" * 72)
+print("=" * 70)
 print("END")
-print("=" * 72)
+print("=" * 70)
