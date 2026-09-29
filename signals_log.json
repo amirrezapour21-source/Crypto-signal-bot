@@ -2196,5 +2196,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "XLM_1790680911",
+    "symbol": "XLM",
+    "coin_id": "stellar",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.23024211144054801,
+    "sl": 0.23452049237589198,
+    "tp1": 0.2150498407320675,
+    "tp2": 0.19790117416127168,
+    "signal_time": "2026-09-29T11:21:51.391980+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
