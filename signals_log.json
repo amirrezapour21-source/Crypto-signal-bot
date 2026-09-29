@@ -2191,11 +2191,11 @@
     "tp1": 0.13451522861100082,
     "tp2": 0.13997238176432641,
     "signal_time": "2026-09-28T22:20:20.154549+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-09-29T16:00:00+00:00",
+    "closed_time": "2026-09-29T16:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "XLM_1790680911",
