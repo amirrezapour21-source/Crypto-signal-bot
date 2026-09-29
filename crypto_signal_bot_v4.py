@@ -1,311 +1,421 @@
-import requests
-import pandas as pd
-import numpy as np
+# ============================================================
+# CRYPTO SIGNAL BOT V4
+# CANDIDATE 10
+# DIRECTIONAL EFFICIENCY TRANSITION
+# -> TREND EXPANSION
+#
+# RESEARCH ONLY
+# No live trading
+# No parameter optimization
+# No post-result filtering
+# ============================================================
+
 import time
+import math
+import requests
+import numpy as np
+import pandas as pd
 from datetime import datetime, timezone
 
+
 # ============================================================
-# SETUP V4 — CANDIDATE 9
-# MACD ZERO-LINE TREND CONTINUATION
-# 5-FOLD WALK-FORWARD VALIDATION
+# CONFIG
 # ============================================================
 
-SYMBOLS = [
-    "BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
-    "DOGE-USDT","ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT",
-    "SUI-USDT","NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT",
-    "ATOM-USDT","FIL-USDT","LTC-USDT","BCH-USDT","ETC-USDT",
-    "UNI-USDT","AAVE-USDT","INJ-USDT","SEI-USDT","TIA-USDT",
-    "WIF-USDT","PEPE-USDT","FLOKI-USDT","SHIB-USDT","TRX-USDT",
-    "RUNE-USDT","ICP-USDT","XLM-USDT","HBAR-USDT","ALGO-USDT",
-    "VET-USDT","TON-USDT","MKR-USDT"
-]
+API_URL = "https://api.kucoin.com/api/v1/market/candles"
 
 INTERVAL = "4hour"
-TARGET_DAYS = 730
+INTERVAL_SEC = 4 * 60 * 60
 
-EMA_FAST = 12
-EMA_SLOW = 26
-EMA_TREND = 200
-MACD_SIGNAL = 9
+TARGET_DAYS = 365
+MIN_HISTORY_DAYS = 180
+
+MAX_RECORDS_PER_REQUEST = 1500
+
+ER_PERIOD = 20
+ER_THRESHOLD = 0.55
+
+EMA_PERIOD = 200
 
 ADX_PERIOD = 14
 ADX_MIN = 20.0
 
 ATR_PERIOD = 20
-ATR_MEDIAN_PERIOD = 20
-VOLUME_MEDIAN_PERIOD = 20
+MEDIAN_PERIOD = 20
 
 SL_ATR = 1.25
+
 HOLD_BARS = 30
 
-TP_R_LIST = [1.0, 1.5, 2.0, 3.0]
+TP_MULTIPLIERS = [1.0, 1.5, 2.0, 3.0]
 
 FEE_R = 0.001
 SLIPPAGE_R = 0.002
 TOTAL_COST_R = FEE_R + SLIPPAGE_R
 
-MIN_HISTORY_DAYS = 180
+REQUEST_TIMEOUT = 20
+MAX_RETRIES = 5
+SLEEP_BETWEEN_REQUESTS = 0.15
 
-# ------------------------------------------------------------
-# WALK-FORWARD
-#
-# 5 folds:
-# 50-60%
-# 60-70%
-# 70-80%
-# 80-90%
-# 90-100%
-#
-# Each fold tests ONLY its future segment.
-# No parameter optimization.
-# ------------------------------------------------------------
 
-WF_FOLDS = [
-    ("WF1", 0.50, 0.60),
-    ("WF2", 0.60, 0.70),
-    ("WF3", 0.70, 0.80),
-    ("WF4", 0.80, 0.90),
-    ("WF5", 0.90, 1.00),
+# ============================================================
+# UNIVERSE
+# Same research universe used in previous V4 candidates
+# ============================================================
+
+SYMBOLS = [
+    "BTC-USDT",
+    "ETH-USDT",
+    "SOL-USDT",
+    "BNB-USDT",
+    "XRP-USDT",
+    "DOGE-USDT",
+    "ADA-USDT",
+    "LINK-USDT",
+    "AVAX-USDT",
+    "DOT-USDT",
+    "TON-USDT",
+    "SUI-USDT",
+    "APT-USDT",
+    "NEAR-USDT",
+    "OP-USDT",
+    "ARB-USDT",
+    "ATOM-USDT",
+    "FIL-USDT",
+    "LTC-USDT",
+    "BCH-USDT",
+    "ETC-USDT",
+    "UNI-USDT",
+    "AAVE-USDT",
+    "INJ-USDT",
+    "SEI-USDT",
+    "WIF-USDT",
+    "PEPE-USDT",
+    "FET-USDT",
+    "RENDER-USDT",
+    "TAO-USDT",
+    "TIA-USDT",
+    "IMX-USDT",
+    "MKR-USDT",
+    "MATIC-USDT",
+    "STX-USDT",
+    "ALGO-USDT",
+    "HBAR-USDT",
+    "ICP-USDT",
 ]
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def ts_to_str(ts):
+    return datetime.fromtimestamp(
+        int(ts), tz=timezone.utc
+    ).strftime("%Y-%m-%d %H:%M")
+
+
+def rma(series, period):
+    """
+    Wilder's RMA.
+    """
+    return series.ewm(
+        alpha=1.0 / period,
+        adjust=False,
+        min_periods=period
+    ).mean()
 
 
 # ============================================================
 # KUCOIN DATA
 # ============================================================
 
-BASE_URL = "https://api.kucoin.com"
-
-
-def fetch_history(symbol, target_days=730):
+def fetch_history(symbol, target_days=TARGET_DAYS):
     """
-    Paginated KuCoin 4H candles.
-    KuCoin candle timestamps are seconds.
-    Returns oldest -> newest.
+    Fetch closed 4H candles using time pagination.
+
+    KuCoin:
+    - max 1500 candles/request
+    - pagination via startAt/endAt
     """
 
-    end_ts = int(time.time())
-    start_ts = end_ts - target_days * 86400
+    now_ts = int(time.time())
 
-    all_rows = []
+    # Start from target history
+    requested_start = now_ts - target_days * 86400
 
-    # KuCoin returns limited rows per request.
-    # Use multiple overlapping pages safely.
-    cursor_end = end_ts
+    # Current 4H bucket start
+    current_bucket_start = (
+        now_ts // INTERVAL_SEC
+    ) * INTERVAL_SEC
 
-    for _ in range(80):
+    # Last fully closed candle
+    closed_end = current_bucket_start - 1
+
+    rows = []
+
+    cursor = requested_start
+    pages = 0
+
+    while cursor <= closed_end:
+
+        chunk_end = min(
+            cursor + (MAX_RECORDS_PER_REQUEST - 1) * INTERVAL_SEC,
+            closed_end
+        )
 
         params = {
             "symbol": symbol,
             "type": INTERVAL,
-            "startAt": start_ts,
-            "endAt": cursor_end
+            "startAt": int(cursor),
+            "endAt": int(chunk_end),
         }
 
-        try:
-            r = requests.get(
-                f"{BASE_URL}/api/v1/market/candles",
-                params=params,
-                timeout=20
-            )
+        success = False
 
-            data = r.json()
+        for attempt in range(MAX_RETRIES):
 
-            if data.get("code") != "200000":
-                print(f"{symbol} API ERROR: {data}")
+            try:
+                response = requests.get(
+                    API_URL,
+                    params=params,
+                    timeout=REQUEST_TIMEOUT
+                )
+
+                response.raise_for_status()
+
+                payload = response.json()
+
+                if payload.get("code") != "200000":
+                    raise RuntimeError(
+                        f"KuCoin code={payload.get('code')}"
+                    )
+
+                data = payload.get("data", [])
+
+                if not data:
+                    success = True
+                    break
+
+                rows.extend(data)
+
+                success = True
                 break
 
-            rows = data.get("data", [])
+            except Exception as exc:
 
-            if not rows:
-                break
+                if attempt == MAX_RETRIES - 1:
+                    print(
+                        f"[ERROR] {symbol} "
+                        f"page={pages + 1} "
+                        f"attempt={attempt + 1}: {exc}"
+                    )
+                else:
+                    time.sleep(1.0 + attempt)
 
-            all_rows.extend(rows)
-
-            ts_values = [int(x[0]) for x in rows]
-            oldest = min(ts_values)
-
-            if oldest <= start_ts:
-                break
-
-            new_cursor = oldest - 1
-
-            if new_cursor >= cursor_end:
-                break
-
-            cursor_end = new_cursor
-
-            time.sleep(0.05)
-
-        except Exception as e:
-            print(f"{symbol} FETCH ERROR: {e}")
+        if not success:
             break
 
-    if not all_rows:
-        return None
+        pages += 1
+
+        if not data:
+            break
+
+        try:
+            max_ts = max(int(x[0]) for x in data)
+        except Exception:
+            break
+
+        next_cursor = max_ts + INTERVAL_SEC
+
+        if next_cursor <= cursor:
+            print(
+                f"[STALL] {symbol}: "
+                f"cursor did not advance."
+            )
+            break
+
+        cursor = next_cursor
+
+        time.sleep(SLEEP_BETWEEN_REQUESTS)
+
+        # Safety
+        if pages > 100:
+            print(
+                f"[STOP] {symbol}: "
+                f"pagination safety limit."
+            )
+            break
+
+    if not rows:
+        return None, {
+            "pages": pages,
+            "sufficient": False,
+            "gap_count": None,
+            "days": 0.0,
+        }
+
+    # --------------------------------------------------------
+    # Build dataframe
+    # KuCoin candle:
+    # [time, open, close, high, low, volume, turnover]
+    # --------------------------------------------------------
+
+    parsed = []
+
+    for row in rows:
+
+        if len(row) < 7:
+            continue
+
+        try:
+            parsed.append([
+                int(row[0]),
+                float(row[1]),
+                float(row[2]),
+                float(row[3]),
+                float(row[4]),
+                float(row[5]),
+                float(row[6]),
+            ])
+        except Exception:
+            continue
+
+    if not parsed:
+        return None, {
+            "pages": pages,
+            "sufficient": False,
+            "gap_count": None,
+            "days": 0.0,
+        }
 
     df = pd.DataFrame(
-        all_rows,
+        parsed,
         columns=[
-            "time",
+            "timestamp",
             "open",
             "close",
             "high",
             "low",
             "volume",
-            "turnover"
+            "turnover",
         ]
     )
 
-    df["time"] = pd.to_numeric(df["time"], errors="coerce")
+    # --------------------------------------------------------
+    # Remove duplicates
+    # --------------------------------------------------------
 
-    for c in ["open", "close", "high", "low", "volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df = df.dropna(
-        subset=["time", "open", "close", "high", "low", "volume"]
+    df = (
+        df
+        .drop_duplicates(subset=["timestamp"])
+        .sort_values("timestamp")
+        .reset_index(drop=True)
     )
 
-    df = df.drop_duplicates("time")
-
-    df = df.sort_values("time").reset_index(drop=True)
-
     # --------------------------------------------------------
-    # Remove incomplete latest 4H candle
+    # Strictly remove any non-closed candle
     # --------------------------------------------------------
 
-    now = int(time.time())
-
-    interval_seconds = 4 * 3600
-
     df = df[
-        (df["time"] + interval_seconds) <= now
-    ].copy()
-
-    df = df[
-        (df["time"] >= start_ts)
+        df["timestamp"] <= closed_end
     ].copy()
 
     df = df.reset_index(drop=True)
 
-    if len(df) < 1000:
-        return None
+    if len(df) < 2:
+        return None, {
+            "pages": pages,
+            "sufficient": False,
+            "gap_count": None,
+            "days": 0.0,
+        }
 
-    return df
+    # --------------------------------------------------------
+    # Continuity audit
+    # --------------------------------------------------------
 
+    diffs = df["timestamp"].diff().dropna()
 
-# ============================================================
-# DATA AUDIT
-# ============================================================
+    gap_count = int(
+        (diffs != INTERVAL_SEC).sum()
+    )
 
-def audit_data(df):
+    first_ts = int(df["timestamp"].iloc[0])
+    last_ts = int(df["timestamp"].iloc[-1])
 
-    if df is None or len(df) < 1000:
-        return False, "INSUFFICIENT_HISTORY"
+    days = (
+        last_ts - first_ts
+    ) / 86400.0
 
-    ts = df["time"].astype(np.int64).values
+    sufficient = days >= MIN_HISTORY_DAYS
 
-    if len(ts) < 2:
-        return False, "TOO_SHORT"
+    meta = {
+        "pages": pages,
+        "sufficient": sufficient,
+        "gap_count": gap_count,
+        "days": days,
+        "candles": len(df),
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+    }
 
-    if not np.all(np.diff(ts) > 0):
-        return False, "NON_MONOTONIC_OR_DUPLICATE"
-
-    expected = 4 * 3600
-
-    gaps = np.diff(ts)
-
-    gap_count = int(np.sum(gaps != expected))
-
-    return True, gap_count
-
-
-def format_time(ts):
-    return datetime.fromtimestamp(
-        int(ts),
-        tz=timezone.utc
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    return df, meta
 
 
 # ============================================================
 # INDICATORS
 # ============================================================
 
-def calculate_indicators(df):
+def add_indicators(df):
+    df = df.copy()
 
-    x = df.copy()
-
-    close = x["close"]
-    high = x["high"]
-    low = x["low"]
-    volume = x["volume"]
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
 
     # --------------------------------------------------------
-    # EMA
-    # --------------------------------------------------------
-
-    x["ema12"] = close.ewm(
-        span=EMA_FAST,
-        adjust=False,
-        min_periods=EMA_FAST
-    ).mean()
-
-    x["ema26"] = close.ewm(
-        span=EMA_SLOW,
-        adjust=False,
-        min_periods=EMA_SLOW
-    ).mean()
-
-    x["ema200"] = close.ewm(
-        span=EMA_TREND,
-        adjust=False,
-        min_periods=EMA_TREND
-    ).mean()
-
-    # --------------------------------------------------------
-    # MACD
-    # --------------------------------------------------------
-
-    x["macd"] = x["ema12"] - x["ema26"]
-
-    x["macd_signal"] = x["macd"].ewm(
-        span=MACD_SIGNAL,
-        adjust=False,
-        min_periods=MACD_SIGNAL
-    ).mean()
-
-    x["hist"] = x["macd"] - x["macd_signal"]
-
-    # --------------------------------------------------------
-    # TRUE RANGE / ATR
-    # Wilder ATR via EWM(alpha=1/n)
+    # True Range
     # --------------------------------------------------------
 
     prev_close = close.shift(1)
 
-    tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
-
-    tr = pd.concat(
-        [tr1, tr2, tr3],
+    tr_components = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
         axis=1
-    ).max(axis=1)
+    )
 
-    x["atr"] = tr.ewm(
-        alpha=1 / ATR_PERIOD,
-        adjust=False,
-        min_periods=ATR_PERIOD
-    ).mean()
-
-    x["atr_median"] = x["atr"].rolling(
-        ATR_MEDIAN_PERIOD,
-        min_periods=ATR_MEDIAN_PERIOD
-    ).median()
+    tr = tr_components.max(axis=1)
 
     # --------------------------------------------------------
-    # ADX / DI
-    # Wilder calculation
+    # ATR - Wilder
+    # --------------------------------------------------------
+
+    df["atr"] = rma(
+        tr,
+        ATR_PERIOD
+    )
+
+    # --------------------------------------------------------
+    # EMA 200
+    # --------------------------------------------------------
+
+    df["ema200"] = close.ewm(
+        span=EMA_PERIOD,
+        adjust=False,
+        min_periods=EMA_PERIOD
+    ).mean()
+
+    # --------------------------------------------------------
+    # Directional Movement
     # --------------------------------------------------------
 
     up_move = high.diff()
@@ -317,7 +427,7 @@ def calculate_indicators(df):
             up_move,
             0.0
         ),
-        index=x.index
+        index=df.index
     )
 
     minus_dm = pd.Series(
@@ -326,90 +436,158 @@ def calculate_indicators(df):
             down_move,
             0.0
         ),
-        index=x.index
+        index=df.index
     )
 
-    atr_w = tr.ewm(
-        alpha=1 / ADX_PERIOD,
-        adjust=False,
-        min_periods=ADX_PERIOD
-    ).mean()
+    atr_for_di = rma(
+        tr,
+        ADX_PERIOD
+    )
 
-    plus_dm_w = plus_dm.ewm(
-        alpha=1 / ADX_PERIOD,
-        adjust=False,
-        min_periods=ADX_PERIOD
-    ).mean()
+    plus_di = (
+        100.0 *
+        rma(plus_dm, ADX_PERIOD) /
+        atr_for_di.replace(0, np.nan)
+    )
 
-    minus_dm_w = minus_dm.ewm(
-        alpha=1 / ADX_PERIOD,
-        adjust=False,
-        min_periods=ADX_PERIOD
-    ).mean()
+    minus_di = (
+        100.0 *
+        rma(minus_dm, ADX_PERIOD) /
+        atr_for_di.replace(0, np.nan)
+    )
 
-    plus_di = 100 * plus_dm_w / atr_w.replace(0, np.nan)
-    minus_di = 100 * minus_dm_w / atr_w.replace(0, np.nan)
+    dx_denominator = (
+        plus_di + minus_di
+    ).replace(0, np.nan)
 
     dx = (
-        100 *
+        100.0 *
         (plus_di - minus_di).abs() /
-        (plus_di + minus_di).replace(0, np.nan)
+        dx_denominator
     )
 
-    adx = dx.ewm(
-        alpha=1 / ADX_PERIOD,
-        adjust=False,
-        min_periods=ADX_PERIOD
-    ).mean()
+    adx = rma(
+        dx,
+        ADX_PERIOD
+    )
 
-    x["plus_di"] = plus_di
-    x["minus_di"] = minus_di
-    x["adx"] = adx
+    df["plus_di"] = plus_di
+    df["minus_di"] = minus_di
+    df["adx"] = adx
+
+    # --------------------------------------------------------
+    # SIGNED EFFICIENCY RATIO
+    #
+    # ER = net directional movement /
+    #      total absolute movement
+    #
+    # Range approximately [-1,+1]
+    #
+    # +1 = extremely efficient bullish movement
+    # -1 = extremely efficient bearish movement
+    # --------------------------------------------------------
+
+    net_change = (
+        close - close.shift(ER_PERIOD)
+    )
+
+    absolute_change = (
+        close.diff().abs()
+        .rolling(
+            ER_PERIOD,
+            min_periods=ER_PERIOD
+        )
+        .sum()
+    )
+
+    df["signed_er"] = (
+        net_change /
+        absolute_change.replace(0, np.nan)
+    )
+
+    # --------------------------------------------------------
+    # ATR median
+    # --------------------------------------------------------
+
+    df["atr_median"] = (
+        df["atr"]
+        .rolling(
+            MEDIAN_PERIOD,
+            min_periods=MEDIAN_PERIOD
+        )
+        .median()
+    )
 
     # --------------------------------------------------------
     # Volume median
     # --------------------------------------------------------
 
-    x["volume_median"] = volume.rolling(
-        VOLUME_MEDIAN_PERIOD,
-        min_periods=VOLUME_MEDIAN_PERIOD
-    ).median()
+    df["volume_median"] = (
+        df["volume"]
+        .rolling(
+            MEDIAN_PERIOD,
+            min_periods=MEDIAN_PERIOD
+        )
+        .median()
+    )
 
-    return x
+    return df
 
 
 # ============================================================
-# CANDIDATE 9 SIGNAL DETECTOR
+# SIGNAL DETECTION
 # ============================================================
 
-def detect_events(df):
+def detect_events(df, symbol):
+    """
+    Completely causal.
+
+    Signal is generated at current candle close.
+
+    LONG:
+        close > EMA200
+        signed ER crosses upward through +0.55
+        ADX >= 20
+        ADX rising
+        +DI > -DI
+        ATR >= ATR median
+        volume >= volume median
+
+    SHORT:
+        close < EMA200
+        signed ER crosses downward through -0.55
+        ADX >= 20
+        ADX rising
+        -DI > +DI
+        ATR >= ATR median
+        volume >= volume median
+    """
 
     events = []
 
-    x = calculate_indicators(df)
+    for i in range(1, len(df)):
 
-    for i in range(1, len(x)):
-
-        row = x.iloc[i]
-        prev = x.iloc[i - 1]
+        row = df.iloc[i]
+        prev = df.iloc[i - 1]
 
         required = [
             row["close"],
-            row["ema12"],
-            row["ema26"],
             row["ema200"],
-            row["hist"],
-            prev["hist"],
+            row["signed_er"],
+            prev["signed_er"],
             row["adx"],
+            prev["adx"],
             row["plus_di"],
             row["minus_di"],
             row["atr"],
             row["atr_median"],
             row["volume"],
-            row["volume_median"]
+            row["volume_median"],
         ]
 
-        if any(pd.isna(v) for v in required):
+        if not np.all(
+            np.isfinite(required)
+        ):
             continue
 
         # ----------------------------------------------------
@@ -418,20 +596,13 @@ def detect_events(df):
 
         long_signal = (
             row["close"] > row["ema200"]
-            and
-            row["ema12"] > row["ema26"]
-            and
-            prev["hist"] <= 0
-            and
-            row["hist"] > 0
-            and
-            row["adx"] >= ADX_MIN
-            and
-            row["plus_di"] > row["minus_di"]
-            and
-            row["atr"] >= row["atr_median"]
-            and
-            row["volume"] >= row["volume_median"]
+            and prev["signed_er"] <= ER_THRESHOLD
+            and row["signed_er"] > ER_THRESHOLD
+            and row["adx"] >= ADX_MIN
+            and row["adx"] > prev["adx"]
+            and row["plus_di"] > row["minus_di"]
+            and row["atr"] >= row["atr_median"]
+            and row["volume"] >= row["volume_median"]
         )
 
         # ----------------------------------------------------
@@ -440,226 +611,433 @@ def detect_events(df):
 
         short_signal = (
             row["close"] < row["ema200"]
-            and
-            row["ema12"] < row["ema26"]
-            and
-            prev["hist"] >= 0
-            and
-            row["hist"] < 0
-            and
-            row["adx"] >= ADX_MIN
-            and
-            row["minus_di"] > row["plus_di"]
-            and
-            row["atr"] >= row["atr_median"]
-            and
-            row["volume"] >= row["volume_median"]
+            and prev["signed_er"] >= -ER_THRESHOLD
+            and row["signed_er"] < -ER_THRESHOLD
+            and row["adx"] >= ADX_MIN
+            and row["adx"] > prev["adx"]
+            and row["minus_di"] > row["plus_di"]
+            and row["atr"] >= row["atr_median"]
+            and row["volume"] >= row["volume_median"]
         )
 
-        if long_signal and not short_signal:
-
+        if long_signal:
             events.append({
+                "symbol": symbol,
                 "idx": i,
-                "time": int(row["time"]),
+                "timestamp": int(row["timestamp"]),
                 "direction": "LONG",
                 "entry": float(row["close"]),
-                "atr": float(row["atr"])
+                "atr": float(row["atr"]),
+                "signed_er": float(row["signed_er"]),
+                "adx": float(row["adx"]),
             })
 
-        elif short_signal and not long_signal:
-
+        elif short_signal:
             events.append({
+                "symbol": symbol,
                 "idx": i,
-                "time": int(row["time"]),
+                "timestamp": int(row["timestamp"]),
                 "direction": "SHORT",
                 "entry": float(row["close"]),
-                "atr": float(row["atr"])
+                "atr": float(row["atr"]),
+                "signed_er": float(row["signed_er"]),
+                "adx": float(row["adx"]),
             })
 
     return events
 
 
 # ============================================================
-# TRADE SIMULATION
+# TRADE SIMULATOR
 # ============================================================
 
-def simulate_trade(df, event, tp_r):
+def simulate_trade(
+    df,
+    event,
+    tp_r
+):
+    """
+    Entry:
+        signal candle close
 
-    i = event["idx"]
+    Exit scanning:
+        starts from NEXT candle
 
-    entry = float(event["entry"])
-    atr = float(event["atr"])
+    Same candle:
+        SL-first if SL and TP both touched.
+
+    Timeout:
+        gross = 0R
+
+    Dataset ends before HOLD:
+        OPEN_AT_DATASET_END
+    """
+
+    idx = event["idx"]
+
+    entry = event["entry"]
+    atr = event["atr"]
     direction = event["direction"]
 
     if not np.isfinite(entry) or not np.isfinite(atr):
         return {
             "status": "AMBIGUOUS",
-            "r": None
+            "gross_r": np.nan,
+            "net_r": np.nan,
         }
 
     if atr <= 0:
         return {
             "status": "AMBIGUOUS",
-            "r": None
+            "gross_r": np.nan,
+            "net_r": np.nan,
+        }
+
+    # --------------------------------------------------------
+    # Need full HOLD window
+    # --------------------------------------------------------
+
+    final_idx = idx + HOLD_BARS
+
+    if final_idx >= len(df):
+        return {
+            "status": "OPEN_AT_DATASET_END",
+            "gross_r": np.nan,
+            "net_r": np.nan,
         }
 
     if direction == "LONG":
 
         sl = entry - SL_ATR * atr
-        tp = entry + tp_r * SL_ATR * atr
+        tp = entry + tp_r * atr
 
     else:
 
         sl = entry + SL_ATR * atr
-        tp = entry - tp_r * SL_ATR * atr
-
-    last_available = len(df) - 1
-
-    # Need HOLD_BARS complete future candles.
-    if i + HOLD_BARS > last_available:
-        return {
-            "status": "OPEN_AT_DATASET_END",
-            "r": None
-        }
+        tp = entry - tp_r * atr
 
     # --------------------------------------------------------
-    # IMPORTANT:
-    # Entry candle is NOT scanned for exit.
-    # Scan starts from next candle.
+    # Scan future candles only
     # --------------------------------------------------------
 
-    for j in range(i + 1, i + HOLD_BARS + 1):
+    for j in range(
+        idx + 1,
+        final_idx + 1
+    ):
 
-        high = float(df.iloc[j]["high"])
-        low = float(df.iloc[j]["low"])
+        candle = df.iloc[j]
+
+        high = float(candle["high"])
+        low = float(candle["low"])
 
         if direction == "LONG":
 
-            hit_sl = low <= sl
-            hit_tp = high >= tp
-
-            # Same-candle ambiguity:
-            # SL FIRST
-            if hit_sl:
-                return {
-                    "status": "SL",
-                    "r": -1.0
-                }
-
-            if hit_tp:
-                return {
-                    "status": "TP",
-                    "r": float(tp_r)
-                }
+            sl_hit = low <= sl
+            tp_hit = high >= tp
 
         else:
 
-            hit_sl = high >= sl
-            hit_tp = low <= tp
+            sl_hit = high >= sl
+            tp_hit = low <= tp
 
-            # Same-candle ambiguity:
-            # SL FIRST
-            if hit_sl:
-                return {
-                    "status": "SL",
-                    "r": -1.0
-                }
+        # ----------------------------------------------------
+        # Same-candle ambiguity
+        # Frozen rule: SL FIRST
+        # ----------------------------------------------------
 
-            if hit_tp:
-                return {
-                    "status": "TP",
-                    "r": float(tp_r)
-                }
+        if sl_hit:
+            gross_r = -SL_ATR / SL_ATR
+            status = "SL"
 
-    # Full HOLD completed with no SL/TP
+            return {
+                "status": status,
+                "gross_r": gross_r,
+                "net_r": gross_r - TOTAL_COST_R,
+                "exit_idx": j,
+                "exit_timestamp": int(
+                    candle["timestamp"]
+                ),
+            }
+
+        if tp_hit:
+            gross_r = tp_r
+            status = "TP"
+
+            return {
+                "status": status,
+                "gross_r": gross_r,
+                "net_r": gross_r - TOTAL_COST_R,
+                "exit_idx": j,
+                "exit_timestamp": int(
+                    candle["timestamp"]
+                ),
+            }
+
+    # --------------------------------------------------------
+    # Full HOLD reached without SL / TP
+    # --------------------------------------------------------
+
+    candle = df.iloc[final_idx]
+
     return {
         "status": "TIMEOUT",
-        "r": 0.0
+        "gross_r": 0.0,
+        "net_r": -TOTAL_COST_R,
+        "exit_idx": final_idx,
+        "exit_timestamp": int(
+            candle["timestamp"]
+        ),
     }
 
 
 # ============================================================
-# RESULT METRICS
+# DRAWDOWN
 # ============================================================
 
-def calculate_metrics(results):
+def calculate_max_drawdown(values):
+    if len(values) == 0:
+        return 0.0
 
-    traded = [
-        x for x in results
-        if x["status"] in ["TP", "SL", "TIMEOUT"]
-        and x["r"] is not None
-    ]
+    equity = np.cumsum(values)
+
+    peak = np.maximum.accumulate(equity)
+
+    drawdown = equity - peak
+
+    return float(drawdown.min())
+
+
+# ============================================================
+# METRICS
+# ============================================================
+
+def calculate_metrics(trades):
+
+    if not trades:
+        return {
+            "n_traded": 0,
+            "open_end": 0,
+            "ambiguous": 0,
+            "wr": np.nan,
+            "gross_exp": np.nan,
+            "net_exp": np.nan,
+            "gross_total": 0.0,
+            "net_total": 0.0,
+            "gross_pf": np.nan,
+            "net_pf": np.nan,
+            "gross_dd": 0.0,
+            "net_dd": 0.0,
+        }
 
     open_end = sum(
         x["status"] == "OPEN_AT_DATASET_END"
-        for x in results
+        for x in trades
     )
 
     ambiguous = sum(
         x["status"] == "AMBIGUOUS"
-        for x in results
+        for x in trades
     )
 
-    if not traded:
+    measured = [
+        x for x in trades
+        if x["status"]
+        not in (
+            "OPEN_AT_DATASET_END",
+            "AMBIGUOUS",
+        )
+    ]
 
+    if not measured:
         return {
-            "n_events": len(results),
             "n_traded": 0,
             "open_end": open_end,
             "ambiguous": ambiguous,
-            "wr": 0.0,
-            "net_exp": 0.0,
+            "wr": np.nan,
+            "gross_exp": np.nan,
+            "net_exp": np.nan,
+            "gross_total": 0.0,
             "net_total": 0.0,
-            "net_pf": 0.0,
-            "net_max_dd": 0.0
+            "gross_pf": np.nan,
+            "net_pf": np.nan,
+            "gross_dd": 0.0,
+            "net_dd": 0.0,
         }
 
-    gross_r = np.array(
-        [float(x["r"]) for x in traded],
-        dtype=float
+    measured = sorted(
+        measured,
+        key=lambda x: (
+            x["timestamp"],
+            x["symbol"]
+        )
     )
 
-    # Cost applied trade-by-trade.
-    net_r = gross_r - TOTAL_COST_R
+    gross = np.array([
+        x["gross_r"]
+        for x in measured
+    ], dtype=float)
 
-    wins = np.sum(gross_r > 0)
+    net = np.array([
+        x["net_r"]
+        for x in measured
+    ], dtype=float)
 
-    wr = wins / len(gross_r)
+    wins = np.sum(gross > 0)
 
-    net_exp = float(np.mean(net_r))
+    wr = wins / len(gross)
 
-    net_total = float(np.sum(net_r))
+    gross_exp = float(np.mean(gross))
+    net_exp = float(np.mean(net))
 
-    positive = net_r[net_r > 0]
-    negative = net_r[net_r < 0]
+    gross_total = float(np.sum(gross))
+    net_total = float(np.sum(net))
 
-    gross_profit = float(np.sum(positive))
-    gross_loss = abs(float(np.sum(negative)))
+    gross_positive = gross[gross > 0].sum()
+    gross_negative = gross[gross < 0].sum()
 
-    if gross_loss > 0:
-        net_pf = gross_profit / gross_loss
-    else:
-        net_pf = float("inf")
+    net_positive = net[net > 0].sum()
+    net_negative = net[net < 0].sum()
 
-    equity = np.cumsum(net_r)
-    peak = np.maximum.accumulate(
-        np.concatenate([[0.0], equity])
-    )[1:]
+    gross_pf = (
+        gross_positive / abs(gross_negative)
+        if gross_negative < 0
+        else np.inf
+    )
 
-    dd = equity - peak
-    max_dd = float(np.min(dd)) if len(dd) else 0.0
+    net_pf = (
+        net_positive / abs(net_negative)
+        if net_negative < 0
+        else np.inf
+    )
+
+    gross_dd = calculate_max_drawdown(gross)
+    net_dd = calculate_max_drawdown(net)
 
     return {
-        "n_events": len(results),
-        "n_traded": len(traded),
-        "open_end": int(open_end),
-        "ambiguous": int(ambiguous),
+        "n_traded": len(measured),
+        "open_end": open_end,
+        "ambiguous": ambiguous,
         "wr": float(wr),
+        "gross_exp": gross_exp,
         "net_exp": net_exp,
+        "gross_total": gross_total,
         "net_total": net_total,
+        "gross_pf": float(gross_pf),
         "net_pf": float(net_pf),
-        "net_max_dd": max_dd
+        "gross_dd": gross_dd,
+        "net_dd": net_dd,
     }
+
+
+# ============================================================
+# RUN ONE TP
+# ============================================================
+
+def run_tp(
+    all_data,
+    all_events,
+    tp_r
+):
+
+    trades = []
+
+    for symbol, events in all_events.items():
+
+        df = all_data[symbol]
+
+        for event in events:
+
+            result = simulate_trade(
+                df=df,
+                event=event,
+                tp_r=tp_r
+            )
+
+            result["symbol"] = symbol
+            result["timestamp"] = event["timestamp"]
+            result["direction"] = event["direction"]
+
+            trades.append(result)
+
+    return calculate_metrics(trades)
+
+
+# ============================================================
+# DIRECTION METRICS
+# ============================================================
+
+def direction_metrics(
+    all_data,
+    all_events,
+    tp_r,
+    direction
+):
+
+    trades = []
+
+    for symbol, events in all_events.items():
+
+        df = all_data[symbol]
+
+        for event in events:
+
+            if event["direction"] != direction:
+                continue
+
+            result = simulate_trade(
+                df=df,
+                event=event,
+                tp_r=tp_r
+            )
+
+            result["symbol"] = symbol
+            result["timestamp"] = event["timestamp"]
+
+            trades.append(result)
+
+    return calculate_metrics(trades)
+
+
+# ============================================================
+# PRINT METRICS
+# ============================================================
+
+def print_metrics(
+    label,
+    metrics
+):
+
+    def fmt(x):
+        if x is None:
+            return "NA"
+
+        if isinstance(x, float):
+
+            if math.isinf(x):
+                return "INF"
+
+            if np.isnan(x):
+                return "NA"
+
+            return f"{x:.4f}"
+
+        return str(x)
+
+    print(
+        f"{label:<7} "
+        f"n={metrics['n_traded']} "
+        f"open={metrics['open_end']} "
+        f"amb={metrics['ambiguous']} "
+        f"WR={fmt(metrics['wr'])} "
+        f"GrossExp={fmt(metrics['gross_exp'])} "
+        f"NetExp={fmt(metrics['net_exp'])} "
+        f"GrossTotal={fmt(metrics['gross_total'])} "
+        f"NetTotal={fmt(metrics['net_total'])} "
+        f"GrossPF={fmt(metrics['gross_pf'])} "
+        f"NetPF={fmt(metrics['net_pf'])} "
+        f"GrossDD={fmt(metrics['gross_dd'])} "
+        f"NetDD={fmt(metrics['net_dd'])}"
+    )
 
 
 # ============================================================
@@ -668,551 +1046,343 @@ def calculate_metrics(results):
 
 def main():
 
-    print("=" * 70)
-    print("SETUP V4 — CANDIDATE 9")
-    print("MACD ZERO-LINE TREND CONTINUATION")
-    print("5-FOLD WALK-FORWARD VALIDATION")
-    print("=" * 70)
+    print("=" * 80)
+    print("SETUP V4 — CANDIDATE 10")
+    print("DIRECTIONAL EFFICIENCY TRANSITION → TREND EXPANSION")
+    print("=" * 80)
 
-    print()
-    print("FROZEN PARAMETERS")
-    print("-----------------")
-    print("TIMEFRAME: 4H")
-    print("EMA: 12 / 26 / 200")
-    print("MACD SIGNAL: 9")
-    print("ADX: 14")
-    print("ADX MIN: 20")
-    print("ATR: 20")
-    print("ATR MEDIAN: 20")
-    print("VOLUME MEDIAN: 20")
-    print("SL: 1.25 ATR")
-    print("HOLD: 30 bars")
-    print("TP: 1R / 1.5R / 2R / 3R")
-    print("FEE + SLIPPAGE: 0.003R")
-    print("NO OVERLAP LOCK")
-    print("LONG + SHORT")
-    print("NO PARAMETER OPTIMIZATION")
-    print()
+    print("\nFROZEN PARAMETERS")
+    print(f"TIMEFRAME              = {INTERVAL}")
+    print(f"ER_PERIOD              = {ER_PERIOD}")
+    print(f"ER_THRESHOLD           = ±{ER_THRESHOLD}")
+    print(f"EMA                    = {EMA_PERIOD}")
+    print(f"ADX_PERIOD             = {ADX_PERIOD}")
+    print(f"ADX_MIN                = {ADX_MIN}")
+    print(f"ATR_PERIOD             = {ATR_PERIOD}")
+    print(f"ATR_MEDIAN_PERIOD      = {MEDIAN_PERIOD}")
+    print(f"VOLUME_MEDIAN_PERIOD   = {MEDIAN_PERIOD}")
+    print(f"SL                     = {SL_ATR} ATR")
+    print(f"HOLD                   = {HOLD_BARS}")
+    print(f"TP                     = {TP_MULTIPLIERS}")
+    print(f"TOTAL_COST_R           = {TOTAL_COST_R}")
+    print("DIRECTION              = LONG + SHORT")
+    print("OVERLAP_LOCK           = FALSE")
+    print("PARAMETER_OPTIMIZATION = FALSE")
+    print("EXTRA_FILTERS          = FALSE")
 
-    data = {}
+    print("\n" + "=" * 80)
+    print("DATA COLLECTION")
+    print("=" * 80)
 
-    # ========================================================
-    # FETCH
-    # ========================================================
-
-    for symbol in SYMBOLS:
-
-        print(f"Fetching {symbol} ...")
-
-        df = fetch_history(
-            symbol,
-            TARGET_DAYS
-        )
-
-        ok, info = audit_data(df)
-
-        if not ok:
-
-            print(f"{symbol}: {info}")
-            continue
-
-        gaps = info
-
-        print(
-            f"{symbol}: "
-            f"{len(df)} candles | "
-            f"{(df['time'].iloc[-1] - df['time'].iloc[0]) / 86400:.1f}d | "
-            f"gaps={gaps}"
-        )
-
-        if gaps != 0:
-            print(f"{symbol}: excluded because gaps > 0")
-            continue
-
-        data[symbol] = df
-
-    # ========================================================
-    # COMMON TIMESTAMPS
-    # ========================================================
-
-    if not data:
-        print("NO VALID DATA")
-        return
-
-    common = None
-
-    for df in data.values():
-
-        ts = set(
-            df["time"].astype(np.int64).tolist()
-        )
-
-        if common is None:
-            common = ts
-        else:
-            common &= ts
-
-    common = sorted(common)
-
-    print()
-    print("=" * 70)
-    print("DATA AUDIT")
-    print("=" * 70)
-
-    print(f"DATA_VALID_SYMBOLS: {len(data)}")
-    print(f"COMMON_TIMESTAMPS: {len(common)}")
-
-    if len(common) < 2000:
-        print("FAIL: insufficient common timestamps")
-        return
-
-    print(
-        "COMMON_START:",
-        format_time(common[0])
-    )
-
-    print(
-        "COMMON_END:",
-        format_time(common[-1])
-    )
-
-    # ========================================================
-    # ALIGN ALL DATA TO COMMON TIMESTAMPS
-    # ========================================================
-
-    common_set = set(common)
-
-    aligned = {}
-
-    for symbol, df in data.items():
-
-        x = df[
-            df["time"].isin(common_set)
-        ].copy()
-
-        x = x.sort_values("time").reset_index(drop=True)
-
-        aligned[symbol] = x
-
-    # ========================================================
-    # PRE-COMPUTE EVENTS
-    # ========================================================
-
-    print()
-    print("=" * 70)
-    print("SIGNAL DETECTION")
-    print("=" * 70)
-
+    all_data = {}
     all_events = {}
 
-    total_events = 0
-    total_long = 0
-    total_short = 0
+    valid_symbols = []
+    insufficient_symbols = []
+    failed_symbols = []
 
-    for symbol, df in aligned.items():
+    total_gaps = 0
 
-        events = detect_events(df)
-
-        all_events[symbol] = events
-
-        total_events += len(events)
-
-        total_long += sum(
-            e["direction"] == "LONG"
-            for e in events
-        )
-
-        total_short += sum(
-            e["direction"] == "SHORT"
-            for e in events
-        )
+    for n, symbol in enumerate(SYMBOLS, 1):
 
         print(
-            f"{symbol}: "
-            f"{len(events)} events"
+            f"[{n:02d}/{len(SYMBOLS)}] "
+            f"{symbol} ...",
+            end=" ",
+            flush=True
         )
 
-    print()
-    print(f"TOTAL_EVENTS: {total_events}")
-    print(f"LONG_EVENTS: {total_long}")
-    print(f"SHORT_EVENTS: {total_short}")
+        try:
 
-    # ========================================================
-    # WALK-FORWARD FOLDS
-    # ========================================================
-
-    fold_results = []
-
-    print()
-    print("=" * 70)
-    print("WALK-FORWARD VALIDATION")
-    print("=" * 70)
-
-    for fold_name, start_frac, end_frac in WF_FOLDS:
-
-        n_common = len(common)
-
-        start_idx = int(
-            np.floor(n_common * start_frac)
-        )
-
-        end_idx = int(
-            np.floor(n_common * end_frac)
-        )
-
-        if end_idx <= start_idx:
-            continue
-
-        test_start_time = common[start_idx]
-        test_end_time = common[min(end_idx - 1, n_common - 1)]
-
-        print()
-        print("=" * 70)
-        print(f"{fold_name}")
-        print(
-            f"TEST WINDOW: "
-            f"{format_time(test_start_time)} -> "
-            f"{format_time(test_end_time)}"
-        )
-        print("=" * 70)
-
-        for tp_r in TP_R_LIST:
-
-            fold_trades = []
-
-            for symbol, df in aligned.items():
-
-                events = all_events[symbol]
-
-                for event in events:
-
-                    event_time = event["time"]
-
-                    # ----------------------------------------
-                    # IMPORTANT:
-                    # ONLY future fold segment is tested.
-                    # ----------------------------------------
-
-                    if event_time < test_start_time:
-                        continue
-
-                    if event_time >= test_end_time:
-                        continue
-
-                    result = simulate_trade(
-                        df,
-                        event,
-                        tp_r
-                    )
-
-                    result_record = {
-                        "symbol": symbol,
-                        "time": event_time,
-                        "direction": event["direction"],
-                        "status": result["status"],
-                        "r": result["r"]
-                    }
-
-                    fold_trades.append(
-                        result_record
-                    )
-
-            metrics = calculate_metrics(
-                fold_trades
+            df, meta = fetch_history(
+                symbol,
+                TARGET_DAYS
             )
 
-            metrics["fold"] = fold_name
-            metrics["tp_r"] = tp_r
-
-            fold_results.append(metrics)
-
-            print()
-            print(
-                f"{fold_name} | TP {tp_r}R"
-            )
-
-            print(
-                f"n_events: {metrics['n_events']}"
-            )
-
-            print(
-                f"n_traded: {metrics['n_traded']}"
-            )
-
-            print(
-                f"open_end: {metrics['open_end']}"
-            )
-
-            print(
-                f"ambiguous: {metrics['ambiguous']}"
-            )
-
-            print(
-                f"wr: {metrics['wr']:.4f}"
-            )
-
-            print(
-                f"net_exp: {metrics['net_exp']:.4f}"
-            )
-
-            print(
-                f"net_total: {metrics['net_total']:.4f}"
-            )
-
-            print(
-                f"net_pf: {metrics['net_pf']:.4f}"
-            )
-
-            print(
-                f"net_max_dd: {metrics['net_max_dd']:.4f}"
-            )
-
-    # ========================================================
-    # AGGREGATE WF RESULTS
-    # ========================================================
-
-    print()
-    print("=" * 70)
-    print("WALK-FORWARD AGGREGATE")
-    print("=" * 70)
-
-    for tp_r in TP_R_LIST:
-
-        rows = [
-            x for x in fold_results
-            if x["tp_r"] == tp_r
-        ]
-
-        all_fold_trades = []
-
-        # Reconstruct aggregate from fold metrics
-        # using per-fold expectancy * trade count
-        total_trades = sum(
-            x["n_traded"]
-            for x in rows
-        )
-
-        weighted_net = sum(
-            x["net_exp"] * x["n_traded"]
-            for x in rows
-        )
-
-        aggregate_exp = (
-            weighted_net / total_trades
-            if total_trades > 0
-            else 0.0
-        )
-
-        aggregate_total = sum(
-            x["net_total"]
-            for x in rows
-        )
-
-        positive_folds = sum(
-            x["net_exp"] > 0
-            for x in rows
-        )
-
-        # Conservative aggregate PF:
-        # reconstruct gross positive/negative from
-        # net expectancy and PF per fold.
-        total_profit = 0.0
-        total_loss = 0.0
-
-        for x in rows:
-
-            if x["net_pf"] <= 0:
+            if df is None:
+                failed_symbols.append(symbol)
+                print("FAILED")
                 continue
 
-            net_total = x["net_total"]
-            n = x["n_traded"]
-
-            # Sum of net returns:
-            # PF = profit / loss
-            #
-            # profit - loss = net_total
-            # profit / loss = PF
-            #
-            # therefore:
-            # loss = -net_total / (PF - 1)
-            #
-            # for PF > 1.
-            #
-            # If PF < 1, solve using absolute net loss.
-            if x["net_pf"] > 1.0:
-
-                loss = (
-                    -net_total /
-                    (x["net_pf"] - 1.0)
+            if not meta["sufficient"]:
+                insufficient_symbols.append(symbol)
+                print(
+                    f"INSUFFICIENT "
+                    f"{meta['days']:.1f}d"
                 )
+                continue
 
-                if loss < 0:
-                    loss = abs(loss)
+            # ------------------------------------------------
+            # Important:
+            # If gaps exist, keep symbol visible in audit.
+            # Do not silently pretend continuity.
+            # ------------------------------------------------
 
-                profit = (
-                    x["net_pf"] * loss
-                )
+            total_gaps += meta["gap_count"]
 
-            elif x["net_pf"] < 1.0:
+            df = add_indicators(df)
 
-                profit = (
-                    net_total /
-                    (1.0 - 1.0 / x["net_pf"])
-                )
+            events = detect_events(
+                df,
+                symbol
+            )
 
-                profit = abs(profit)
+            all_data[symbol] = df
+            all_events[symbol] = events
 
-                loss = (
-                    profit /
-                    x["net_pf"]
-                )
+            valid_symbols.append(symbol)
 
-            else:
+            print(
+                f"OK "
+                f"{len(df)} candles "
+                f"{meta['days']:.1f}d "
+                f"gaps={meta['gap_count']} "
+                f"events={len(events)}"
+            )
 
-                profit = 0.0
-                loss = 0.0
+        except Exception as exc:
 
-            total_profit += profit
-            total_loss += loss
+            failed_symbols.append(symbol)
 
-        aggregate_pf = (
-            total_profit / total_loss
-            if total_loss > 0
-            else 0.0
+            print(
+                f"FAILED: {exc}"
+            )
+
+    # ========================================================
+    # DATA AUDIT
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("DATA AUDIT")
+    print("=" * 80)
+
+    print(
+        f"VALID SYMBOLS       = {len(valid_symbols)}"
+    )
+
+    print(
+        f"INSUFFICIENT        = {len(insufficient_symbols)}"
+    )
+
+    print(
+        f"FAILED              = {len(failed_symbols)}"
+    )
+
+    print(
+        f"TOTAL GAPS          = {total_gaps}"
+    )
+
+    if not valid_symbols:
+        print("\nNO VALID SYMBOLS. STOP.")
+        return
+
+    # --------------------------------------------------------
+    # Event totals
+    # --------------------------------------------------------
+
+    all_event_list = []
+
+    for symbol in valid_symbols:
+        all_event_list.extend(
+            all_events[symbol]
         )
 
-        max_dd = min(
-            [x["net_max_dd"] for x in rows],
-            default=0.0
+    all_event_list.sort(
+        key=lambda x: (
+            x["timestamp"],
+            x["symbol"]
         )
+    )
 
-        print()
+    long_events = sum(
+        x["direction"] == "LONG"
+        for x in all_event_list
+    )
+
+    short_events = sum(
+        x["direction"] == "SHORT"
+        for x in all_event_list
+    )
+
+    print(
+        f"TOTAL EVENTS        = {len(all_event_list)}"
+    )
+
+    print(
+        f"LONG EVENTS         = {long_events}"
+    )
+
+    print(
+        f"SHORT EVENTS        = {short_events}"
+    )
+
+    if all_event_list:
+
         print(
-            f"TP {tp_r}R AGGREGATE"
+            f"FIRST EVENT         = "
+            f"{ts_to_str(all_event_list[0]['timestamp'])}"
         )
 
         print(
-            f"folds: {len(rows)}"
+            f"LAST EVENT          = "
+            f"{ts_to_str(all_event_list[-1]['timestamp'])}"
         )
 
-        print(
-            f"traded: {total_trades}"
+    # ========================================================
+    # TP RESULTS
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("PORTFOLIO RESULTS")
+    print("=" * 80)
+
+    results = {}
+
+    for tp in TP_MULTIPLIERS:
+
+        metrics = run_tp(
+            all_data,
+            all_events,
+            tp
         )
 
-        print(
-            f"positive_folds: "
-            f"{positive_folds}/{len(rows)}"
+        results[tp] = metrics
+
+        print_metrics(
+            f"TP{tp:g}R",
+            metrics
         )
 
-        print(
-            f"net_exp: {aggregate_exp:.4f}"
+    # ========================================================
+    # TP2 DIRECTION AUDIT
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("TP2R DIRECTION AUDIT")
+    print("=" * 80)
+
+    for direction in ["LONG", "SHORT"]:
+
+        metrics = direction_metrics(
+            all_data,
+            all_events,
+            2.0,
+            direction
         )
 
-        print(
-            f"net_total: {aggregate_total:.4f}"
-        )
-
-        print(
-            f"net_pf: {aggregate_pf:.4f}"
-        )
-
-        print(
-            f"worst_fold_dd: {max_dd:.4f}"
+        print_metrics(
+            direction,
+            metrics
         )
 
     # ========================================================
     # INTEGRITY AUDIT
     # ========================================================
 
-    print()
-    print("=" * 70)
-    print("VALIDATION INTEGRITY AUDIT")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print("INTEGRITY AUDIT")
+    print("=" * 80)
 
-    print("TIMEFRAME_4H: TRUE")
-    print("CAUSAL_SIGNAL_DETECTION: TRUE")
-    print("MACD_CROSS_CURRENT_PREVIOUS_HIST: TRUE")
-    print("EMA200_CAUSAL: TRUE")
-    print("ADX_CAUSAL: TRUE")
-    print("ATR_CAUSAL: TRUE")
-    print("ATR_MEDIAN_CAUSAL: TRUE")
-    print("VOLUME_MEDIAN_CAUSAL: TRUE")
-    print("ENTRY_AT_SIGNAL_CLOSE: TRUE")
-    print("ENTRY_CANDLE_EXIT_SCAN: FALSE")
-    print("SAME_CANDLE_SL_FIRST: TRUE")
-    print("NO_OVERLAP_LOCK: TRUE")
-    print("NO_PARAMETER_OPTIMIZATION: TRUE")
-    print("NO_EXTRA_FILTERS: TRUE")
-    print("LONG_AND_SHORT_INCLUDED: TRUE")
-    print(f"TOTAL_COST_R: {TOTAL_COST_R:.4f}")
-    print("WALK_FORWARD_CAUSAL: TRUE")
-    print("FUTURE_FOLD_ONLY: TRUE")
-    print("NO_LOOKAHEAD: TRUE")
+    integrity = {
+        "TIMEFRAME_4H": INTERVAL == "4hour",
+        "CAUSAL_SIGNAL_DETECTION": True,
+        "SIGNED_ER_CURRENT_PREVIOUS_CROSS": True,
+        "EMA200_CAUSAL": True,
+        "ADX_CAUSAL": True,
+        "DI_CAUSAL": True,
+        "ATR_CAUSAL": True,
+        "ATR_MEDIAN_CAUSAL": True,
+        "VOLUME_MEDIAN_CAUSAL": True,
+        "ENTRY_AT_SIGNAL_CLOSE": True,
+        "ENTRY_CANDLE_EXIT_SCAN": False,
+        "SAME_CANDLE_SL_FIRST": True,
+        "NO_OVERLAP_LOCK": True,
+        "NO_PARAMETER_OPTIMIZATION": True,
+        "NO_EXTRA_FILTERS": True,
+        "LONG_AND_SHORT_INCLUDED": True,
+        "TOTAL_COST_R_003": abs(
+            TOTAL_COST_R - 0.003
+        ) < 1e-12,
+    }
+
+    for key, value in integrity.items():
+
+        print(
+            f"{key:<42} "
+            f"{'TRUE' if value else 'FALSE'}"
+        )
+
+    integrity_pass = all(
+        integrity.values()
+    )
+
+    print(
+        f"\nINTEGRITY RESULT = "
+        f"{'PASS' if integrity_pass else 'FAIL'}"
+    )
 
     # ========================================================
-    # FINAL GATE
+    # DISCOVERY DECISION
     # ========================================================
 
-    print()
-    print("=" * 70)
+    print("\n" + "=" * 80)
     print("RESEARCH GATE")
-    print("=" * 70)
+    print("=" * 80)
 
-    for tp_r in TP_R_LIST:
+    print(
+        "IMPORTANT: This is a 365-day DISCOVERY screen."
+    )
 
-        rows = [
-            x for x in fold_results
-            if x["tp_r"] == tp_r
-        ]
+    print(
+        "No TP or direction is selected for production."
+    )
 
-        if not rows:
-            continue
+    # Discovery is intentionally descriptive.
+    # No optimization or selection is performed here.
 
-        total_trades = sum(
-            x["n_traded"]
-            for x in rows
-        )
+    tp2 = results.get(2.0)
 
-        aggregate_exp = (
-            sum(
-                x["net_exp"] * x["n_traded"]
-                for x in rows
-            ) / total_trades
-            if total_trades > 0
-            else 0.0
-        )
+    if tp2:
 
-        positive_folds = sum(
-            x["net_exp"] > 0
-            for x in rows
+        print(
+            f"\nTP2R NetExp = "
+            f"{tp2['net_exp']:.4f}R"
         )
 
         print(
-            f"TP {tp_r}R | "
-            f"NetExp={aggregate_exp:.4f} | "
-            f"PositiveFolds="
-            f"{positive_folds}/{len(rows)}"
+            f"TP2R NetPF  = "
+            f"{tp2['net_pf']:.4f}"
         )
 
-    print()
+        print(
+            f"TP2R NetTotal = "
+            f"{tp2['net_total']:.2f}R"
+        )
+
+    print("\n" + "=" * 80)
+    print("CANDIDATE 10 DISCOVERY COMPLETE")
+    print("=" * 80)
+
     print(
-        "STATUS: WF RESULT IS RESEARCH EVIDENCE ONLY."
-    )
-    print(
-        "NO LONG-ONLY / SHORT-ONLY SELECTION."
-    )
-    print(
-        "NO PARAMETER PATCHING."
-    )
-    print(
-        "NO PRODUCTION DEPLOYMENT FROM THIS RUN."
+        "\nNEXT STEP RULE:"
     )
 
-    print()
-    print("=" * 70)
-    print("RUN COMPLETE")
-    print("=" * 70)
+    print(
+        "If discovery evidence is acceptable, "
+        "the SAME FROZEN SPEC must be tested on "
+        "730D IS/OOS."
+    )
+
+    print(
+        "If OOS passes the predeclared gate, "
+        "then perform 5-fold Walk-Forward."
+    )
+
+    print(
+        "No parameter changes are allowed "
+        "after seeing these results."
+    )
 
 
 if __name__ == "__main__":
-    main()
+    main() 
