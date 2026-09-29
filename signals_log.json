@@ -2174,11 +2174,11 @@
     "tp1": 0.06529573832598368,
     "tp2": 0.06050145467711983,
     "signal_time": "2026-09-28T22:20:20.151785+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-29T01:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-09-29T11:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "CC_1790634020",
@@ -2208,9 +2208,9 @@
     "tp1": 0.2150498407320675,
     "tp2": 0.19790117416127168,
     "signal_time": "2026-09-29T11:21:51.391980+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-09-29T15:00:00+00:00",
     "closed_time": null,
     "result": null
   }
