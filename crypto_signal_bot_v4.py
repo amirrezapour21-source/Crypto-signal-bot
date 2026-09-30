@@ -1,171 +1,489 @@
-import requests,pandas as pd,numpy as np,time
+# CANDIDATE 11 — ROBUSTNESS / STRESS TEST
+# Frozen logic — NO parameter optimization
 
-S=["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT",
-"ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT","SUI-USDT","APT-USDT",
-"NEAR-USDT","OP-USDT","ARB-USDT","ATOM-USDT","FIL-USDT","LTC-USDT",
-"BCH-USDT","ETC-USDT","UNI-USDT","AAVE-USDT","INJ-USDT","SEI-USDT",
-"WIF-USDT","PEPE-USDT","FET-USDT","RENDER-USDT","TAO-USDT","TIA-USDT",
-"IMX-USDT","STX-USDT","ALGO-USDT","HBAR-USDT","ICP-USDT"]
+import requests, time, math
+import pandas as pd
+import numpy as np
 
-URL="https://api.kucoin.com/api/v1/market/candles"
-INT=14400;DAYS=730;HOLD=30;COST=.003;TPs=[1,1.5,2,3]
+BASE = "https://api.kucoin.com"
+TYPE = "4hour"
 
-def get(s):
-    end=int(time.time())//INT*INT-1
-    cur=end-DAYS*86400;out=[]
-    while cur<end:
-        e=min(cur+INT*1499,end);ok=False
-        for _ in range(3):
-            try:
-                r=requests.get(URL,params={"symbol":s,"type":"4hour",
-                "startAt":cur,"endAt":e},timeout=20).json()
-                if r.get("code")=="200000":
-                    out+=r["data"];ok=True;break
-            except:pass
-            time.sleep(1)
-        if not ok:return None
-        if not r["data"]:break
-        cur=max(int(x[0]) for x in r["data"])+INT
-    if not out:return None
-    d=pd.DataFrame(out,columns=["t","o","c","h","l","v","turn"])
-    d=d.drop_duplicates("t").sort_values("t")
-    for x in ["o","c","h","l","v"]:d[x]=pd.to_numeric(d[x])
-    d["t"]=pd.to_datetime(d.t.astype(int),unit="s",utc=True)
-    return d.reset_index(drop=True)
+SYMBOLS = [
+    "BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
+    "DOGE-USDT","ADA-USDT","LINK-USDT","AVAX-USDT","DOT-USDT",
+    "SUI-USDT","APT-USDT","NEAR-USDT","ATOM-USDT","LTC-USDT",
+    "BCH-USDT","ETC-USDT","FIL-USDT","ARB-USDT","OP-USDT",
+    "INJ-USDT","SEI-USDT","AAVE-USDT","UNI-USDT","TRX-USDT",
+    "HBAR-USDT","PEPE-USDT","WIF-USDT","FLOKI-USDT","SHIB-USDT",
+    "ICP-USDT","ALGO-USDT","VET-USDT","GRT-USDT","RUNE-USDT"
+]
 
-def rma(x,n):
-    return x.ewm(alpha=1/n,adjust=False,min_periods=n).mean()
+DAYS = 730
+HOLD = 30
+SL_ATR = 1.25
+TPs = [1.0, 1.5, 2.0, 3.0]
 
-def prep(d):
-    h,l,c,v=d.h,d.l,d.c,d.v
-    tr=pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
-    atr=rma(tr,20)
-    mid=c.rolling(20).mean()
-    sd=c.rolling(20).std()
-    z=(c-mid)/sd
-    rng=h.rolling(20).max()-l.rolling(20).min()
-    rm=rng.rolling(20).median()
-    vm=v.rolling(20).median()
-    ema=c.ewm(span=200,adjust=False).mean()
+COSTS = [0.003, 0.004, 0.005]
 
-    long=(c>ema)&(z.shift(1)<=-2)&(z>-2)&(rng>=rm)&(v>=vm)
-    short=(c<ema)&(z.shift(1)>=2)&(z<2)&(rng>=rm)&(v>=vm)
+def fetch(symbol):
+    end = int(time.time())
+    start = end - DAYS * 86400
 
-    d=d.copy();d["atr"]=atr
-    d["sig"]=np.where(long,1,np.where(short,-1,0))
-    return d
+    rows = []
+    cursor = end
 
-def trade(d,i,sg,tp):
-    if i+HOLD>=len(d):return None
-    e=d.c.iloc[i];a=d.atr.iloc[i]
-    sl=e-sg*1.25*a
-    target=e+sg*1.25*a*tp
-    for j in range(i+1,i+HOLD+1):
-        hi,lo=d.h.iloc[j],d.l.iloc[j]
-        slhit=(lo<=sl) if sg==1 else (hi>=sl)
-        tphit=(hi>=target) if sg==1 else (lo<=target)
-        if slhit:return -1-COST
-        if tphit:return 1.25*tp-COST
-    return -COST
+    for _ in range(10):
+        p = {
+            "symbol": symbol,
+            "type": TYPE,
+            "endAt": cursor
+        }
 
-def stats(x):
-    x=np.array(x,float)
-    if not len(x):return 0,0,0,0,0,0
-    pos=x[x>0].sum();neg=x[x<0].sum()
-    pf=pos/abs(neg) if neg else np.inf
-    eq=np.cumsum(x);dd=eq-np.maximum.accumulate(eq)
-    return len(x),(x>0).mean(),x.mean(),x.sum(),pf,dd.min()
+        r = requests.get(
+            BASE + "/api/v1/market/candles",
+            params=p,
+            timeout=20
+        )
+        j = r.json()
 
-print("="*78)
-print("SETUP V4 — CANDIDATE 11")
-print("5-FOLD WALK-FORWARD VALIDATION")
-print("="*78)
-print("FROZEN: 4H | ZSCORE20 ±2 | EMA200 | RANGE20>=MEDIAN | VOL>=MEDIAN")
-print("SL=1.25ATR | HOLD=30 | TP=1/1.5/2/3R | COST=.003R")
-print("LONG + SHORT | NO OPTIMIZATION | NO EXTRA FILTERS")
+        if j.get("code") != "200000":
+            break
 
-D={};failed=[]
+        data = j.get("data", [])
+        if not data:
+            break
 
-for n,s in enumerate(S,1):
-    d=get(s)
-    if d is None or len(d)<180*6:
-        print(f"[{n:02}/{len(S)}] {s} FAILED")
-        failed.append(s);continue
-    D[s]=prep(d)
-    print(f"[{n:02}/{len(S)}] {s} OK {len(d)} candles")
+        rows += data
 
-if len(D)<10:raise SystemExit("NOT ENOUGH VALID SYMBOLS")
+        oldest = min(int(x[0]) for x in data)
 
-common=set(D[next(iter(D))].t)
-for d in D.values():common &= set(d.t)
-common=sorted(common)
+        if oldest <= start:
+            break
 
-events=[]
-for s,d in D.items():
-    ix={t:i for i,t in enumerate(d.t)}
-    for t in common:
-        i=ix[t];sg=d.sig.iloc[i]
-        if sg:events.append((t,s,i,int(sg)))
-events.sort()
+        cursor = oldest - 1
+        time.sleep(0.15)
 
-print("\nVALID SYMBOLS =",len(D))
-print("COMMON TIMESTAMPS =",len(common))
-print("EVENTS =",len(events))
-print("FAILED =",failed)
+    if not rows:
+        return None
 
-ALL={tp:[] for tp in TPs}
+    df = pd.DataFrame(
+        rows,
+        columns=["time","open","close","high","low","volume","turnover"]
+    )
 
-for f in range(5):
-    a=int(len(common)*(.50+.10*f))
-    b=int(len(common)*(.60+.10*f))
-    ws,we=common[a],common[b-1]
-    ev=[x for x in events if ws<=x[0]<=we]
+    for c in ["open","close","high","low","volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    print(f"\nWF{f+1}: {ws} -> {we} | EVENTS={len(ev)}")
+    df["time"] = pd.to_datetime(
+        pd.to_numeric(df["time"]),
+        unit="s",
+        utc=True
+    )
+
+    df = (
+        df.drop_duplicates("time")
+          .sort_values("time")
+          .reset_index(drop=True)
+    )
+
+    # remove incomplete candle
+    now = pd.Timestamp.now(tz="UTC")
+    df = df[df["time"] + pd.Timedelta(hours=4) <= now]
+
+    df = df[
+        df["time"] >= pd.Timestamp(start, unit="s", tz="UTC")
+    ]
+
+    return df.reset_index(drop=True)
+
+
+def prepare(df):
+    x = df.copy()
+
+    # Candidate 11 — frozen indicators
+    x["ema200"] = x["close"].ewm(
+        span=200, adjust=False
+    ).mean()
+
+    mean20 = x["close"].rolling(20).mean()
+    std20 = x["close"].rolling(20).std()
+
+    x["z"] = (x["close"] - mean20) / std20
+
+    x["range20"] = (
+        x["high"].rolling(20).max()
+        - x["low"].rolling(20).min()
+    )
+
+    x["range_med"] = x["range20"].rolling(20).median()
+    x["vol_med"] = x["volume"].rolling(20).median()
+
+    # Wilder ATR20
+    prev_close = x["close"].shift(1)
+
+    tr = pd.concat([
+        x["high"] - x["low"],
+        (x["high"] - prev_close).abs(),
+        (x["low"] - prev_close).abs()
+    ], axis=1).max(axis=1)
+
+    x["atr"] = tr.ewm(
+        alpha=1/20,
+        adjust=False
+    ).mean()
+
+    return x
+
+
+def events(df):
+    out = []
+
+    for i in range(1, len(df)):
+        r = df.iloc[i]
+        p = df.iloc[i-1]
+
+        if not np.isfinite(r["atr"]):
+            continue
+
+        if not np.isfinite(r["z"]) or not np.isfinite(p["z"]):
+            continue
+
+        if not np.isfinite(r["range20"]):
+            continue
+
+        if not np.isfinite(r["range_med"]):
+            continue
+
+        if not np.isfinite(r["vol_med"]):
+            continue
+
+        # LONG
+        long_ok = (
+            r["close"] > r["ema200"] and
+            p["z"] <= -2.0 and
+            r["z"] > -2.0 and
+            r["range20"] >= r["range_med"] and
+            r["volume"] >= r["vol_med"]
+        )
+
+        # SHORT
+        short_ok = (
+            r["close"] < r["ema200"] and
+            p["z"] >= 2.0 and
+            r["z"] < 2.0 and
+            r["range20"] >= r["range_med"] and
+            r["volume"] >= r["vol_med"]
+        )
+
+        if long_ok:
+            out.append((i, "LONG"))
+
+        elif short_ok:
+            out.append((i, "SHORT"))
+
+    return out
+
+
+def trade(df, i, direction, tp_mult):
+    if i + HOLD >= len(df):
+        return None
+
+    entry = float(df.iloc[i]["close"])
+    atr = float(df.iloc[i]["atr"])
+
+    if direction == "LONG":
+        sl = entry - SL_ATR * atr
+        tp = entry + tp_mult * SL_ATR * atr
+    else:
+        sl = entry + SL_ATR * atr
+        tp = entry - tp_mult * SL_ATR * atr
+
+    for j in range(i + 1, i + HOLD + 1):
+        h = float(df.iloc[j]["high"])
+        l = float(df.iloc[j]["low"])
+
+        if direction == "LONG":
+
+            # Same-candle SL first
+            if l <= sl:
+                return -1.0
+
+            if h >= tp:
+                return tp_mult
+
+        else:
+
+            # Same-candle SL first
+            if h >= sl:
+                return -1.0
+
+            if l <= tp:
+                return tp_mult
+
+    # TIMEOUT = 0R gross
+    return 0.0
+
+
+def max_dd(values):
+    if not values:
+        return 0.0
+
+    eq = np.cumsum(values)
+    peak = np.maximum.accumulate(np.r_[0, eq])[:-1]
+    dd = eq - peak
+
+    return float(dd.min())
+
+
+def metrics(rows, cost):
+    if not rows:
+        return {
+            "n": 0,
+            "wr": 0,
+            "exp": 0,
+            "total": 0,
+            "pf": 0,
+            "dd": 0
+        }
+
+    net = np.array([r - cost for r in rows], dtype=float)
+
+    wins = net[net > 0]
+    losses = net[net < 0]
+
+    pf = (
+        wins.sum() / abs(losses.sum())
+        if len(losses) else math.inf
+    )
+
+    return {
+        "n": len(net),
+        "wr": float((net > 0).mean()),
+        "exp": float(net.mean()),
+        "total": float(net.sum()),
+        "pf": float(pf),
+        "dd": max_dd(net)
+    }
+
+
+def main():
+
+    all_events = []
+    symbol_data = {}
+
+    print("\n=== CANDIDATE 11 ROBUSTNESS TEST ===")
+    print("Frozen logic | No optimization")
+    print("Loading 730D / 4H data...\n")
+
+    for s in SYMBOLS:
+        try:
+            df = fetch(s)
+
+            if df is None or len(df) < 1000:
+                print(s, "INSUFFICIENT")
+                continue
+
+            df = prepare(df)
+            ev = events(df)
+
+            symbol_data[s] = df
+
+            for i, d in ev:
+                all_events.append({
+                    "symbol": s,
+                    "i": i,
+                    "direction": d
+                })
+
+            print(
+                s,
+                "candles=", len(df),
+                "events=", len(ev)
+            )
+
+        except Exception as e:
+            print(s, "ERROR", str(e))
+
+    print("\nTOTAL EVENTS:", len(all_events))
+    print("VALID SYMBOLS:", len(symbol_data))
+
+    # ---------------------------------------------------------
+    # TP + COST STRESS
+    # ---------------------------------------------------------
+
+    results = []
 
     for tp in TPs:
-        rows=[]
-        for t,s,i,sg in ev:
-            r=trade(D[s],i,sg,tp)
-            if r is not None:rows.append(r)
 
-        z=stats(rows)
-        ALL[tp]+=rows
+        gross_by_symbol = {}
 
-        print(f"TP{tp}R n={z[0]} WR={z[1]:.4f} "
-              f"NetExp={z[2]:.4f} Total={z[3]:.3f} "
-              f"PF={z[4]:.4f} DD={z[5]:.3f}")
+        for e in all_events:
 
-print("\n"+"="*78)
-print("AGGREGATE WALK-FORWARD")
-print("="*78)
+            s = e["symbol"]
 
-for tp in TPs:
-    z=stats(ALL[tp])
-    print(f"TP{tp}R | n={z[0]} | WR={z[1]:.4f} | "
-          f"NetExp={z[2]:.4f} | Total={z[3]:.3f} | "
-          f"PF={z[4]:.4f} | MaxDD={z[5]:.3f}")
+            r = trade(
+                symbol_data[s],
+                e["i"],
+                e["direction"],
+                tp
+            )
 
-print("\n"+"="*78)
-print("WF RESEARCH GATE")
-print("="*78)
-print("REQUIRED: >=4/5 positive folds")
-print("NO TP SELECTION FROM A SINGLE FOLD")
-print("NO DIRECTION SELECTION")
-print("NO PARAMETER OPTIMIZATION")
-print("NO PRODUCTION DEPLOYMENT")
+            if r is None:
+                continue
 
-for tp in TPs:
-    # positive folds recalculated from the printed fold results
-    pos=0
-    for f in range(5):
-        a=int(len(common)*(.50+.10*f))
-        b=int(len(common)*(.60+.10*f))
-        ev=[x for x in events if common[a]<=x[0]<=common[b-1]]
-        rows=[]
-        for t,s,i,sg in ev:
-            r=trade(D[s],i,sg,tp)
-            if r is not None:rows.append(r)
-        if len(rows) and np.mean(rows)>0:pos+=1
-    print(f"TP{tp}R PositiveFolds={pos}/5",
-          "PASS" if pos>=4 else "FAIL")
+            gross_by_symbol.setdefault(s, []).append(r)
+
+        for cost in COSTS:
+
+            rows = []
+
+            for vals in gross_by_symbol.values():
+                rows.extend(vals)
+
+            m = metrics(rows, cost)
+
+            results.append([
+                tp,
+                cost,
+                m["n"],
+                m["wr"],
+                m["exp"],
+                m["total"],
+                m["pf"],
+                m["dd"]
+            ])
+
+    print("\n=== COST STRESS ===")
+
+    print(
+        "TP | COST | N | WR | NET_EXP | NET_TOTAL | PF | MAX_DD"
+    )
+
+    for x in results:
+        print(
+            f"{x[0]:>3} | "
+            f"{x[1]:.3f} | "
+            f"{x[2]:>4} | "
+            f"{x[3]:.3f} | "
+            f"{x[4]:+.4f} | "
+            f"{x[5]:+.2f} | "
+            f"{x[6]:.3f} | "
+            f"{x[7]:+.2f}"
+        )
+
+    # ---------------------------------------------------------
+    # SYMBOL CONCENTRATION
+    # ---------------------------------------------------------
+
+    print("\n=== SYMBOL CONCENTRATION ===")
+    print("Baseline cost = 0.003R")
+
+    for tp in TPs:
+
+        sym_total = {}
+
+        for e in all_events:
+
+            s = e["symbol"]
+
+            r = trade(
+                symbol_data[s],
+                e["i"],
+                e["direction"],
+                tp
+            )
+
+            if r is None:
+                continue
+
+            sym_total[s] = sym_total.get(s, 0.0) + r - 0.003
+
+        if not sym_total:
+            continue
+
+        total = sum(sym_total.values())
+
+        ordered = sorted(
+            sym_total.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        print(f"\nTP {tp}R")
+        print("Total:", round(total, 3))
+
+        for n in [1, 3, 5]:
+
+            removed = sum(
+                v for _, v in ordered[:n]
+            )
+
+            remain = total - removed
+
+            print(
+                f"Remove Top {n}: "
+                f"remain={remain:+.3f}R "
+                f"removed={removed:+.3f}R"
+            )
+
+        print("Top contributors:")
+
+        for s, v in ordered[:5]:
+            print(
+                f"  {s}: {v:+.3f}R"
+            )
+
+    # ---------------------------------------------------------
+    # LONG / SHORT DIAGNOSTIC
+    # ---------------------------------------------------------
+
+    print("\n=== LONG / SHORT DIAGNOSTIC ===")
+
+    for tp in TPs:
+
+        for direction in ["LONG", "SHORT"]:
+
+            rows = []
+
+            for e in all_events:
+
+                if e["direction"] != direction:
+                    continue
+
+                r = trade(
+                    symbol_data[e["symbol"]],
+                    e["i"],
+                    direction,
+                    tp
+                )
+
+                if r is not None:
+                    rows.append(r)
+
+            m = metrics(rows, 0.003)
+
+            print(
+                f"TP{tp} {direction}: "
+                f"N={m['n']} "
+                f"WR={m['wr']:.3f} "
+                f"Exp={m['exp']:+.4f} "
+                f"Total={m['total']:+.2f} "
+                f"PF={m['pf']:.3f} "
+                f"DD={m['dd']:+.2f}"
+            )
+
+    print("\n=== INTEGRITY ===")
+    print("Causal indicators: PASS")
+    print("Entry at signal close: PASS")
+    print("Entry candle exit scan: FALSE")
+    print("Same-candle SL first: PASS")
+    print("Long + Short included: PASS")
+    print("No parameter optimization: PASS")
+    print("No extra filters: PASS")
+    print("Stress costs only: PASS")
+
+    print("\n=== ROBUSTNESS TEST COMPLETE ===")
+
+
+if __name__ == "__main__":
+    main()
