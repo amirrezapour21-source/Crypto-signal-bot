@@ -71,19 +71,18 @@ def trade(d,i,sg,tp):
 def stats(x):
     x=np.array(x,float)
     if not len(x):return 0,0,0,0,0,0
-    win=(x>0).mean();ex=x.mean();total=x.sum()
     pos=x[x>0].sum();neg=x[x<0].sum()
     pf=pos/abs(neg) if neg else np.inf
     eq=np.cumsum(x);dd=eq-np.maximum.accumulate(eq)
-    return len(x),win,ex,total,pf,dd.min()
+    return len(x),(x>0).mean(),x.mean(),x.sum(),pf,dd.min()
 
 print("="*78)
 print("SETUP V4 — CANDIDATE 11")
-print("730D IS / OOS VALIDATION")
+print("5-FOLD WALK-FORWARD VALIDATION")
 print("="*78)
 print("FROZEN: 4H | ZSCORE20 ±2 | EMA200 | RANGE20>=MEDIAN | VOL>=MEDIAN")
 print("SL=1.25ATR | HOLD=30 | TP=1/1.5/2/3R | COST=.003R")
-print("LONG + SHORT | CAUSAL | NO OPTIMIZATION | NO EXTRA FILTERS")
+print("LONG + SHORT | NO OPTIMIZATION | NO EXTRA FILTERS")
 
 D={};failed=[]
 
@@ -101,10 +100,6 @@ common=set(D[next(iter(D))].t)
 for d in D.values():common &= set(d.t)
 common=sorted(common)
 
-IS_END=common[int(len(common)*.70)-1]
-OOS_START=common[int(len(common)*.70)]
-OOS_END=common[-1]
-
 events=[]
 for s,d in D.items():
     ix={t:i for i,t in enumerate(d.t)}
@@ -113,69 +108,64 @@ for s,d in D.items():
         if sg:events.append((t,s,i,int(sg)))
 events.sort()
 
-IS=[e for e in events if e[0]<=IS_END]
-OOS=[e for e in events if e[0]>=OOS_START]
-
 print("\nVALID SYMBOLS =",len(D))
 print("COMMON TIMESTAMPS =",len(common))
-print("COMMON START =",common[0])
-print("COMMON END =",common[-1])
-print("IS END =",IS_END)
-print("OOS START =",OOS_START)
-print("OOS END =",OOS_END)
-print("TOTAL EVENTS =",len(events))
-print("IS EVENTS =",len(IS))
-print("OOS EVENTS =",len(OOS))
+print("EVENTS =",len(events))
 print("FAILED =",failed)
 
-for name,ev in [("IS",IS),("OOS",OOS)]:
-    print("\n"+"-"*78)
-    print(name)
+ALL={tp:[] for tp in TPs}
+
+for f in range(5):
+    a=int(len(common)*(.50+.10*f))
+    b=int(len(common)*(.60+.10*f))
+    ws,we=common[a],common[b-1]
+    ev=[x for x in events if ws<=x[0]<=we]
+
+    print(f"\nWF{f+1}: {ws} -> {we} | EVENTS={len(ev)}")
 
     for tp in TPs:
         rows=[]
         for t,s,i,sg in ev:
             r=trade(D[s],i,sg,tp)
             if r is not None:rows.append(r)
+
         z=stats(rows)
+        ALL[tp]+=rows
+
         print(f"TP{tp}R n={z[0]} WR={z[1]:.4f} "
               f"NetExp={z[2]:.4f} Total={z[3]:.3f} "
               f"PF={z[4]:.4f} DD={z[5]:.3f}")
 
-print("\n"+"-"*78)
-print("OOS DIRECTION CHECK — TP2R")
-print("-"*78)
+print("\n"+"="*78)
+print("AGGREGATE WALK-FORWARD")
+print("="*78)
 
-for name,ev in [("LONG", [e for e in OOS if e[3]==1]),
-                ("SHORT",[e for e in OOS if e[3]==-1])]:
-    rows=[]
-    for t,s,i,sg in ev:
-        r=trade(D[s],i,sg,2)
-        if r is not None:rows.append(r)
-    z=stats(rows)
-    print(f"{name} n={z[0]} WR={z[1]:.4f} "
-          f"NetExp={z[2]:.4f} Total={z[3]:.3f} PF={z[4]:.4f} DD={z[5]:.3f}")
+for tp in TPs:
+    z=stats(ALL[tp])
+    print(f"TP{tp}R | n={z[0]} | WR={z[1]:.4f} | "
+          f"NetExp={z[2]:.4f} | Total={z[3]:.3f} | "
+          f"PF={z[4]:.4f} | MaxDD={z[5]:.3f}")
 
 print("\n"+"="*78)
-print("INTEGRITY AUDIT")
+print("WF RESEARCH GATE")
 print("="*78)
-print("TIMEFRAME_4H = TRUE")
-print("CAUSAL_SIGNAL_DETECTION = TRUE")
-print("ENTRY_AT_SIGNAL_CLOSE = TRUE")
-print("ENTRY_CANDLE_EXIT_SCAN = FALSE")
-print("SAME_CANDLE_SL_FIRST = TRUE")
-print("LONG_AND_SHORT_INCLUDED = TRUE")
-print("NO_PARAMETER_OPTIMIZATION = TRUE")
-print("NO_EXTRA_FILTERS = TRUE")
-print("NO_OVERLAP_LOCK = TRUE")
-print("TOTAL_COST_R_003 = TRUE")
-print("OOS_WARMUP_CONTEXT = TRUE")
-print("COMMON_TIMESTAMP_SPLIT = TRUE")
-print("FUTURE_DATA_NOT_USED_FOR_SIGNAL = TRUE")
-print("INTEGRITY RESULT = PASS")
+print("REQUIRED: >=4/5 positive folds")
+print("NO TP SELECTION FROM A SINGLE FOLD")
+print("NO DIRECTION SELECTION")
+print("NO PARAMETER OPTIMIZATION")
+print("NO PRODUCTION DEPLOYMENT")
 
-print("\n"+"="*78)
-print("RESEARCH GATE")
-print("="*78)
-print("OOS must be evaluated before any TP or direction decision.")
-print("No production deployment from this run.")
+for tp in TPs:
+    # positive folds recalculated from the printed fold results
+    pos=0
+    for f in range(5):
+        a=int(len(common)*(.50+.10*f))
+        b=int(len(common)*(.60+.10*f))
+        ev=[x for x in events if common[a]<=x[0]<=common[b-1]]
+        rows=[]
+        for t,s,i,sg in ev:
+            r=trade(D[s],i,sg,tp)
+            if r is not None:rows.append(r)
+        if len(rows) and np.mean(rows)>0:pos+=1
+    print(f"TP{tp}R PositiveFolds={pos}/5",
+          "PASS" if pos>=4 else "FAIL")
