@@ -133,8 +133,7 @@ def prep(d):
         min_periods=200
     ).mean()
 
-    d["rng"]=
-        h.rolling(20).max()-l.rolling(20).min()
+    d["rng"]=h.rolling(20).max()-l.rolling(20).min()
 
     d["rm"]=d["rng"].rolling(20).median()
     d["vm"]=v.rolling(20).median()
