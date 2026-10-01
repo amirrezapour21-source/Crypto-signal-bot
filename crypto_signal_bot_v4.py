@@ -1,6 +1,7 @@
 # crypto_signal_bot_v4.py
-# CANDIDATE 11 — SHORT-ONLY — 5-FOLD WALK-FORWARD
-# Frozen strategy. No optimization. No extra filters.
+# CANDIDATE 11 — SHORT ONLY
+# DATA FIX + 5-FOLD WALK-FORWARD
+# No strategy modification.
 
 import time
 import requests
@@ -8,8 +9,6 @@ import numpy as np
 import pandas as pd
 
 BASE = "https://api.kucoin.com"
-TYPE = "4hour"
-
 SYMBOLS = [
     "BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT",
     "SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC",
@@ -17,59 +16,59 @@ SYMBOLS = [
     "WIF","PEPE","FLOKI"
 ]
 
-N_CANDLES = 4380
+N = 4380
+STEP = 4 * 3600
 HOLD = 30
 SL_ATR = 1.25
 COST = 0.003
-
 TP_LIST = [1.5, 2.0]
 
-STEP_MS = 4 * 60 * 60 * 1000
-CHUNK = 1500
 
-
-def fetch_exact(symbol):
+def get_data(symbol):
     url = f"{BASE}/api/v1/market/candles"
-
-    end_ms = int(pd.Timestamp(
+    end = int(pd.Timestamp(
         "2026-09-30 00:00:00", tz="UTC"
-    ).timestamp() * 1000)
+    ).timestamp())
 
-    rows = []
-    cur_end = end_ms
+    all_rows = []
 
-    while len(rows) < N_CANDLES:
-        params = {
+    # Large overlapping backward requests.
+    # Overlap prevents pagination boundary loss.
+    for _ in range(5):
+        start = end - 1500 * STEP // 1000
+
+        p = {
             "symbol": f"{symbol}-USDT",
-            "type": TYPE,
-            "endAt": cur_end // 1000,
-            "startAt": max(0, (cur_end - CHUNK * STEP_MS) // 1000)
+            "type": "4hour",
+            "startAt": start,
+            "endAt": end
         }
 
-        r = requests.get(url, params=params, timeout=20)
+        r = requests.get(url, params=p, timeout=30)
         r.raise_for_status()
-        js = r.json()
 
-        if js.get("code") != "200000":
-            raise RuntimeError(f"{symbol}: {js}")
+        j = r.json()
+        if j.get("code") != "200000":
+            raise RuntimeError(str(j))
 
-        data = js.get("data", [])
-        if not data:
+        rows = j.get("data", [])
+        if not rows:
             break
 
-        rows.extend(data)
+        all_rows.extend(rows)
 
-        ts = [int(x[0]) * 1000 for x in data]
-        mn = min(ts)
+        ts = min(int(x[0]) for x in rows)
 
-        cur_end = mn - STEP_MS
-        time.sleep(0.08)
+        # 2-candle overlap
+        end = ts - STEP * 2 // 1000
 
-    if not rows:
-        raise RuntimeError(f"{symbol}: no data")
+        time.sleep(0.15)
+
+    if not all_rows:
+        raise RuntimeError("no candles returned")
 
     df = pd.DataFrame(
-        rows,
+        all_rows,
         columns=[
             "ts","open","close","high","low",
             "volume","turnover"
@@ -91,58 +90,82 @@ def fetch_exact(symbol):
           .reset_index(drop=True)
     )
 
-    if len(df) < N_CANDLES:
+    # Find an EXACT contiguous 4380-candle block.
+    t = df["ts"].astype("int64").to_numpy() // 10**9
+    diff = np.diff(t)
+
+    good = diff == STEP
+
+    run = 0
+    start_idx = None
+
+    for i, ok in enumerate(good):
+        if ok:
+            run += 1
+        else:
+            run = 0
+
+        if run >= N - 1:
+            start_idx = i - (N - 2)
+            break
+
+    if start_idx is None:
         raise RuntimeError(
-            f"{symbol}: only {len(df)} candles"
+            f"no contiguous {N}-candle block; "
+            f"received={len(df)}"
         )
 
-    # Exact latest backward window
-    df = df.tail(N_CANDLES).copy()
+    out = df.iloc[
+        start_idx:start_idx + N
+    ].copy()
 
-    if len(df) != N_CANDLES:
+    if len(out) != N:
         raise RuntimeError(
-            f"{symbol}: final count={len(df)}"
+            f"final count={len(out)}"
         )
 
-    diffs = df["ts"].diff().dropna().dt.total_seconds()
+    d = out["ts"].diff().dropna()
 
-    if not (diffs == 4 * 3600).all():
+    if not (d == pd.Timedelta(hours=4)).all():
         raise RuntimeError(
-            f"{symbol}: timestamp gap detected"
+            "contiguous-block validation failed"
         )
 
-    return df
+    return out.reset_index(drop=True)
 
 
 def indicators(df):
     x = df.copy()
 
-    ma = x["close"].rolling(20).mean()
-    sd = x["close"].rolling(20).std(ddof=0)
+    m = x.close.rolling(20).mean()
+    s = x.close.rolling(20).std(ddof=0)
 
-    x["z"] = (x["close"] - ma) / sd.replace(0, np.nan)
+    x["z"] = (x.close - m) / s.replace(0, np.nan)
 
-    x["ema200"] = x["close"].ewm(
+    x["ema"] = x.close.ewm(
         span=200,
         adjust=False
     ).mean()
 
-    x["range20"] = (
-        x["high"].rolling(20).max()
-        - x["low"].rolling(20).min()
+    x["range"] = (
+        x.high.rolling(20).max()
+        - x.low.rolling(20).min()
     )
 
-    x["range_med"] = x["range20"].rolling(20).median()
+    x["range_med"] = (
+        x["range"].rolling(20).median()
+    )
 
-    x["vol_med"] = x["volume"].rolling(20).median()
+    x["vol_med"] = (
+        x.volume.rolling(20).median()
+    )
 
-    # Wilder ATR20
-    prev_close = x["close"].shift(1)
+    pc = x.close.shift(1)
 
     tr = pd.concat([
-        x["high"] - x["low"],
-        (x["high"] - prev_close).abs(),
-        (x["low"] - prev_close).abs()
+        x.high - x.low,
+        (x.high - pc).abs(),
+        (x.low - pc).abs()
     ], axis=1).max(axis=1)
 
     x["atr"] = tr.ewm(
@@ -153,138 +176,118 @@ def indicators(df):
     return x
 
 
-def make_events(df, tp_r):
+def events(df, tp):
     x = indicators(df)
-    events = []
+    out = []
 
-    # Signal candle i, execution starts at i+1
     for i in range(20, len(x) - HOLD - 1):
 
         p = x.iloc[i - 1]
         c = x.iloc[i]
 
-        # FROZEN CANDIDATE 11 — SHORT ONLY
-        signal = (
-            c["close"] < c["ema200"]
-            and p["z"] >= 2.0
-            and c["z"] < 2.0
-            and c["range20"] >= c["range_med"]
-            and c["volume"] >= c["vol_med"]
+        # FROZEN CANDIDATE 11 — SHORT
+        ok = (
+            c.close < c.ema
+            and p.z >= 2
+            and c.z < 2
+            and c["range"] >= c["range_med"]
+            and c.volume >= c["vol_med"]
         )
 
-        if not signal:
+        if not ok:
             continue
 
-        entry_i = i + 1
+        ei = i + 1
 
-        entry = x.iloc[entry_i]["close"]
-        atr = x.iloc[entry_i]["atr"]
+        entry = x.iloc[ei].close
+        atr = x.iloc[ei].atr
 
-        if not np.isfinite(entry) or not np.isfinite(atr):
-            continue
-
-        if atr <= 0:
+        if not np.isfinite(entry + atr) or atr <= 0:
             continue
 
         sl = entry + SL_ATR * atr
-        tp = entry - tp_r * SL_ATR * atr
+        target = entry - tp * SL_ATR * atr
+
+        last = min(
+            ei + HOLD,
+            len(x) - 1
+        )
 
         result = None
         exit_i = None
 
-        last_i = min(
-            entry_i + HOLD,
-            len(x) - 1
-        )
+        for j in range(ei, last + 1):
 
-        # Start checking from ENTRY candle.
-        # Same-candle SL-first.
-        for j in range(entry_i, last_i + 1):
+            hi = x.iloc[j].high
+            lo = x.iloc[j].low
 
-            hi = x.iloc[j]["high"]
-            lo = x.iloc[j]["low"]
-
+            # SL first
             if hi >= sl:
                 result = -1.0
                 exit_i = j
                 break
 
-            if lo <= tp:
-                result = tp_r
+            if lo <= target:
+                result = tp
                 exit_i = j
                 break
 
         if result is None:
-            # Expiration at close of final holding candle
-            exit_price = x.iloc[last_i]["close"]
+            exit_price = x.iloc[last].close
 
-            # Short R
-            result = (entry - exit_price) / (
-                SL_ATR * atr
-            )
+            result = (
+                entry - exit_price
+            ) / (SL_ATR * atr)
 
             result = float(
-                np.clip(result, -1.0, tp_r)
+                np.clip(result, -1, tp)
             )
 
-            exit_i = last_i
+            exit_i = last
 
-        net_r = result - COST
-
-        events.append({
-            "signal_ts": x.iloc[i]["ts"],
-            "entry_ts": x.iloc[entry_i]["ts"],
-            "exit_ts": x.iloc[exit_i]["ts"],
-            "r": float(net_r)
+        out.append({
+            "entry_ts": x.iloc[ei].ts,
+            "exit_ts": x.iloc[exit_i].ts,
+            "r": float(result - COST)
         })
 
-    return pd.DataFrame(events)
+    return pd.DataFrame(out)
 
 
-def metrics(events):
-    if len(events) == 0:
+def metric(e):
+    if len(e) == 0:
         return {
             "N": 0,
             "Exp": np.nan,
             "PF": np.nan,
-            "Total": 0.0,
-            "DD": 0.0
+            "Total": 0,
+            "DD": 0
         }
 
-    r = events["r"].astype(float).to_numpy()
+    r = e.r.to_numpy(float)
 
-    wins = r[r > 0]
-    losses = r[r < 0]
+    win = r[r > 0].sum()
+    loss = abs(r[r < 0].sum())
 
-    exp = r.mean()
+    pf = win / loss if loss else np.inf
 
-    gross_win = wins.sum()
-    gross_loss = abs(losses.sum())
-
-    pf = (
-        gross_win / gross_loss
-        if gross_loss > 0
-        else np.inf
-    )
-
-    equity = np.cumsum(r)
+    eq = np.cumsum(r)
     peak = np.maximum.accumulate(
-        np.r_[0.0, equity]
+        np.r_[0, eq]
     )[1:]
 
-    dd = equity - peak
-    max_dd = dd.min() if len(dd) else 0.0
+    dd = eq - peak
 
     return {
         "N": len(r),
-        "Exp": exp,
+        "Exp": r.mean(),
         "PF": pf,
         "Total": r.sum(),
-        "DD": max_dd
+        "DD": dd.min()
     }
 
 
-def print_metrics(label, m):
+def show(name, m):
     pf = (
         f"{m['PF']:.3f}"
         if np.isfinite(m["PF"])
@@ -292,116 +295,104 @@ def print_metrics(label, m):
     )
 
     print(
-        f"{label:<10} "
+        f"{name:<8}"
         f"N={m['N']:4d} "
         f"Exp={m['Exp']:+.4f} "
         f"PF={pf:>7} "
         f"Total={m['Total']:+.2f}R "
-        f"MaxDD={m['DD']:+.2f}R"
+        f"DD={m['DD']:+.2f}R"
     )
 
 
-def fold_events(all_events, start_ts, end_ts):
-    """
-    Only events fully contained inside the period.
-    This prevents a trade from crossing an IS/OOS boundary.
-    """
+def inside(e, a, b):
+    if len(e) == 0:
+        return e
 
-    e = all_events[
-        (all_events["entry_ts"] >= start_ts) &
-        (all_events["exit_ts"] < end_ts)
-    ].copy()
-
-    return e.sort_values("exit_ts").reset_index(drop=True)
+    return e[
+        (e.entry_ts >= a) &
+        (e.exit_ts < b)
+    ].copy().sort_values("exit_ts")
 
 
-def run():
+def main():
+
     print("=" * 72)
-    print("CANDIDATE 11 — SHORT-ONLY — 5-FOLD WALK-FORWARD")
+    print("CANDIDATE 11 — SHORT-ONLY")
+    print("DATA FIX + 5-FOLD WALK-FORWARD")
     print("=" * 72)
 
-    print("\nFetching data...")
-
-    dfs = {}
-    failed = []
+    data = {}
 
     for s in SYMBOLS:
         try:
-            df = fetch_exact(s)
-            dfs[s] = df
+            d = get_data(s)
+            data[s] = d
+
             print(
-                f"{s:<6} "
-                f"{len(df)} candles  "
-                f"{df['ts'].iloc[0]} -> {df['ts'].iloc[-1]}"
+                f"{s:<6} {len(d)} candles  "
+                f"{d.ts.iloc[0]} -> {d.ts.iloc[-1]}"
             )
+
         except Exception as e:
-            failed.append((s, str(e)))
             print(f"{s:<6} ERROR: {e}")
 
-    if failed:
-        print("\nABORT: some symbols failed.")
-        for s, e in failed:
-            print(" ", s, e)
-        raise SystemExit(1)
-
-    if len(dfs) != 33:
-        print(
-            f"\nABORT: VALID SYMBOLS={len(dfs)}, expected 33"
-        )
+    if len(data) != len(SYMBOLS):
+        print("\nABORT: data validation failed.")
         raise SystemExit(1)
 
     common = None
 
-    for df in dfs.values():
-        ts = set(df["ts"])
-        common = ts if common is None else common & ts
+    for d in data.values():
+        st = set(d.ts)
 
-    common = sorted(common)
+        common = (
+            st if common is None
+            else common & st
+        )
 
-    if len(common) != N_CANDLES:
+    common = pd.DatetimeIndex(
+        sorted(common)
+    )
+
+    if len(common) != N:
         print(
-            f"\nABORT: COMMON TIMESTAMPS={len(common)}, "
-            f"expected {N_CANDLES}"
+            f"\nABORT: COMMON={len(common)} "
+            f"EXPECTED={N}"
         )
         raise SystemExit(1)
 
-    common = pd.DatetimeIndex(common)
-
     print("\nDATA AUDIT = PASS")
-    print(f"VALID SYMBOLS = {len(dfs)}")
+    print(f"VALID SYMBOLS = {len(data)}")
     print(f"COMMON TIMESTAMPS = {len(common)}")
     print(f"START = {common[0]}")
     print(f"END   = {common[-1]}")
 
-    # ------------------------------------------------------------
-    # Build events once, causally, for both TP variants.
-    # ------------------------------------------------------------
-
     all_events = {}
 
     for tp in TP_LIST:
-        chunks = []
 
-        for s, df in dfs.items():
-            z = df[
-                df["ts"].isin(common)
+        parts = []
+
+        for s, d in data.items():
+
+            d = d[
+                d.ts.isin(common)
             ].copy()
 
-            ev = make_events(z, tp)
+            e = events(d, tp)
 
-            if len(ev):
-                ev["symbol"] = s
-                chunks.append(ev)
+            if len(e):
+                e["symbol"] = s
+                parts.append(e)
 
-        if chunks:
+        if parts:
             e = pd.concat(
-                chunks,
+                parts,
                 ignore_index=True
             )
         else:
             e = pd.DataFrame(
                 columns=[
-                    "signal_ts",
                     "entry_ts",
                     "exit_ts",
                     "r",
@@ -410,142 +401,90 @@ def run():
             )
 
         e = e.sort_values(
-            ["exit_ts", "entry_ts", "symbol"]
+            "exit_ts"
         ).reset_index(drop=True)
 
         all_events[tp] = e
 
         print(
-            f"\nTP{tp:g}: TOTAL EVENTS = {len(e)}"
+            f"\nTP{tp:g}R TOTAL EVENTS = {len(e)}"
         )
 
-    # ------------------------------------------------------------
-    # 5 contiguous temporal folds.
-    #
-    # Fold k:
-    # IS  = everything before OOS
-    # OOS = fold k
-    #
-    # No event is allowed to cross either boundary.
-    # ------------------------------------------------------------
-
     folds = np.array_split(
-        np.arange(len(common)),
-        5
+        np.arange(N), 5
     )
 
     for tp in TP_LIST:
 
-        events = all_events[tp]
+        e = all_events[tp]
 
-        print("\n")
-        print("=" * 72)
+        print("\n" + "=" * 72)
         print(f"TP{tp:g}R — SHORT ONLY")
         print("=" * 72)
 
-        oos_results = []
-
-        for k, idx in enumerate(folds, 1):
-
-            oos_start = common[idx[0]]
-
-            if k < 5:
-                oos_end = common[folds[k][0]]
-            else:
-                oos_end = common[-1] + pd.Timedelta(
-                    hours=4
-                )
-
-            is_start = common[0]
-
-            # IS ends exactly where OOS starts.
-            is_end = oos_start
-
-            is_ev = fold_events(
-                events,
-                is_start,
-                is_end
-            )
-
-            oos_ev = fold_events(
-                events,
-                oos_start,
-                oos_end
-            )
-
-            im = metrics(is_ev)
-            om = metrics(oos_ev)
-
-            print(f"\nFOLD {k}")
-            print(
-                f"IS  {is_start} -> "
-                f"{is_end}"
-            )
-            print_metrics("IS", im)
-
-            print(
-                f"OOS {oos_start} -> "
-                f"{oos_end}"
-            )
-            print_metrics("OOS", om)
-
-            oos_results.append(om)
-
-        # Aggregate OOS
-        oos_frames = []
+        oos_parts = []
+        positive = 0
 
         for k, idx in enumerate(folds):
-            oos_start = common[idx[0]]
+
+            oos_a = common[idx[0]]
 
             if k < 4:
-                oos_end = common[folds[k + 1][0]]
+                oos_b = common[folds[k + 1][0]]
             else:
-                oos_end = common[-1] + pd.Timedelta(
-                    hours=4
-                )
+                oos_b = common[-1] + pd.Timedelta(hours=4)
 
-            e = fold_events(
-                events,
-                oos_start,
-                oos_end
+            is_a = common[0]
+            is_b = oos_a
+
+            ie = inside(e, is_a, is_b)
+            oe = inside(e, oos_a, oos_b)
+
+            im = metric(ie)
+            om = metric(oe)
+
+            print(f"\nFOLD {k + 1}")
+
+            print(
+                f"IS  {is_a} -> {is_b}"
             )
+            show("IS", im)
 
-            if len(e):
-                oos_frames.append(e)
+            print(
+                f"OOS {oos_a} -> {oos_b}"
+            )
+            show("OOS", om)
 
-        if oos_frames:
-            aggregate = pd.concat(
-                oos_frames,
+            if om["Exp"] > 0:
+                positive += 1
+
+            if len(oe):
+                oos_parts.append(oe)
+
+        if oos_parts:
+            agg = pd.concat(
+                oos_parts,
                 ignore_index=True
-            ).sort_values(
-                "exit_ts"
-            )
+            ).sort_values("exit_ts")
         else:
-            aggregate = pd.DataFrame(
-                columns=events.columns
+            agg = pd.DataFrame(
+                columns=e.columns
             )
 
-        am = metrics(aggregate)
-
-        positive_folds = sum(
-            x["Exp"] > 0
-            for x in oos_results
-        )
+        am = metric(agg)
 
         print("\n" + "-" * 72)
         print(f"TP{tp:g}R AGGREGATE OOS")
-        print_metrics("OOS ALL", am)
+        show("OOS ALL", am)
         print(
             f"Positive OOS folds = "
-            f"{positive_folds}/5"
+            f"{positive}/5"
         )
 
-        # Simple validation gate — NOT a production decision.
         passed = (
-            positive_folds == 5
-            and am["N"] > 0
+            positive == 5
             and am["Exp"] > 0
-            and am["PF"] > 1.0
+            and am["PF"] > 1
             and am["Total"] > 0
         )
 
@@ -560,4 +499,4 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    main()
