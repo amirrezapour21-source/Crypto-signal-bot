@@ -1,590 +1,149 @@
-import time, requests, numpy as np, pandas as pd
+# crypto_signal_bot_v4.py
+import requests, pandas as pd, numpy as np, time
 
-BASE="https://api.kucoin.com"
+BASE="https://api.kucoin.com/api/v1/market/candles"
+SYMS=["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT","SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC","BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP","WIF","PEPE","FLOKI"]
+N=4380; HOLD=30; ATR_M=1.25; COST=.003
+TFS="4hour"; STEP=4*3600
 
-SYMBOLS=[
-"BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT",
-"SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC",
-"BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP",
-"WIF","PEPE","FLOKI"
-]
-
-N=4380
-STEP=14400
-HOLD=30
-SL=1.25
-COST=.003
-TPS=[1.5,2.0]
-
-
-def fetch(symbol):
-
-    url=f"{BASE}/api/v1/market/candles"
-
-    end=int(pd.Timestamp(
-        "2026-09-30 00:00:00",
-        tz="UTC"
-    ).timestamp())
-
-    rows=[]
-
-    # KuCoin pagination: move backward using the
-    # actual minimum timestamp returned by each page.
-    for _ in range(5):
-
-        start=end-1500*STEP
-
-        params={
-            "symbol":f"{symbol}-USDT",
-            "type":"4hour",
-            "startAt":start,
-            "endAt":end
-        }
-
-        r=requests.get(
-            url,
-            params=params,
-            timeout=30
-        )
+def fetch(sym):
+    rows=[]; end=int(pd.Timestamp("2026-09-30T00:00:00Z").timestamp())
+    for _ in range(10):
+        r=requests.get(BASE,params={"symbol":f"{sym}-USDT","type":TFS,"endAt":end},timeout=20)
         r.raise_for_status()
+        x=r.json()["data"]
+        if not x: break
+        rows += x
+        mn=min(int(z[0]) for z in x)
+        end=mn-STEP
+        if len(rows)>=N+20: break
+        time.sleep(.05)
 
-        j=r.json()
+    d=pd.DataFrame(rows,columns=["ts","open","close","high","low","vol","turn"])
+    d["ts"]=pd.to_datetime(pd.to_numeric(d.ts),unit="s",utc=True)
+    for c in ["open","close","high","low","vol"]: d[c]=pd.to_numeric(d[c],errors="coerce")
+    d=d.drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+    d=d.tail(N).reset_index(drop=True)
 
-        if j.get("code")!="200000":
-            raise RuntimeError(str(j))
-
-        data=j.get("data",[])
-
-        if not data:
-            break
-
-        rows.extend(data)
-
-        mn=min(int(x[0]) for x in data)
-
-        end=mn-STEP//1000
-
-        time.sleep(.15)
-
-    if not rows:
-        raise RuntimeError("no data")
-
-    df=pd.DataFrame(
-        rows,
-        columns=[
-            "ts","open","close","high",
-            "low","volume","turnover"
-        ]
-    )
-
-    df["ts"]=pd.to_datetime(
-        df["ts"].astype("int64"),
-        unit="s",
-        utc=True
-    )
-
-    for c in [
-        "open","close","high","low","volume"
-    ]:
-        df[c]=pd.to_numeric(
-            df[c],
-            errors="coerce"
-        )
-
-    df=(
-        df.drop_duplicates("ts")
-          .sort_values("ts")
-          .reset_index(drop=True)
-    )
-
-    if len(df)<N:
-        raise RuntimeError(
-            f"only {len(df)} candles"
-        )
-
-    # IMPORTANT:
-    # Do NOT reject individual symbols because of
-    # pagination-boundary gaps here.
-    # The common-timestamp audit below is authoritative.
-
-    return df.tail(N).reset_index(drop=True)
-
+    if len(d)!=N: raise ValueError(f"{sym}: received {len(d)}")
+    gap=d.ts.diff().dropna().dt.total_seconds().ne(STEP).any()
+    if gap: raise ValueError(f"{sym}: timestamp gap")
+    return d
 
 def indicators(d):
+    c,h,l,v=d.close,d.high,d.low,d.vol
+    mean=c.rolling(20).mean()
+    sd=c.rolling(20).std(ddof=0)
+    d["z"]=(c-mean)/sd.replace(0,np.nan)
+    d["ema"]=c.ewm(span=200,adjust=False).mean()
+    d["range20"]=h.rolling(20).max()-l.rolling(20).min()
+    d["rmed"]=d.range20.rolling(20).median()
+    d["vmed"]=v.rolling(20).median()
 
-    x=d.copy()
+    tr=pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
+    d["atr"]=tr.ewm(alpha=1/20,adjust=False).mean()
+    return d
 
-    mean=x.close.rolling(20).mean()
-    std=x.close.rolling(20).std(ddof=0)
-
-    x["z"]=(x.close-mean)/std.replace(0,np.nan)
-
-    x["ema"]=x.close.ewm(
-        span=200,
-        adjust=False
-    ).mean()
-
-    x["rng"]=(
-        x.high.rolling(20).max()
-        -
-        x.low.rolling(20).min()
-    )
-
-    x["rngm"]=x.rng.rolling(20).median()
-
-    x["volm"]=x.volume.rolling(20).median()
-
-    pc=x.close.shift(1)
-
-    tr=pd.concat([
-        x.high-x.low,
-        (x.high-pc).abs(),
-        (x.low-pc).abs()
-    ],axis=1).max(axis=1)
-
-    x["atr"]=tr.ewm(
-        alpha=1/20,
-        adjust=False
-    ).mean()
-
-    return x
-
-
-def make_events(d,tp):
-
-    x=indicators(d)
+def events(d,tp_mult):
     out=[]
-
-    for i in range(
-        20,
-        len(x)-HOLD-1
-    ):
-
-        p=x.iloc[i-1]
-        c=x.iloc[i]
-
-        # FROZEN CANDIDATE 11 — SHORT ONLY
-        signal=(
-            c.close<c.ema
-            and p.z>=2
-            and c.z<2
-            and c.rng>=c.rngm
-            and c.volume>=c.volm
-        )
-
-        if not signal:
-            continue
-
-        ei=i+1
-
-        entry=x.iloc[ei].close
-        atr=x.iloc[ei].atr
-
-        if (
-            not np.isfinite(entry)
-            or not np.isfinite(atr)
-            or atr<=0
-        ):
-            continue
-
-        sl=entry+SL*atr
-        tp=entry-tp*SL*atr
-
-        last=min(
-            ei+HOLD,
-            len(x)-1
-        )
-
-        result=None
-        exit_i=None
-
-        for j in range(
-            ei,
-            last+1
-        ):
-
-            hi=x.iloc[j].high
-            lo=x.iloc[j].low
-
-            # Same-candle SL first
-            if hi>=sl:
-                result=-1.0
-                exit_i=j
-                break
-
+    for i in range(21,len(d)-HOLD):
+        if not (d.z.iloc[i-1]>=2 and d.z.iloc[i]<2): continue
+        if not (d.close.iloc[i]<d.ema.iloc[i]): continue
+        if not (d.range20.iloc[i]>=d.rmed.iloc[i]): continue
+        if not (d.vol.iloc[i]>=d.vmed.iloc[i]): continue
+        e=float(d.close.iloc[i]); a=float(d.atr.iloc[i])
+        if not np.isfinite(a) or a<=0: continue
+        sl=e+ATR_M*a; tp=e-TP_mult*ATR_M*a
+        result=-COST; exit_i=i+HOLD-1
+        for j in range(i+1,i+HOLD):
+            hi,lo=float(d.high.iloc[j]),float(d.low.iloc[j])
+            if hi>=sl:                 # SL first
+                result=-1-COST; exit_i=j; break
             if lo<=tp:
-                result=tp
-                exit_i=j
-                break
-
-        if result is None:
-
-            result=(
-                entry-x.iloc[last].close
-            )/(SL*atr)
-
-            result=float(
-                np.clip(
-                    result,
-                    -1,
-                    tp
-                )
-            )
-
-            exit_i=last
-
-        out.append({
-            "entry":x.iloc[ei].ts,
-            "exit":x.iloc[exit_i].ts,
-            "r":float(result-COST)
-        })
-
+                result=tp_mult-COST; exit_i=j; break
+        out.append({"entry":d.ts.iloc[i],"exit":d.ts.iloc[exit_i],"r":result})
     return pd.DataFrame(out)
 
-
-def metric(e):
-
-    if len(e)==0:
-        return {
-            "N":0,
-            "Exp":np.nan,
-            "PF":np.nan,
-            "Total":0.0,
-            "DD":0.0
-        }
-
-    r=e.r.to_numpy(float)
-
-    wins=r[r>0].sum()
-    losses=abs(r[r<0].sum())
-
-    pf=(
-        wins/losses
-        if losses>0
-        else np.inf
-    )
-
-    equity=np.cumsum(r)
-
-    peak=np.maximum.accumulate(
-        np.r_[0.0,equity]
-    )[1:]
-
-    dd=(equity-peak).min()
-
-    return {
-        "N":len(r),
-        "Exp":r.mean(),
-        "PF":pf,
-        "Total":r.sum(),
-        "DD":dd
-    }
-
-
-def show(name,m):
-
-    pf=(
-        f"{m['PF']:.3f}"
-        if np.isfinite(m["PF"])
-        else "INF"
-    )
-
-    print(
-        f"{name:<8}"
-        f"N={m['N']:4d} "
-        f"Exp={m['Exp']:+.4f} "
-        f"PF={pf:>7} "
-        f"Total={m['Total']:+.2f}R "
-        f"DD={m['DD']:+.2f}R"
-    )
-
-
-def main():
-
-    print("="*72)
-    print("CANDIDATE 11 — SHORT-ONLY — 5-FOLD")
-    print("="*72)
-
-    data={}
-
-    for symbol in SYMBOLS:
-
-        try:
-
-            d=fetch(symbol)
-
-            data[symbol]=d
-
-            print(
-                f"{symbol:<6} "
-                f"{len(d)} candles  "
-                f"{d.ts.iloc[0]} -> "
-                f"{d.ts.iloc[-1]}"
-            )
-
-        except Exception as e:
-
-            print(
-                f"{symbol:<6} ERROR: {e}"
-            )
-
-    if len(data)!=33:
-
-        print(
-            f"\nABORT: VALID SYMBOLS="
-            f"{len(data)}, EXPECTED=33"
-        )
-
-        raise SystemExit(1)
-
-    # ----------------------------------------------------------
-    # COMMON TIMESTAMP AUDIT
-    # ----------------------------------------------------------
-
-    common=None
-
-    for d in data.values():
-
-        s=set(d.ts)
-
-        common=(
-            s
-            if common is None
-            else common & s
-        )
-
-    common=pd.DatetimeIndex(
-        sorted(common)
-    )
-
-    if len(common)!=N:
-
-        print(
-            f"\nABORT: COMMON TIMESTAMPS="
-            f"{len(common)}, EXPECTED={N}"
-        )
-
-        raise SystemExit(1)
-
-    # Verify the common window itself is contiguous.
-    diff=common.to_series().diff().dropna()
-
-    if not (
-        diff==pd.Timedelta(hours=4)
-    ).all():
-
-        print(
-            "\nABORT: COMMON WINDOW HAS GAP"
-        )
-
-        raise SystemExit(1)
-
-    print("\nDATA AUDIT = PASS")
-    print(
-        f"VALID SYMBOLS = {len(data)}"
-    )
-    print(
-        f"COMMON TIMESTAMPS = {len(common)}"
-    )
-    print(
-        f"START = {common[0]}"
-    )
-    print(
-        f"END   = {common[-1]}"
-    )
-
-    # ----------------------------------------------------------
-    # EVENTS
-    # ----------------------------------------------------------
-
-    all_events={}
-
-    for tp in TPS:
-
-        parts=[]
-
-        for symbol,d in data.items():
-
-            d=d[
-                d.ts.isin(common)
-            ].copy()
-
-            e=make_events(d,tp)
-
-            if len(e):
-
-                e["symbol"]=symbol
-                parts.append(e)
-
-        if parts:
-
-            e=pd.concat(
-                parts,
-                ignore_index=True
-            )
-
-        else:
-
-            e=pd.DataFrame(
-                columns=[
-                    "entry",
-                    "exit",
-                    "r",
-                    "symbol"
-                ]
-            )
-
-        e=e.sort_values(
-            "exit"
-        ).reset_index(drop=True)
-
-        all_events[tp]=e
-
-        print(
-            f"\nTP{tp:g}R "
-            f"TOTAL EVENTS = {len(e)}"
-        )
-
-    # ----------------------------------------------------------
-    # 5 FOLD TEMPORAL VALIDATION
-    # ----------------------------------------------------------
-
-    folds=np.array_split(
-        np.arange(N),
-        5
-    )
-
-    for tp in TPS:
-
-        e=all_events[tp]
-
-        print("\n"+"="*72)
-        print(
-            f"TP{tp:g}R — SHORT ONLY"
-        )
-        print("="*72)
-
-        oos_parts=[]
-        positive=0
-
-        for k,idx in enumerate(folds):
-
-            oos_start=common[idx[0]]
-
-            if k<4:
-
-                oos_end=common[
-                    folds[k+1][0]
-                ]
-
-            else:
-
-                oos_end=(
-                    common[-1]
-                    +pd.Timedelta(hours=4)
-                )
-
-            is_start=common[0]
-            is_end=oos_start
-
-            is_events=e[
-                (e.entry>=is_start)
-                &
-                (e.exit<is_end)
-            ].copy()
-
-            oos_events=e[
-                (e.entry>=oos_start)
-                &
-                (e.exit<oos_end)
-            ].copy()
-
-            is_events=is_events.sort_values(
-                "exit"
-            )
-
-            oos_events=oos_events.sort_values(
-                "exit"
-            )
-
-            im=metric(is_events)
-            om=metric(oos_events)
-
-            print(
-                f"\nFOLD {k+1}"
-            )
-
-            print(
-                f"IS  {is_start} -> "
-                f"{is_end}"
-            )
-
-            show("IS",im)
-
-            print(
-                f"OOS {oos_start} -> "
-                f"{oos_end}"
-            )
-
-            show("OOS",om)
-
-            if om["Exp"]>0:
-                positive+=1
-
-            if len(oos_events):
-                oos_parts.append(
-                    oos_events
-                )
-
-        if oos_parts:
-
-            agg=pd.concat(
-                oos_parts,
-                ignore_index=True
-            ).sort_values("exit")
-
-        else:
-
-            agg=pd.DataFrame(
-                columns=e.columns
-            )
-
-        am=metric(agg)
-
-        print("\n"+"-"*72)
-        print(
-            f"TP{tp:g}R "
-            f"AGGREGATE OOS"
-        )
-
-        show("OOS ALL",am)
-
-        print(
-            f"Positive OOS folds = "
-            f"{positive}/5"
-        )
-
-        passed=(
-            positive==5
-            and am["Exp"]>0
-            and am["PF"]>1
-            and am["Total"]>0
-        )
-
-        print(
-            "TEMPORAL VALIDATION = "
-            +
-            (
-                "PASS"
-                if passed
-                else "FAIL"
-            )
-        )
-
+def stats(x):
+    if len(x)==0: return (0,np.nan,np.inf,0,0)
+    r=x.r.to_numpy(float)
+    exp=r.mean(); pos=r[r>0].sum(); neg=-r[r<0].sum()
+    pf=pos/neg if neg>0 else np.inf
+    eq=np.cumsum(r); dd=(eq-np.maximum.accumulate(eq)).min()
+    return len(r),exp,pf,r.sum(),dd
+
+print("="*72)
+print("CANDIDATE 11 — SHORT-ONLY — FIXED R ENGINE — 5-FOLD")
+print("="*72)
+
+data={}; bad={}
+for s in SYMS:
+    try:
+        data[s]=indicators(fetch(s))
+        print(f"{s:<6} {len(data[s])} candles  {data[s].ts.iloc[0]} -> {data[s].ts.iloc[-1]}")
+    except Exception as e:
+        bad[s]=str(e); print(f"{s:<6} ERROR: {e}")
+
+if bad:
+    raise SystemExit(f"ABORT: {len(bad)} symbols failed")
+
+common=set(data[SYMS[0]].ts)
+for s in SYMS[1:]: common &= set(data[s].ts)
+common=sorted(common)
+
+if len(common)!=N:
+    raise SystemExit(f"ABORT: COMMON TIMESTAMPS={len(common)} EXPECTED={N}")
+
+print(f"\nDATA AUDIT = PASS")
+print(f"VALID SYMBOLS = {len(data)}")
+print(f"COMMON TIMESTAMPS = {len(common)}")
+print(f"START = {common[0]}")
+print(f"END   = {common[-1]}")
+
+all_ts=pd.Series(common)
+folds=np.array_split(all_ts.to_numpy(),5)
+
+for tp_mult in [1.5,2.0]:
+    all_events=[]
+    for s,d in data.items():
+        e=events(d,tp_mult)
+        if not e.empty:
+            e["symbol"]=s
+            all_events.append(e)
+
+    ev=pd.concat(all_events,ignore_index=True).sort_values("entry").reset_index(drop=True)
     print("\n"+"="*72)
-    print("RUN COMPLETE")
+    print(f"TP{tp_mult:g}R — SHORT ONLY")
     print("="*72)
+    print(f"TOTAL EVENTS = {len(ev)}")
 
+    oos_all=[]
 
-if __name__=="__main__":
-    main()
+    for k in range(5):
+        start=pd.Timestamp(folds[k][0])
+        end=pd.Timestamp(folds[k][-1])+pd.Timedelta(hours=4)
+
+        isx=ev[(ev.entry<start)&(ev.exit<start)]
+        oos=ev[(ev.entry>=start)&(ev.entry<end)&(ev.exit<end)]
+
+        a=stats(isx); b=stats(oos)
+        print(f"\nFOLD {k+1}")
+        print(f"IS  {start} -> {start if k==0 else start}")
+        print(f"IS      N={a[0]:4d} Exp={a[1]:+.4f} PF={a[2]:.3f} Total={a[3]:+.2f}R DD={a[4]:+.2f}R")
+        print(f"OOS {start} -> {end}")
+        print(f"OOS     N={b[0]:4d} Exp={b[1]:+.4f} PF={b[2]:.3f} Total={b[3]:+.2f}R DD={b[4]:+.2f}R")
+        oos_all.append(oos)
+
+    oos=pd.concat(oos_all,ignore_index=True)
+    z=stats(oos)
+    positive=sum(stats(x)[3]>0 for x in oos_all)
+
+    print("\n"+"-"*72)
+    print(f"TP{tp_mult:g}R AGGREGATE OOS")
+    print(f"OOS ALL N={z[0]} Exp={z[1]:+.4f} PF={z[2]:.3f} Total={z[3]:+.2f}R DD={z[4]:+.2f}R")
+    print(f"Positive OOS folds = {positive}/5")
+    print("TEMPORAL VALIDATION =", "PASS" if positive>=4 and z[1]>0 and z[2]>1 else "FAIL")
+
+print("\n"+"="*72)
+print("RUN COMPLETE")
+print("="*72)
