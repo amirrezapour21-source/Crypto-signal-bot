@@ -20,6 +20,7 @@ COST = 0.003
 
 END_TS = int(pd.Timestamp("2026-09-29T20:00:00Z").timestamp())
 START_TS = END_TS - (N - 1) * STEP
+PAD = 3  # کندل اضافه دو طرف بازه برای جبران مرزهای startAt/endAt
 
 
 def get_json(params):
@@ -56,13 +57,14 @@ def fetch(sym):
 
     CHUNK = 900
     OVERLAP = 2
-    pos = START_TS
+    pos = START_TS - PAD * STEP
+    end_fetch = END_TS + PAD * STEP
 
-    while pos <= END_TS:
+    while pos <= end_fetch:
 
         chunk_end = min(
             pos + (CHUNK - 1) * STEP,
-            END_TS
+            end_fetch
         )
 
         data = get_json({
@@ -75,8 +77,8 @@ def fetch(sym):
         if data:
             rows.extend(data)
 
-        # FIX: خروج از حلقه در آخرین قطعه
-        if chunk_end >= END_TS:
+        # خروج از حلقه در آخرین قطعه
+        if chunk_end >= end_fetch:
             break
 
         pos = chunk_end - OVERLAP * STEP + STEP
