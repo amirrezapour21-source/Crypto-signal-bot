@@ -1,97 +1,188 @@
-import requests,pandas as pd,numpy as np,time
+import requests
+import pandas as pd
+import numpy as np
+import time
 
-BASE="https://api.kucoin.com/api/v1/market/candles"
+BASE = "https://api.kucoin.com/api/v1/market/candles"
 
-SYMS=[
-"BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT",
-"SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC",
-"BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP",
-"WIF","PEPE","FLOKI"
+SYMS = [
+    "BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT",
+    "SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC",
+    "BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP",
+    "WIF","PEPE","FLOKI"
 ]
 
-N=4380
-STEP=14400
-HOLD=30
-ATR_M=1.25
-COST=.003
+N = 4380
+STEP = 14400
+HOLD = 30
+ATR_M = 1.25
+COST = 0.003
+
+END_TS = int(pd.Timestamp("2026-09-29T20:00:00Z").timestamp())
+START_TS = END_TS - (N - 1) * STEP
+
 
 def fetch(sym):
-    rows=[]
-    end=int(pd.Timestamp("2026-09-30T00:00:00Z").timestamp())
 
-    for _ in range(10):
-        r=requests.get(
+    rows = []
+
+    # قطعات 900 کندلی با هم‌پوشانی 2 کندل
+    CHUNK = 900
+    OVERLAP = 2
+    pos = START_TS
+
+    while pos <= END_TS:
+
+        chunk_end = min(
+            pos + (CHUNK - 1) * STEP,
+            END_TS
+        )
+
+        r = requests.get(
             BASE,
             params={
-                "symbol":f"{sym}-USDT",
-                "type":"4hour",
-                "endAt":end
+                "symbol": f"{sym}-USDT",
+                "type": "4hour",
+                "startAt": pos,
+                "endAt": chunk_end
             },
             timeout=20
         )
+
         r.raise_for_status()
 
-        x=r.json()["data"]
-        if not x:
-            break
+        data = r.json().get("data", [])
 
-        rows.extend(x)
+        if data:
+            rows.extend(data)
 
-        mn=min(int(z[0]) for z in x)
-        end=mn-STEP
+        # هم‌پوشانی برای جلوگیری از gap مرزی
+        pos = chunk_end - OVERLAP * STEP + STEP
 
-        if len(rows)>=N+50:
-            break
+        time.sleep(0.03)
 
-        time.sleep(.03)
+    if not rows:
+        raise ValueError(f"{sym}: no data")
 
-    d=pd.DataFrame(
+    d = pd.DataFrame(
         rows,
-        columns=["ts","open","close","high","low","vol","turn"]
+        columns=[
+            "ts","open","close","high",
+            "low","vol","turn"
+        ]
     )
 
-    d["ts"]=pd.to_datetime(
+    d["ts"] = pd.to_datetime(
         pd.to_numeric(d["ts"]),
         unit="s",
         utc=True
     )
 
     for c in ["open","close","high","low","vol"]:
-        d[c]=pd.to_numeric(d[c],errors="coerce")
+        d[c] = pd.to_numeric(
+            d[c],
+            errors="coerce"
+        )
 
-    d=d.drop_duplicates("ts")
-    d=d.sort_values("ts")
-    d=d.reset_index(drop=True)
+    d = (
+        d.drop_duplicates("ts")
+         .sort_values("ts")
+         .reset_index(drop=True)
+    )
 
-    if len(d)<N:
-        raise ValueError(f"{sym}: received {len(d)}")
+    # فقط بازه موردنظر
+    d = d[
+        (d["ts"] >= pd.Timestamp(
+            "2024-09-29T12:00:00Z"
+        )) &
+        (d["ts"] <= pd.Timestamp(
+            "2026-09-29T20:00:00Z"
+        ))
+    ].copy()
 
-    d=d.tail(N).reset_index(drop=True)
+    # پیدا کردن آخرین بلوک کاملاً پیوسته
+    ts = d["ts"].astype("int64") // 10**9
+    diff = ts.diff()
 
-    gap=d["ts"].diff().dropna().dt.total_seconds()
+    blocks = []
+    start = 0
 
-    if not gap.eq(STEP).all():
-        raise ValueError(f"{sym}: timestamp gap")
+    for i in range(1, len(d)):
+        if diff.iloc[i] != STEP:
+            blocks.append((start, i))
+            start = i
+
+    blocks.append((start, len(d)))
+
+    valid = [
+        (a,b)
+        for a,b in blocks
+        if b-a >= N
+    ]
+
+    if not valid:
+        raise ValueError(
+            f"{sym}: no contiguous {N}-candle block; "
+            f"received={len(d)}"
+        )
+
+    a,b = valid[-1]
+
+    d = d.iloc[b-N:b].reset_index(drop=True)
+
+    if len(d) != N:
+        raise ValueError(
+            f"{sym}: final={len(d)}"
+        )
+
+    if not (
+        d["ts"]
+        .diff()
+        .dropna()
+        .dt.total_seconds()
+        .eq(STEP)
+        .all()
+    ):
+        raise ValueError(
+            f"{sym}: final timestamp gap"
+        )
 
     return d
 
 
 def indicators(d):
-    c=d["close"]
-    h=d["high"]
-    l=d["low"]
-    v=d["vol"]
 
-    mean=c.rolling(20).mean()
-    sd=c.rolling(20).std()
+    c = d["close"]
+    h = d["high"]
+    l = d["low"]
+    v = d["vol"]
 
-    d["z"]=(c-mean)/sd
-    d["ema"]=c.ewm(span=200,adjust=False).mean()
-    d["range20"]=h.rolling(20).max()-l.rolling(20).min()
-    d["rmed"]=d["range20"].rolling(20).median()
-    d["vmed"]=v.rolling(20).median()
+    d["z"] = (
+        c - c.rolling(20).mean()
+    ) / c.rolling(20).std()
 
-    tr=pd.concat(
+    d["ema"] = c.ewm(
+        span=200,
+        adjust=False
+    ).mean()
+
+    d["range20"] = (
+        h.rolling(20).max()
+        - l.rolling(20).min()
+    )
+
+    d["rmed"] = (
+        d["range20"]
+        .rolling(20)
+        .median()
+    )
+
+    d["vmed"] = (
+        v.rolling(20)
+        .median()
+    )
+
+    tr = pd.concat(
         [
             h-l,
             (h-c.shift()).abs(),
@@ -100,7 +191,7 @@ def indicators(d):
         axis=1
     ).max(axis=1)
 
-    d["atr"]=tr.ewm(
+    d["atr"] = tr.ewm(
         alpha=1/20,
         adjust=False
     ).mean()
@@ -108,51 +199,70 @@ def indicators(d):
     return d
 
 
-def events(d,tp):
-    out=[]
+def events(d, tp):
 
-    for i in range(21,len(d)-HOLD):
+    out = []
 
-        if not(
-            d["z"].iloc[i-1]>=2 and
-            d["z"].iloc[i]<2
+    for i in range(
+        21,
+        len(d)-HOLD
+    ):
+
+        if not (
+            d["z"].iloc[i-1] >= 2
+            and d["z"].iloc[i] < 2
         ):
             continue
 
-        if not(d["close"].iloc[i]<d["ema"].iloc[i]):
+        if not (
+            d["close"].iloc[i]
+            < d["ema"].iloc[i]
+        ):
             continue
 
-        if not(d["range20"].iloc[i]>=d["rmed"].iloc[i]):
+        if not (
+            d["range20"].iloc[i]
+            >= d["rmed"].iloc[i]
+        ):
             continue
 
-        if not(d["vol"].iloc[i]>=d["vmed"].iloc[i]):
+        if not (
+            d["vol"].iloc[i]
+            >= d["vmed"].iloc[i]
+        ):
             continue
 
-        entry=float(d["close"].iloc[i])
-        atr=float(d["atr"].iloc[i])
+        entry = float(
+            d["close"].iloc[i]
+        )
 
-        if not np.isfinite(atr) or atr<=0:
+        atr = float(
+            d["atr"].iloc[i]
+        )
+
+        if not np.isfinite(atr) or atr <= 0:
             continue
 
-        sl=entry+ATR_M*atr
-        target=entry-tp*ATR_M*atr
+        sl = entry + ATR_M * atr
+        target = entry - tp * ATR_M * atr
 
-        result=-COST
-        exit_i=i+HOLD-1
+        result = -COST
+        exit_i = i + HOLD - 1
 
-        for j in range(i+1,i+HOLD):
+        for j in range(i+1, i+HOLD):
 
-            hi=float(d["high"].iloc[j])
-            lo=float(d["low"].iloc[j])
+            hi = float(d["high"].iloc[j])
+            lo = float(d["low"].iloc[j])
 
-            if hi>=sl:
-                result=-1-COST
-                exit_i=j
+            # SL-first
+            if hi >= sl:
+                result = -1 - COST
+                exit_i = j
                 break
 
-            if lo<=target:
-                result=tp-COST
-                exit_i=j
+            if lo <= target:
+                result = tp - COST
+                exit_i = j
                 break
 
         out.append([
@@ -169,18 +279,26 @@ def events(d,tp):
 
 def stats(x):
 
-    if len(x)==0:
-        return 0,np.nan,np.nan,0,0
+    if len(x) == 0:
+        return 0, np.nan, np.nan, 0, 0
 
-    r=x["r"].to_numpy(float)
+    r = x["r"].to_numpy(float)
 
-    gains=r[r>0].sum()
-    losses=-r[r<0].sum()
+    gain = r[r > 0].sum()
+    loss = -r[r < 0].sum()
 
-    pf=gains/losses if losses>0 else np.inf
+    pf = (
+        gain / loss
+        if loss > 0
+        else np.inf
+    )
 
-    equity=np.cumsum(r)
-    dd=(equity-np.maximum.accumulate(equity)).min()
+    equity = np.cumsum(r)
+
+    dd = (
+        equity
+        - np.maximum.accumulate(equity)
+    ).min()
 
     return (
         len(r),
@@ -191,96 +309,147 @@ def stats(x):
     )
 
 
-print("="*70)
-print("CANDIDATE 11 — SHORT ONLY — FIXED R ENGINE")
-print("="*70)
+print("=" * 72)
+print("CANDIDATE 11 — SHORT ONLY")
+print("TIME-CHUNK KUCOIN FETCH + FIXED R ENGINE")
+print("=" * 72)
 
-data={}
+data = {}
+bad = {}
 
 for s in SYMS:
-    try:
-        data[s]=indicators(fetch(s))
-        print(
-            f"{s:<6} {len(data[s])} candles | "
-            f"{data[s]['ts'].iloc[0]} -> "
-            f"{data[s]['ts'].iloc[-1]}"
-        )
-    except Exception as e:
-        print(f"{s:<6} ERROR: {e}")
 
-if len(data)!=len(SYMS):
+    try:
+
+        d = fetch(s)
+        data[s] = indicators(d)
+
+        print(
+            f"{s:<6} {len(d)} candles | "
+            f"{d['ts'].iloc[0]} -> "
+            f"{d['ts'].iloc[-1]}"
+        )
+
+    except Exception as e:
+
+        bad[s] = str(e)
+        print(
+            f"{s:<6} ERROR: {e}"
+        )
+
+
+if bad:
+
     raise SystemExit(
-        f"ABORT: {len(SYMS)-len(data)} symbols failed"
+        f"ABORT: {len(bad)} symbols failed"
     )
 
-common=set(data[SYMS[0]]["ts"])
+
+common = set(
+    data[SYMS[0]]["ts"]
+)
 
 for s in SYMS[1:]:
-    common &= set(data[s]["ts"])
 
-common=sorted(common)
-
-if len(common)!=N:
-    raise SystemExit(
-        f"ABORT: COMMON TIMESTAMPS={len(common)} EXPECTED={N}"
+    common &= set(
+        data[s]["ts"]
     )
 
-print("\nDATA AUDIT = PASS")
+common = sorted(common)
+
+
+if len(common) != N:
+
+    raise SystemExit(
+        f"ABORT: COMMON TIMESTAMPS="
+        f"{len(common)} EXPECTED={N}"
+    )
+
+
+print("\n" + "=" * 72)
+print("DATA AUDIT = PASS")
 print(f"VALID SYMBOLS = {len(data)}")
 print(f"COMMON TIMESTAMPS = {len(common)}")
 print(f"START = {common[0]}")
 print(f"END   = {common[-1]}")
+print("=" * 72)
 
-folds=np.array_split(
+
+folds = np.array_split(
     np.array(common),
     5
 )
 
-for tp in [1.5,2.0]:
 
-    all_events=[]
+for tp in [1.5, 2.0]:
 
-    for s,d in data.items():
+    all_events = []
 
-        e=events(d,tp)
+    for s, d in data.items():
+
+        e = events(d, tp)
 
         if len(e):
-            e["symbol"]=s
+
+            e["symbol"] = s
             all_events.append(e)
 
+
     if not all_events:
-        raise SystemExit("ABORT: NO EVENTS")
 
-    ev=pd.concat(
-        all_events,
-        ignore_index=True
-    ).sort_values("entry").reset_index(drop=True)
+        raise SystemExit(
+            "ABORT: NO EVENTS"
+        )
 
-    print("\n"+"="*70)
+
+    ev = (
+        pd.concat(
+            all_events,
+            ignore_index=True
+        )
+        .sort_values("entry")
+        .reset_index(drop=True)
+    )
+
+
+    print("\n" + "=" * 72)
     print(f"TP{tp:g}R — SHORT ONLY")
-    print(f"TOTAL EVENTS = {len(ev)}")
-    print("="*70)
+    print(
+        f"TOTAL EVENTS = {len(ev)}"
+    )
+    print("=" * 72)
 
-    oos=[]
+
+    oos = []
+
 
     for k in range(5):
 
-        start=pd.Timestamp(folds[k][0])
-        end=pd.Timestamp(folds[k][-1])+pd.Timedelta(hours=4)
+        start = pd.Timestamp(
+            folds[k][0]
+        )
 
-        isx=ev[
-            (ev["entry"]<start) &
-            (ev["exit"]<start)
+        end = (
+            pd.Timestamp(folds[k][-1])
+            + pd.Timedelta(hours=4)
+        )
+
+
+        isx = ev[
+            (ev["entry"] < start) &
+            (ev["exit"] < start)
         ]
 
-        ox=ev[
-            (ev["entry"]>=start) &
-            (ev["entry"]<end) &
-            (ev["exit"]<end)
+        ox = ev[
+            (ev["entry"] >= start) &
+            (ev["entry"] < end) &
+            (ev["exit"] < end)
         ]
 
-        a=stats(isx)
-        b=stats(ox)
+
+        a = stats(isx)
+        b = stats(ox)
+
 
         print(
             f"FOLD {k+1} | "
@@ -297,19 +466,22 @@ for tp in [1.5,2.0]:
 
         oos.append(ox)
 
-    oos_all=pd.concat(
+
+    oos_all = pd.concat(
         oos,
         ignore_index=True
     )
 
-    z=stats(oos_all)
+    z = stats(oos_all)
 
-    positive=sum(
-        stats(x)[3]>0
+    positive = sum(
+        stats(x)[3] > 0
         for x in oos
     )
 
-    print("-"*70)
+
+    print("-" * 72)
+
     print(
         f"TP{tp:g}R AGG OOS | "
         f"N={z[0]} "
@@ -319,15 +491,23 @@ for tp in [1.5,2.0]:
         f"DD={z[4]:+.2f}R"
     )
 
-    print(f"Positive OOS folds = {positive}/5")
+    print(
+        f"Positive OOS folds = "
+        f"{positive}/5"
+    )
 
     print(
         "TEMPORAL VALIDATION =",
         "PASS"
-        if positive>=4 and z[1]>0 and z[2]>1
+        if (
+            positive >= 4
+            and z[1] > 0
+            and z[2] > 1
+        )
         else "FAIL"
     )
 
-print("\n"+"="*70)
+
+print("\n" + "=" * 72)
 print("RUN COMPLETE")
-print("="*70)
+print("=" * 72)
