@@ -15,14 +15,11 @@ HOLD=30
 ATR_M=1.25
 COST=.003
 
-# همان پنجره معتبر قبلی
-TARGET_END=int(pd.Timestamp("2026-09-29T20:00:00Z").timestamp())
-
 def fetch(sym):
     rows=[]
-    end=TARGET_END
+    end=int(pd.Timestamp("2026-09-30T00:00:00Z").timestamp())
 
-    for _ in range(8):
+    for _ in range(10):
         r=requests.get(
             BASE,
             params={
@@ -41,12 +38,9 @@ def fetch(sym):
         rows.extend(x)
 
         mn=min(int(z[0]) for z in x)
+        end=mn-STEP
 
-        # یک ثانیه قبل از قدیمی‌ترین کندل
-        # برای جلوگیری از تکرار/پرش مرزی
-        end=mn-1
-
-        if len(rows)>=5200:
+        if len(rows)>=N+50:
             break
 
         time.sleep(.03)
@@ -65,62 +59,46 @@ def fetch(sym):
     for c in ["open","close","high","low","vol"]:
         d[c]=pd.to_numeric(d[c],errors="coerce")
 
-    d=d.drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+    d=d.drop_duplicates("ts")
+    d=d.sort_values("ts")
+    d=d.reset_index(drop=True)
 
-    # پیدا کردن آخرین بلوک کاملاً پیوسته
-    t=d["ts"].astype("int64")//10**9
-    good=t.diff().eq(STEP)
+    if len(d)<N:
+        raise ValueError(f"{sym}: received {len(d)}")
 
-    blocks=[]
-    start=0
+    d=d.tail(N).reset_index(drop=True)
 
-    for i in range(1,len(d)):
-        if not good.iloc[i]:
-            blocks.append((start,i))
-            start=i
+    gap=d["ts"].diff().dropna().dt.total_seconds()
 
-    blocks.append((start,len(d)))
-
-    blocks=[
-        (a,b) for a,b in blocks
-        if b-a>=N
-    ]
-
-    if not blocks:
-        raise ValueError(
-            f"{sym}: no contiguous {N}-candle block; received {len(d)}"
-        )
-
-    # آخرین بلوک معتبر
-    a,b=blocks[-1]
-    d=d.iloc[b-N:b].reset_index(drop=True)
-
-    if len(d)!=N:
-        raise ValueError(f"{sym}: final candles={len(d)}")
-
-    if not d.ts.diff().dropna().dt.total_seconds().eq(STEP).all():
-        raise ValueError(f"{sym}: final block gap")
+    if not gap.eq(STEP).all():
+        raise ValueError(f"{sym}: timestamp gap")
 
     return d
 
 
 def indicators(d):
-    c,h,l,v=d.close,d.high,d.low,d.vol
+    c=d["close"]
+    h=d["high"]
+    l=d["low"]
+    v=d["vol"]
 
-    d["z"]=(c-c.rolling(20).mean())/c.rolling(20).std()
+    mean=c.rolling(20).mean()
+    sd=c.rolling(20).std()
+
+    d["z"]=(c-mean)/sd
     d["ema"]=c.ewm(span=200,adjust=False).mean()
-
-    d["range20"]=
-        h.rolling(20).max()-l.rolling(20).min()
-
+    d["range20"]=h.rolling(20).max()-l.rolling(20).min()
     d["rmed"]=d["range20"].rolling(20).median()
     d["vmed"]=v.rolling(20).median()
 
-    tr=pd.concat([
-        h-l,
-        (h-c.shift()).abs(),
-        (l-c.shift()).abs()
-    ],axis=1).max(axis=1)
+    tr=pd.concat(
+        [
+            h-l,
+            (h-c.shift()).abs(),
+            (l-c.shift()).abs()
+        ],
+        axis=1
+    ).max(axis=1)
 
     d["atr"]=tr.ewm(
         alpha=1/20,
@@ -135,21 +113,23 @@ def events(d,tp):
 
     for i in range(21,len(d)-HOLD):
 
-        # Candidate 11 SHORT
-        if not(d.z.iloc[i-1]>=2 and d.z.iloc[i]<2):
+        if not(
+            d["z"].iloc[i-1]>=2 and
+            d["z"].iloc[i]<2
+        ):
             continue
 
-        if not(d.close.iloc[i]<d.ema.iloc[i]):
+        if not(d["close"].iloc[i]<d["ema"].iloc[i]):
             continue
 
-        if not(d.range20.iloc[i]>=d.rmed.iloc[i]):
+        if not(d["range20"].iloc[i]>=d["rmed"].iloc[i]):
             continue
 
-        if not(d.vol.iloc[i]>=d.vmed.iloc[i]):
+        if not(d["vol"].iloc[i]>=d["vmed"].iloc[i]):
             continue
 
-        entry=float(d.close.iloc[i])
-        atr=float(d.atr.iloc[i])
+        entry=float(d["close"].iloc[i])
+        atr=float(d["atr"].iloc[i])
 
         if not np.isfinite(atr) or atr<=0:
             continue
@@ -157,30 +137,28 @@ def events(d,tp):
         sl=entry+ATR_M*atr
         target=entry-tp*ATR_M*atr
 
-        r=-COST
+        result=-COST
         exit_i=i+HOLD-1
 
-        # entry candle اسکن نمی‌شود
         for j in range(i+1,i+HOLD):
 
-            hi=float(d.high.iloc[j])
-            lo=float(d.low.iloc[j])
+            hi=float(d["high"].iloc[j])
+            lo=float(d["low"].iloc[j])
 
-            # SL-first
             if hi>=sl:
-                r=-1-COST
+                result=-1-COST
                 exit_i=j
                 break
 
             if lo<=target:
-                r=tp-COST
+                result=tp-COST
                 exit_i=j
                 break
 
         out.append([
-            d.ts.iloc[i],
-            d.ts.iloc[exit_i],
-            r
+            d["ts"].iloc[i],
+            d["ts"].iloc[exit_i],
+            result
         ])
 
     return pd.DataFrame(
@@ -190,10 +168,11 @@ def events(d,tp):
 
 
 def stats(x):
+
     if len(x)==0:
         return 0,np.nan,np.nan,0,0
 
-    r=x.r.to_numpy(float)
+    r=x["r"].to_numpy(float)
 
     gains=r[r>0].sum()
     losses=-r[r<0].sum()
@@ -212,33 +191,32 @@ def stats(x):
     )
 
 
-print("="*72)
-print("CANDIDATE 11 — SHORT ONLY — ROBUST KUCOIN FETCH")
-print("="*72)
+print("="*70)
+print("CANDIDATE 11 — SHORT ONLY — FIXED R ENGINE")
+print("="*70)
 
 data={}
-bad={}
 
 for s in SYMS:
     try:
         data[s]=indicators(fetch(s))
         print(
             f"{s:<6} {len(data[s])} candles | "
-            f"{data[s].ts.iloc[0]} -> {data[s].ts.iloc[-1]}"
+            f"{data[s]['ts'].iloc[0]} -> "
+            f"{data[s]['ts'].iloc[-1]}"
         )
     except Exception as e:
-        bad[s]=str(e)
         print(f"{s:<6} ERROR: {e}")
 
-if bad:
+if len(data)!=len(SYMS):
     raise SystemExit(
-        f"ABORT: {len(bad)} symbols failed"
+        f"ABORT: {len(SYMS)-len(data)} symbols failed"
     )
 
-common=set(data[SYMS[0]].ts)
+common=set(data[SYMS[0]]["ts"])
 
 for s in SYMS[1:]:
-    common &= set(data[s].ts)
+    common &= set(data[s]["ts"])
 
 common=sorted(common)
 
@@ -247,17 +225,16 @@ if len(common)!=N:
         f"ABORT: COMMON TIMESTAMPS={len(common)} EXPECTED={N}"
     )
 
-print("\n"+"="*72)
-print("DATA AUDIT = PASS")
+print("\nDATA AUDIT = PASS")
 print(f"VALID SYMBOLS = {len(data)}")
 print(f"COMMON TIMESTAMPS = {len(common)}")
-print(f"COMMON START = {common[0]}")
-print(f"COMMON END   = {common[-1]}")
-print("="*72)
+print(f"START = {common[0]}")
+print(f"END   = {common[-1]}")
 
-# فقط رویدادهای داخل پنجره مشترک
-START=pd.Timestamp(common[0])
-END=pd.Timestamp(common[-1])+pd.Timedelta(hours=4)
+folds=np.array_split(
+    np.array(common),
+    5
+)
 
 for tp in [1.5,2.0]:
 
@@ -268,33 +245,21 @@ for tp in [1.5,2.0]:
         e=events(d,tp)
 
         if len(e):
-            e=e[
-                (e.entry>=START) &
-                (e.entry<END) &
-                (e.exit<=END)
-            ].copy()
-
-            if len(e):
-                e["symbol"]=s
-                all_events.append(e)
+            e["symbol"]=s
+            all_events.append(e)
 
     if not all_events:
-        raise SystemExit("ABORT: no events")
+        raise SystemExit("ABORT: NO EVENTS")
 
     ev=pd.concat(
         all_events,
         ignore_index=True
     ).sort_values("entry").reset_index(drop=True)
 
-    print("\n"+"="*72)
+    print("\n"+"="*70)
     print(f"TP{tp:g}R — SHORT ONLY")
     print(f"TOTAL EVENTS = {len(ev)}")
-    print("="*72)
-
-    folds=np.array_split(
-        np.array(common),
-        5
-    )
+    print("="*70)
 
     oos=[]
 
@@ -304,14 +269,14 @@ for tp in [1.5,2.0]:
         end=pd.Timestamp(folds[k][-1])+pd.Timedelta(hours=4)
 
         isx=ev[
-            (ev.entry<start) &
-            (ev.exit<start)
+            (ev["entry"]<start) &
+            (ev["exit"]<start)
         ]
 
         ox=ev[
-            (ev.entry>=start) &
-            (ev.entry<end) &
-            (ev.exit<end)
+            (ev["entry"]>=start) &
+            (ev["entry"]<end) &
+            (ev["exit"]<end)
         ]
 
         a=stats(isx)
@@ -344,7 +309,7 @@ for tp in [1.5,2.0]:
         for x in oos
     )
 
-    print("-"*72)
+    print("-"*70)
     print(
         f"TP{tp:g}R AGG OOS | "
         f"N={z[0]} "
@@ -363,6 +328,6 @@ for tp in [1.5,2.0]:
         else "FAIL"
     )
 
-print("\n"+"="*72)
+print("\n"+"="*70)
 print("RUN COMPLETE")
-print("="*72)
+print("="*70)
