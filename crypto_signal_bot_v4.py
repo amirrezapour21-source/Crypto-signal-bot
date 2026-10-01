@@ -22,11 +22,38 @@ END_TS = int(pd.Timestamp("2026-09-29T20:00:00Z").timestamp())
 START_TS = END_TS - (N - 1) * STEP
 
 
+def get_json(params):
+
+    last = None
+
+    for attempt in range(3):
+
+        try:
+
+            r = requests.get(
+                BASE,
+                params=params,
+                timeout=10
+            )
+
+            if r.status_code == 429:
+                time.sleep(2 * (attempt + 1))
+                continue
+
+            r.raise_for_status()
+            return r.json().get("data", [])
+
+        except requests.RequestException as e:
+            last = e
+            time.sleep(1)
+
+    raise RuntimeError(f"request failed: {last}")
+
+
 def fetch(sym):
 
     rows = []
 
-    # قطعات 900 کندلی با هم‌پوشانی 2 کندل
     CHUNK = 900
     OVERLAP = 2
     pos = START_TS
@@ -38,25 +65,20 @@ def fetch(sym):
             END_TS
         )
 
-        r = requests.get(
-            BASE,
-            params={
-                "symbol": f"{sym}-USDT",
-                "type": "4hour",
-                "startAt": pos,
-                "endAt": chunk_end
-            },
-            timeout=20
-        )
-
-        r.raise_for_status()
-
-        data = r.json().get("data", [])
+        data = get_json({
+            "symbol": f"{sym}-USDT",
+            "type": "4hour",
+            "startAt": pos,
+            "endAt": chunk_end
+        })
 
         if data:
             rows.extend(data)
 
-        # هم‌پوشانی برای جلوگیری از gap مرزی
+        # FIX: خروج از حلقه در آخرین قطعه
+        if chunk_end >= END_TS:
+            break
+
         pos = chunk_end - OVERLAP * STEP + STEP
 
         time.sleep(0.03)
@@ -90,7 +112,6 @@ def fetch(sym):
          .reset_index(drop=True)
     )
 
-    # فقط بازه موردنظر
     d = d[
         (d["ts"] >= pd.Timestamp(
             "2024-09-29T12:00:00Z"
@@ -100,7 +121,6 @@ def fetch(sym):
         ))
     ].copy()
 
-    # پیدا کردن آخرین بلوک کاملاً پیوسته
     ts = d["ts"].astype("int64") // 10**9
     diff = ts.diff()
 
@@ -327,14 +347,16 @@ for s in SYMS:
         print(
             f"{s:<6} {len(d)} candles | "
             f"{d['ts'].iloc[0]} -> "
-            f"{d['ts'].iloc[-1]}"
+            f"{d['ts'].iloc[-1]}",
+            flush=True
         )
 
     except Exception as e:
 
         bad[s] = str(e)
         print(
-            f"{s:<6} ERROR: {e}"
+            f"{s:<6} ERROR: {e}",
+            flush=True
         )
 
 
