@@ -123,8 +123,8 @@ def fetch(sym):
         ))
     ].copy()
 
-    ts = d["ts"].astype("int64") // 10**9
-    diff = ts.diff()
+    # مستقل از resolution زمانی pandas (s / ms / ns)
+    diff = d["ts"].diff().dt.total_seconds()
 
     blocks = []
     start = 0
@@ -143,9 +143,11 @@ def fetch(sym):
     ]
 
     if not valid:
+        longest = max((b-a for a,b in blocks), default=0)
         raise ValueError(
             f"{sym}: no contiguous {N}-candle block; "
-            f"received={len(d)}"
+            f"received={len(d)} blocks={len(blocks)} "
+            f"longest={longest}"
         )
 
     a,b = valid[-1]
