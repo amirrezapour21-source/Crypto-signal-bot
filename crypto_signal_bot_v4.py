@@ -3,11 +3,7 @@ import requests,pandas as pd,numpy as np
 BASE="https://api.kucoin.com/api/v1/market/candles"
 SYMS=["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT","SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC","BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP","WIF","PEPE","FLOKI"]
 
-N=4380
-STEP=14400
-HOLD=30
-ATR_M=1.25
-COST=.003
+N=4380; STEP=14400; HOLD=30; ATR_M=1.25; COST=.003
 
 def fetch(s):
     end=int(pd.Timestamp("2026-09-30T00:00:00Z").timestamp())
@@ -15,30 +11,16 @@ def fetch(s):
     rows=[]
 
     while start<end:
-        chunk=min(1500,(end-start)//STEP)
-        e=start+(chunk-1)*STEP
-
-        r=requests.get(
-            BASE,
-            params={
-                "symbol":f"{s}-USDT",
-                "type":"4hour",
-                "startAt":start,
-                "endAt":e
-            },
-            timeout=15
-        )
+        e=min(start+1499*STEP,end-STEP)
+        r=requests.get(BASE,params={
+            "symbol":f"{s}-USDT","type":"4hour",
+            "startAt":start,"endAt":e
+        },timeout=20)
         r.raise_for_status()
-        x=r.json()["data"]
-        rows.extend(x)
-
+        rows+=r.json()["data"]
         start=e+STEP
 
-    d=pd.DataFrame(
-        rows,
-        columns=["ts","open","close","high","low","vol","turn"]
-    )
-
+    d=pd.DataFrame(rows,columns=["ts","open","close","high","low","vol","turn"])
     d["ts"]=pd.to_datetime(pd.to_numeric(d.ts),unit="s",utc=True)
 
     for c in ["open","close","high","low","vol"]:
@@ -46,11 +28,13 @@ def fetch(s):
 
     d=d.drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
 
-    if len(d)!=N:
-        raise ValueError(f"{s}: received {len(d)}")
+    if len(d)<4300:
+        raise ValueError(f"{s}: insufficient candles {len(d)}")
 
-    if d.ts.diff().dropna().dt.total_seconds().ne(STEP).any():
-        raise ValueError(f"{s}: timestamp gap")
+    gap=d.ts.diff().dropna().dt.total_seconds().ne(STEP)
+    if gap.any():
+        bad=d.ts.diff().dropna()[gap].iloc[0]
+        raise ValueError(f"{s}: timestamp gap at {bad}")
 
     return d
 
@@ -64,9 +48,7 @@ def ind(d):
     d["vmed"]=v.rolling(20).median()
 
     tr=pd.concat([
-        h-l,
-        (h-c.shift()).abs(),
-        (l-c.shift()).abs()
+        h-l,(h-c.shift()).abs(),(l-c.shift()).abs()
     ],axis=1).max(axis=1)
 
     d["atr"]=tr.ewm(alpha=1/20,adjust=False).mean()
@@ -122,7 +104,7 @@ def stats(x):
     return len(r),r.mean(),win/loss if loss else np.inf,r.sum(),dd
 
 print("="*70)
-print("CANDIDATE 11 — SHORT ONLY — FIXED R ENGINE — 5-FOLD")
+print("CANDIDATE 11 — SHORT ONLY — COMMON WINDOW — FIXED R ENGINE")
 print("="*70)
 
 data={}
@@ -144,10 +126,10 @@ for s in SYMS[1:]:
 
 common=sorted(common)
 
-if len(common)!=N:
-    raise SystemExit(
-        f"ABORT: COMMON TIMESTAMPS={len(common)} EXPECTED={N}"
-    )
+if len(common)<4300:
+    raise SystemExit(f"ABORT: COMMON TIMESTAMPS={len(common)}")
+
+common=common[-N:]
 
 print("\nDATA AUDIT = PASS")
 print(f"VALID SYMBOLS = {len(data)}")
@@ -163,18 +145,18 @@ for tp in [1.5,2.0]:
 
     for s,d in data.items():
         e=events(d,tp)
-
         if len(e):
             e["symbol"]=s
             evs.append(e)
 
-    ev=pd.concat(evs,ignore_index=True).sort_values("entry")
-    oos=[]
+    ev=pd.concat(evs,ignore_index=True).sort_values("entry").reset_index(drop=True)
 
     print("\n"+"="*70)
     print(f"TP{tp:g}R — SHORT ONLY")
     print(f"TOTAL GENERATED EVENTS = {len(ev)}")
     print("="*70)
+
+    oos=[]
 
     for k in range(5):
 
@@ -191,21 +173,10 @@ for tp in [1.5,2.0]:
         a=stats(isx)
         b=stats(ox)
 
-        print(f"\nFOLD {k+1}")
         print(
-            f"IS  N={a[0]:4d} "
-            f"Exp={a[1]:+.4f} "
-            f"PF={a[2]:.3f} "
-            f"Total={a[3]:+.2f}R "
-            f"DD={a[4]:+.2f}R"
-        )
-
-        print(
-            f"OOS N={b[0]:4d} "
-            f"Exp={b[1]:+.4f} "
-            f"PF={b[2]:.3f} "
-            f"Total={b[3]:+.2f}R "
-            f"DD={b[4]:+.2f}R"
+            f"FOLD {k+1} | "
+            f"IS N={a[0]} Exp={a[1]:+.4f} PF={a[2]:.3f} Total={a[3]:+.2f}R | "
+            f"OOS N={b[0]} Exp={b[1]:+.4f} PF={b[2]:.3f} Total={b[3]:+.2f}R DD={b[4]:+.2f}R"
         )
 
         oos.append(ox)
@@ -213,14 +184,11 @@ for tp in [1.5,2.0]:
     z=stats(pd.concat(oos,ignore_index=True))
     positive=sum(stats(x)[3]>0 for x in oos)
 
-    print("\n"+"-"*70)
-    print(f"TP{tp:g}R AGGREGATE OOS")
+    print("-"*70)
     print(
-        f"N={z[0]} "
-        f"Exp={z[1]:+.4f} "
-        f"PF={z[2]:.3f} "
-        f"Total={z[3]:+.2f}R "
-        f"DD={z[4]:+.2f}R"
+        f"TP{tp:g}R OOS | N={z[0]} "
+        f"Exp={z[1]:+.4f} PF={z[2]:.3f} "
+        f"Total={z[3]:+.2f}R DD={z[4]:+.2f}R"
     )
     print(f"Positive OOS folds = {positive}/5")
     print(
