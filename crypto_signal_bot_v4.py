@@ -1,5 +1,10 @@
 import requests, pandas as pd, numpy as np, time
 
+# ============================================================
+# CANDIDATE 11 — SHORT ONLY
+# FINAL INTERNAL HOLDOUT + STATISTICAL ROBUSTNESS
+# ============================================================
+
 SYMS = [
     "BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT",
     "SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC",
@@ -16,12 +21,20 @@ END = pd.Timestamp(
     tz="UTC"
 )
 
-COSTS = [0.003,0.004,0.005]
-TPS = [1.5,2.0]
+COSTS = [0.003, 0.004, 0.005]
+TPS = [1.5, 2.0]
 HOLDOUT = 0.20
+
+# Statistical robustness
+BOOT = 20000
+SEED = 20260927
 
 URL = "https://api.kucoin.com/api/v1/market/candles"
 
+
+# ============================================================
+# DATA FETCH — FROZEN
+# ============================================================
 
 def get_page(sym, start_at, end_at):
 
@@ -59,8 +72,6 @@ def fetch(sym):
 
     rows = []
 
-    # FIX 1: endAt در KuCoin شامل کندل مرزی نیست -> یک کندل جلوتر شروع می‌کنیم
-    # (کندل‌های بعد از END بعداً فیلتر می‌شوند)
     cursor = int(END.timestamp()) + STEP
 
     min_ts = int(
@@ -69,7 +80,6 @@ def fetch(sym):
 
     while cursor >= min_ts:
 
-        # FIX 2: startAt صریح -> هر صفحه تا ~1490 کندل
         j, err = get_page(
             sym,
             cursor - PAGE * STEP,
@@ -100,18 +110,15 @@ def fetch(sym):
 
         oldest = min(ts)
 
-        # حفاظ در برابر حلقه بی‌پایان
         if oldest >= cursor:
             return None, "NO_PROGRESS"
 
-        # FIX 3: صفحه بعد دقیقاً از قدیمی‌ترین کندل شروع می‌شود
-        # تا بین صفحه‌ها gap ایجاد نشود؛ تکراری‌ها حذف می‌شوند
         cursor = oldest
 
         time.sleep(0.08)
 
     if not rows:
-        return None,"NO_DATA"
+        return None, "NO_DATA"
 
     d = pd.DataFrame(
         rows,
@@ -145,11 +152,7 @@ def fetch(sym):
     d = d[d.index <= END]
 
     if len(d) < N:
-        return None,f"TOTAL={len(d)}"
-
-    # --------------------------------------------------------
-    # Find LAST contiguous block of exactly N candles
-    # --------------------------------------------------------
+        return None, f"TOTAL={len(d)}"
 
     idx = d.index
 
@@ -163,8 +166,8 @@ def fetch(sym):
 
     blocks = (
         pd.DataFrame({
-            "ts":idx,
-            "g":group.values
+            "ts": idx,
+            "g": group.values
         })
         .groupby("g")
         .agg(
@@ -179,8 +182,7 @@ def fetch(sym):
     ]
 
     if valid.empty:
-
-        return None,(
+        return None, (
             f"NO_CONTIGUOUS_{N}; "
             f"TOTAL={len(d)}; "
             f"LONGEST={int(blocks['n'].max())}"
@@ -197,48 +199,53 @@ def fetch(sym):
         out = out.iloc[-N:]
 
     if len(out) != N:
-        return None,f"BLOCK={len(out)}"
+        return None, f"BLOCK={len(out)}"
 
-    return out,"PASS"
+    return out, "PASS"
 
+
+# ============================================================
+# INDICATORS — FROZEN
+# ============================================================
 
 def prepare(d):
 
-    d=d.copy()
+    d = d.copy()
 
-    d["mean20"]=d["close"].rolling(20).mean()
-    d["std20"]=d["close"].rolling(20).std()
+    d["mean20"] = d["close"].rolling(20).mean()
 
-    d["z"]=(
-        (d["close"]-d["mean20"]) /
+    d["std20"] = d["close"].rolling(20).std()
+
+    d["z"] = (
+        (d["close"] - d["mean20"]) /
         d["std20"]
     )
 
-    d["range20"]=(
+    d["range20"] = (
         d["high"].rolling(20).max() -
         d["low"].rolling(20).min()
     )
 
-    d["range_med"]=(
+    d["range_med"] = (
         d["range20"].rolling(20).median()
     )
 
-    d["vol_med"]=(
+    d["vol_med"] = (
         d["volume"].rolling(20).median()
     )
 
-    tr=pd.concat([
-        d["high"]-d["low"],
-        (d["high"]-d["close"].shift()).abs(),
-        (d["low"]-d["close"].shift()).abs()
-    ],axis=1).max(axis=1)
+    tr = pd.concat([
+        d["high"] - d["low"],
+        (d["high"] - d["close"].shift()).abs(),
+        (d["low"] - d["close"].shift()).abs()
+    ], axis=1).max(axis=1)
 
-    d["atr20"]=tr.ewm(
+    d["atr20"] = tr.ewm(
         alpha=1/20,
         adjust=False
     ).mean()
 
-    d["ema200"]=d["close"].ewm(
+    d["ema200"] = d["close"].ewm(
         span=200,
         adjust=False
     ).mean()
@@ -246,14 +253,18 @@ def prepare(d):
     return d
 
 
-def events(d,tp,end_limit):
+# ============================================================
+# EVENT ENGINE — FROZEN
+# ============================================================
 
-    out=[]
+def events(d, tp, end_limit):
 
-    for i in range(200,len(d)-1):
+    out = []
 
-        p=d.iloc[i-1]
-        c=d.iloc[i]
+    for i in range(200, len(d)-1):
+
+        p = d.iloc[i-1]
+        c = d.iloc[i]
 
         if not (
             np.isfinite(p["z"]) and
@@ -262,113 +273,132 @@ def events(d,tp,end_limit):
         ):
             continue
 
-        signal=(
-            c["close"]<c["ema200"]
-            and p["z"]>=2
-            and c["z"]<2
-            and c["range20"]>=c["range_med"]
-            and c["volume"]>=c["vol_med"]
+        signal = (
+            c["close"] < c["ema200"]
+            and p["z"] >= 2
+            and c["z"] < 2
+            and c["range20"] >= c["range_med"]
+            and c["volume"] >= c["vol_med"]
         )
 
         if not signal:
             continue
 
-        ei=i+1
+        ei = i + 1
 
-        if ei>=len(d):
+        if ei >= len(d):
             continue
 
-        ep=float(d.iloc[ei]["open"])
+        ep = float(d.iloc[ei]["open"])
 
-        sl=ep+1.25*float(c["atr20"])
-        risk=sl-ep
-        target=ep-tp*risk
+        sl = ep + 1.25 * float(c["atr20"])
 
-        result=None
-        exit_ts=None
+        risk = sl - ep
 
-        last=min(len(d),ei+31)
+        target = ep - tp * risk
 
-        for j in range(ei,last):
+        result = None
+        exit_ts = None
 
-            x=d.iloc[j]
+        last = min(
+            len(d),
+            ei + 31
+        )
 
-            if x["high"]>=sl:
-                result=-1.0
-                exit_ts=d.index[j]
+        for j in range(ei, last):
+
+            x = d.iloc[j]
+
+            if x["high"] >= sl:
+                result = -1.0
+                exit_ts = d.index[j]
                 break
 
-            if x["low"]<=target:
-                result=tp
-                exit_ts=d.index[j]
+            if x["low"] <= target:
+                result = tp
+                exit_ts = d.index[j]
                 break
 
         if result is None:
-            result=0.0
-            exit_ts=d.index[last-1]
+            result = 0.0
+            exit_ts = d.index[last-1]
 
-        # Strict holdout
-        if exit_ts>end_limit:
+        if exit_ts > end_limit:
             continue
 
         out.append({
-            "ts":d.index[ei],
-            "exit":exit_ts,
-            "r":result
+            "ts": d.index[ei],
+            "exit": exit_ts,
+            "r": result
         })
 
     return pd.DataFrame(out)
 
 
-def stat(ev,cost=.003):
+# ============================================================
+# BASIC STATS
+# ============================================================
+
+def stat(ev, cost=.003):
 
     if ev.empty:
-        return 0,0,0,0,0
+        return 0, 0, 0, 0, 0
 
-    r=(
+    r = (
         ev.sort_values("ts")["r"]
-        -cost
+        .to_numpy(dtype=float)
+        - cost
     )
 
-    total=float(r.sum())
-    exp=float(r.mean())
+    total = float(r.sum())
 
-    win=float(r[r>0].sum())
-    loss=float(-r[r<0].sum())
+    exp = float(r.mean())
 
-    pf=win/loss if loss else np.inf
+    win = float(r[r > 0].sum())
 
-    eq=r.cumsum()
+    loss = float(-r[r < 0].sum())
 
-    dd=float(
-        (eq-eq.cummax()).min()
+    pf = (
+        win / loss
+        if loss > 0
+        else np.inf
     )
 
-    return len(r),exp,pf,total,dd
+    eq = np.cumsum(r)
 
+    dd = float(
+        (eq - np.maximum.accumulate(eq)).min()
+    )
+
+    return len(r), exp, pf, total, dd
+
+
+# ============================================================
+# NO OVERLAP
+# ============================================================
 
 def no_overlap(ev):
 
     if ev.empty:
         return ev
 
-    x=ev.sort_values(
-        ["sym","ts"]
+    x = ev.sort_values(
+        ["sym", "ts"]
     ).copy()
 
-    keep=[]
-    last={}
+    keep = []
+    last = {}
 
-    for _,r in x.iterrows():
+    for _, r in x.iterrows():
 
-        s=r["sym"]
+        s = r["sym"]
 
         if (
             s not in last or
-            r["ts"]>=last[s]
+            r["ts"] >= last[s]
         ):
             keep.append(True)
-            last[s]=r["exit"]
+            last[s] = r["exit"]
         else:
             keep.append(False)
 
@@ -379,21 +409,28 @@ def no_overlap(ev):
 # DATA
 # ============================================================
 
-print("="*72)
+print("=" * 72)
 print("CANDIDATE 11 — SHORT ONLY")
-print("FINAL INTERNAL HOLDOUT VALIDATION")
-print("="*72)
+print("FINAL INTERNAL HOLDOUT + STATISTICAL ROBUSTNESS")
+print("=" * 72)
 
-DATA={}
+DATA = {}
 
 for s in SYMS:
 
-    d,msg=fetch(s)
+    d, msg = fetch(s)
 
     if d is None:
-        print(f"{s:<6} FAIL | {msg}", flush=True)
+
+        print(
+            f"{s:<6} FAIL | {msg}",
+            flush=True
+        )
+
     else:
-        DATA[s]=prepare(d)
+
+        DATA[s] = prepare(d)
+
         print(
             f"{s:<6} PASS | "
             f"{len(d)} | "
@@ -401,31 +438,45 @@ for s in SYMS:
             flush=True
         )
 
-print()
-print("="*72)
-print("DATA AUDIT")
-print("="*72)
 
-if len(DATA)!=len(SYMS):
+# ============================================================
+# DATA AUDIT
+# ============================================================
+
+print()
+print("=" * 72)
+print("DATA AUDIT")
+print("=" * 72)
+
+if len(DATA) != len(SYMS):
+
     raise SystemExit(
         f"ABORT: {len(DATA)}/{len(SYMS)} symbols passed"
     )
 
-common=set(next(iter(DATA.values())).index)
+common = set(
+    next(iter(DATA.values())).index
+)
 
 for d in DATA.values():
     common &= set(d.index)
 
-common=pd.DatetimeIndex(sorted(common))
+common = pd.DatetimeIndex(
+    sorted(common)
+)
 
-if len(common)!=N:
+if len(common) != N:
+
     raise SystemExit(
         f"ABORT: COMMON={len(common)} expected={N}"
     )
 
-g=common.to_series().diff().dropna()
+g = common.to_series().diff().dropna()
 
-if not (g==pd.Timedelta(hours=4)).all():
+if not (
+    g == pd.Timedelta(hours=4)
+).all():
+
     raise SystemExit(
         "ABORT: COMMON GAP"
     )
@@ -442,34 +493,40 @@ print("DATA AUDIT=PASS")
 # HOLDOUT
 # ============================================================
 
-cut=int(N*(1-HOLDOUT))
+cut = int(
+    N * (1 - HOLDOUT)
+)
 
-hold=common[cut:]
+hold = common[cut:]
 
-HSTART=hold[0]
-HEND=hold[-1]
+HSTART = hold[0]
+HEND = hold[-1]
 
 print()
-print("="*72)
+print("=" * 72)
 print("HOLDOUT DEFINITION")
-print("="*72)
+print("=" * 72)
 print(f"TRAIN/DEV={cut}")
 print(f"HOLDOUT={len(hold)}")
 print(f"START={HSTART}")
 print(f"END={HEND}")
 print("PARAMETERS=FROZEN")
-print("="*72)
+print("=" * 72)
 
 
-ALL={}
+# ============================================================
+# BUILD EVENTS
+# ============================================================
+
+ALL = {}
 
 for tp in TPS:
 
-    parts=[]
+    parts = []
 
-    for s,d in DATA.items():
+    for s, d in DATA.items():
 
-        e=events(
+        e = events(
             d,
             tp,
             HEND
@@ -478,46 +535,57 @@ for tp in TPS:
         if e.empty:
             continue
 
-        e["sym"]=s
+        e["sym"] = s
 
-        e=e[
-            (e["ts"]>=HSTART) &
-            (e["ts"]<=HEND)
+        e = e[
+            (e["ts"] >= HSTART) &
+            (e["ts"] <= HEND)
         ]
 
         if not e.empty:
             parts.append(e)
 
-    ALL[tp]=(
-        pd.concat(parts,ignore_index=True)
+    ALL[tp] = (
+        pd.concat(
+            parts,
+            ignore_index=True
+        )
         .sort_values("ts")
         if parts
         else
         pd.DataFrame(
-            columns=["ts","exit","r","sym"]
+            columns=[
+                "ts",
+                "exit",
+                "r",
+                "sym"
+            ]
         )
     )
 
 
 # ============================================================
-# RESULTS
+# HOLDOUT RESULTS
 # ============================================================
 
 for tp in TPS:
 
-    ev=ALL[tp]
+    ev = ALL[tp]
 
     print()
-    print("="*72)
+    print("=" * 72)
     print(f"TP{tp}R — HOLDOUT")
-    print("="*72)
+    print("=" * 72)
 
-    print(f"EVENTS={len(ev)}")
+    print(
+        f"EVENTS={len(ev)}"
+    )
 
     for cost in COSTS:
 
-        n,ex,pf,total,dd=stat(
-            ev,cost
+        n, ex, pf, total, dd = stat(
+            ev,
+            cost
         )
 
         print(
@@ -529,14 +597,16 @@ for tp in TPS:
             f"DD={dd:+.2f}R"
         )
 
-    no=no_overlap(ev)
+    no = no_overlap(ev)
 
-    n,ex,pf,total,dd=stat(
-        no,.003
+    n, ex, pf, total, dd = stat(
+        no,
+        .003
     )
 
     print()
     print("NO-OVERLAP")
+
     print(
         f"N={n} "
         f"Exp={ex:+.4f} "
@@ -548,27 +618,37 @@ for tp in TPS:
     print()
     print("TEMPORAL HOLDOUT BLOCKS")
 
-    folds=np.array_split(hold,5)
+    folds = np.array_split(
+        hold,
+        5
+    )
 
-    positive=0
-    parts=[]
+    positive = 0
+    parts = []
 
-    for k,b in enumerate(folds,1):
+    for k, b in enumerate(
+        folds,
+        1
+    ):
 
-        a=b[0]
-        z=b[-1]
+        if len(b) == 0:
+            continue
 
-        f=ev[
-            (ev["ts"]>=a) &
-            (ev["ts"]<=z)
+        a = b[0]
+        z = b[-1]
+
+        f = ev[
+            (ev["ts"] >= a) &
+            (ev["ts"] <= z)
         ]
 
-        n,ex,pf,total,dd=stat(
-            f,.003
+        n, ex, pf, total, dd = stat(
+            f,
+            .003
         )
 
-        if total>0:
-            positive+=1
+        if total > 0:
+            positive += 1
 
         parts.append(f)
 
@@ -581,24 +661,28 @@ for tp in TPS:
             f"DD={dd:+.2f}R"
         )
 
-    agg=pd.concat(
-        parts,
-        ignore_index=True
-    )
+    if parts:
 
-    n,ex,pf,total,dd=stat(
-        agg,.003
-    )
+        agg = pd.concat(
+            parts,
+            ignore_index=True
+        )
 
-    print("-"*72)
-    print(
-        f"AGG HOLDOUT | "
-        f"N={n} "
-        f"Exp={ex:+.4f} "
-        f"PF={pf:.3f} "
-        f"Total={total:+.2f}R "
-        f"DD={dd:+.2f}R"
-    )
+        n, ex, pf, total, dd = stat(
+            agg,
+            .003
+        )
+
+        print("-" * 72)
+
+        print(
+            f"AGG HOLDOUT | "
+            f"N={n} "
+            f"Exp={ex:+.4f} "
+            f"PF={pf:.3f} "
+            f"Total={total:+.2f}R "
+            f"DD={dd:+.2f}R"
+        )
 
     print(
         f"POSITIVE FOLDS={positive}/5"
@@ -607,29 +691,445 @@ for tp in TPS:
     print()
     print("SYMBOL JACKKNIFE")
 
-    full=stat(ev,.003)[3]
+    full = stat(
+        ev,
+        .003
+    )[3]
 
-    rem=[]
+    rem = []
 
     for s in SYMS:
 
-        t=stat(
-            ev[ev["sym"]!=s],
+        t = stat(
+            ev[ev["sym"] != s],
             .003
         )[3]
 
-        rem.append((s,t))
+        rem.append(
+            (s, t)
+        )
 
-    rem.sort(key=lambda x:x[1])
+    rem.sort(
+        key=lambda x: x[1]
+    )
 
-    print(f"FULL={full:+.2f}R")
+    print(
+        f"FULL={full:+.2f}R"
+    )
 
-    for s,t in rem[:5]:
+    for s, t in rem[:5]:
+
         print(
             f"REMOVE {s:<6} => {t:+.2f}R"
         )
 
+
+# ============================================================
+# STATISTICAL ROBUSTNESS
+# ============================================================
+
+def bootstrap_trade_level(r, B, rng):
+
+    n = len(r)
+
+    mean_boot = np.empty(B)
+    total_boot = np.empty(B)
+    pf_boot = np.empty(B)
+
+    for i in range(B):
+
+        s = rng.choice(
+            r,
+            size=n,
+            replace=True
+        )
+
+        total_boot[i] = s.sum()
+        mean_boot[i] = s.mean()
+
+        win = s[s > 0].sum()
+        loss = -s[s < 0].sum()
+
+        pf_boot[i] = (
+            win / loss
+            if loss > 0
+            else np.inf
+        )
+
+    return (
+        mean_boot,
+        total_boot,
+        pf_boot
+    )
+
+
+def bootstrap_symbol_level(ev, B, rng):
+
+    symbols = ev["sym"].unique()
+
+    groups = []
+
+    for s in symbols:
+
+        r = (
+            ev.loc[
+                ev["sym"] == s,
+                "r"
+            ]
+            .to_numpy(dtype=float)
+            - 0.003
+        )
+
+        groups.append({
+            "n": len(r),
+            "total": r.sum(),
+            "win": r[r > 0].sum(),
+            "loss": -r[r < 0].sum()
+        })
+
+    m = len(groups)
+
+    n_arr = np.array(
+        [x["n"] for x in groups],
+        dtype=float
+    )
+
+    total_arr = np.array(
+        [x["total"] for x in groups],
+        dtype=float
+    )
+
+    win_arr = np.array(
+        [x["win"] for x in groups],
+        dtype=float
+    )
+
+    loss_arr = np.array(
+        [x["loss"] for x in groups],
+        dtype=float
+    )
+
+    mean_boot = np.empty(B)
+    total_boot = np.empty(B)
+    pf_boot = np.empty(B)
+
+    for i in range(B):
+
+        pick = rng.integers(
+            0,
+            m,
+            size=m
+        )
+
+        n = n_arr[pick].sum()
+
+        total = total_arr[pick].sum()
+
+        win = win_arr[pick].sum()
+
+        loss = loss_arr[pick].sum()
+
+        total_boot[i] = total
+
+        mean_boot[i] = (
+            total / n
+            if n > 0
+            else 0
+        )
+
+        pf_boot[i] = (
+            win / loss
+            if loss > 0
+            else np.inf
+        )
+
+    return (
+        mean_boot,
+        total_boot,
+        pf_boot
+    )
+
+
+def monte_carlo_dd(r, B, rng):
+
+    n = len(r)
+
+    dd = np.empty(B)
+
+    for i in range(B):
+
+        s = rng.permutation(r)
+
+        eq = np.cumsum(s)
+
+        peak = np.maximum.accumulate(
+            np.r_[0.0, eq]
+        )
+
+        dd[i] = (
+            eq - peak[1:]
+        ).min()
+
+    return dd
+
+
+def print_ci(name, x):
+
+    x = x[
+        np.isfinite(x)
+    ]
+
+    q = np.percentile(
+        x,
+        [2.5, 50, 97.5]
+    )
+
+    print(
+        f"{name} CI95% = "
+        f"[{q[0]:+.4f}, "
+        f"{q[2]:+.4f}] "
+        f"median={q[1]:+.4f}"
+    )
+
+    return q
+
+
+# ============================================================
+# RUN STATISTICAL ROBUSTNESS
+# ============================================================
+
 print()
-print("="*72)
-print("FINAL INTERNAL HOLDOUT VALIDATION COMPLETE")
-print("="*72)
+print()
+print("#" * 72)
+print("STATISTICAL ROBUSTNESS")
+print("#" * 72)
+print(
+    f"BOOTSTRAPS={BOOT} | SEED={SEED}"
+)
+
+for tp in TPS:
+
+    ev = ALL[tp].copy()
+
+    if ev.empty:
+        print(
+            f"\nTP{tp}R | NO EVENTS"
+        )
+        continue
+
+    # Net R at baseline cost
+    r = (
+        ev.sort_values("ts")["r"]
+        .to_numpy(dtype=float)
+        - 0.003
+    )
+
+    rng = np.random.default_rng(
+        SEED + int(tp * 100)
+    )
+
+    # --------------------------------------------------------
+    # Point estimate
+    # --------------------------------------------------------
+
+    n = len(r)
+
+    total = float(r.sum())
+
+    exp = float(r.mean())
+
+    win = float(
+        r[r > 0].sum()
+    )
+
+    loss = float(
+        -r[r < 0].sum()
+    )
+
+    pf = (
+        win / loss
+        if loss > 0
+        else np.inf
+    )
+
+    print()
+    print("=" * 72)
+    print(
+        f"TP{tp}R — STATISTICAL ROBUSTNESS"
+    )
+    print("=" * 72)
+
+    print(
+        f"TRADES={n}"
+    )
+
+    print(
+        f"POINT Exp={exp:+.4f} "
+        f"PF={pf:.3f} "
+        f"Total={total:+.2f}R"
+    )
+
+    # --------------------------------------------------------
+    # Trade-level bootstrap
+    # --------------------------------------------------------
+
+    mean_b, total_b, pf_b = (
+        bootstrap_trade_level(
+            r,
+            BOOT,
+            rng
+        )
+    )
+
+    print()
+    print("TRADE-LEVEL BOOTSTRAP")
+
+    mean_ci = print_ci(
+        "MEAN R",
+        mean_b
+    )
+
+    total_ci = print_ci(
+        "TOTAL R",
+        total_b
+    )
+
+    pf_ci = print_ci(
+        "PF",
+        pf_b
+    )
+
+    prob_total = float(
+        np.mean(total_b > 0)
+    )
+
+    print(
+        f"P(TOTAL R > 0)="
+        f"{prob_total:.4f}"
+    )
+
+    # --------------------------------------------------------
+    # Symbol-level bootstrap
+    # --------------------------------------------------------
+
+    (
+        sm_mean,
+        sm_total,
+        sm_pf
+    ) = bootstrap_symbol_level(
+        ev,
+        BOOT,
+        rng
+    )
+
+    print()
+    print("SYMBOL-LEVEL BOOTSTRAP")
+
+    sm_mean_ci = print_ci(
+        "MEAN R",
+        sm_mean
+    )
+
+    sm_total_ci = print_ci(
+        "TOTAL R",
+        sm_total
+    )
+
+    sm_pf_ci = print_ci(
+        "PF",
+        sm_pf
+    )
+
+    sm_prob = float(
+        np.mean(sm_total > 0)
+    )
+
+    print(
+        f"P(TOTAL R > 0)="
+        f"{sm_prob:.4f}"
+    )
+
+    # --------------------------------------------------------
+    # Monte Carlo sequence DD
+    # --------------------------------------------------------
+
+    mc = monte_carlo_dd(
+        r,
+        BOOT,
+        rng
+    )
+
+    qdd = np.percentile(
+        mc,
+        [5, 50, 95]
+    )
+
+    print()
+    print("MONTE-CARLO SEQUENCE DD")
+
+    print(
+        f"DD 5/50/95% = "
+        f"[{qdd[0]:+.2f}, "
+        f"{qdd[1]:+.2f}, "
+        f"{qdd[2]:+.2f}] R"
+    )
+
+    # --------------------------------------------------------
+    # Flags
+    # --------------------------------------------------------
+
+    print()
+    print("ROBUSTNESS FLAGS")
+
+    print(
+        "TRADE_MEAN_CI_POSITIVE=",
+        bool(mean_ci[0] > 0)
+    )
+
+    print(
+        "TRADE_TOTAL_CI_POSITIVE=",
+        bool(total_ci[0] > 0)
+    )
+
+    print(
+        "TRADE_PF_CI_ABOVE_1=",
+        bool(pf_ci[0] > 1)
+    )
+
+    print(
+        "SYMBOL_MEAN_CI_POSITIVE=",
+        bool(sm_mean_ci[0] > 0)
+    )
+
+    print(
+        "SYMBOL_TOTAL_CI_POSITIVE=",
+        bool(sm_total_ci[0] > 0)
+    )
+
+    print(
+        "SYMBOL_PF_CI_ABOVE_1=",
+        bool(sm_pf_ci[0] > 1)
+    )
+
+    print(
+        "TRADE_P_TOTAL_GT_0_GE_95=",
+        bool(prob_total >= 0.95)
+    )
+
+    print(
+        "SYMBOL_P_TOTAL_GT_0_GE_95=",
+        bool(sm_prob >= 0.95)
+    )
+
+    print()
+    print(
+        "NOTE: Bootstrap/Monte-Carlo measures "
+        "statistical uncertainty only; "
+        "it is NOT independent OOS validation."
+    )
+
+
+print()
+print("#" * 72)
+print("CANDIDATE 11 — STATISTICAL ROBUSTNESS COMPLETE")
+print("#" * 72)
