@@ -16,26 +16,23 @@ N = 4380
 STEP = 14400
 HOLD = 30
 ATR_M = 1.25
-COST = 0.003
 
 END_TS = int(pd.Timestamp("2026-09-29T20:00:00Z").timestamp())
 START_TS = END_TS - (N - 1) * STEP
-PAD = 3  # کندل اضافه دو طرف بازه برای جبران مرزهای startAt/endAt
+PAD = 3
+
+START_DT = pd.Timestamp("2024-09-29T12:00:00Z")
+END_DT = pd.Timestamp("2026-09-29T20:00:00Z")
+
+BASE_COSTS = [0.003, 0.004, 0.005]
 
 
 def get_json(params):
-
     last = None
 
-    for attempt in range(3):
-
+    for attempt in range(4):
         try:
-
-            r = requests.get(
-                BASE,
-                params=params,
-                timeout=10
-            )
+            r = requests.get(BASE, params=params, timeout=12)
 
             if r.status_code == 429:
                 time.sleep(2 * (attempt + 1))
@@ -46,17 +43,17 @@ def get_json(params):
 
         except requests.RequestException as e:
             last = e
-            time.sleep(1)
+            time.sleep(1.5 * (attempt + 1))
 
     raise RuntimeError(f"request failed: {last}")
 
 
 def fetch(sym):
-
     rows = []
 
     CHUNK = 900
     OVERLAP = 2
+
     pos = START_TS - PAD * STEP
     end_fetch = END_TS + PAD * STEP
 
@@ -77,11 +74,10 @@ def fetch(sym):
         if data:
             rows.extend(data)
 
-        # خروج از حلقه در آخرین قطعه
         if chunk_end >= end_fetch:
             break
 
-        pos = chunk_end - OVERLAP * STEP + STEP
+        pos = chunk_end - (OVERLAP - 1) * STEP
 
         time.sleep(0.03)
 
@@ -115,15 +111,10 @@ def fetch(sym):
     )
 
     d = d[
-        (d["ts"] >= pd.Timestamp(
-            "2024-09-29T12:00:00Z"
-        )) &
-        (d["ts"] <= pd.Timestamp(
-            "2026-09-29T20:00:00Z"
-        ))
+        (d["ts"] >= START_DT) &
+        (d["ts"] <= END_DT)
     ].copy()
 
-    # مستقل از resolution زمانی pandas (s / ms / ns)
     diff = d["ts"].diff().dt.total_seconds()
 
     blocks = []
@@ -137,20 +128,25 @@ def fetch(sym):
     blocks.append((start, len(d)))
 
     valid = [
-        (a,b)
-        for a,b in blocks
-        if b-a >= N
+        (a, b)
+        for a, b in blocks
+        if b - a >= N
     ]
 
     if not valid:
-        longest = max((b-a for a,b in blocks), default=0)
+        longest = max(
+            (b - a for a, b in blocks),
+            default=0
+        )
+
         raise ValueError(
-            f"{sym}: no contiguous {N}-candle block; "
-            f"received={len(d)} blocks={len(blocks)} "
+            f"{sym}: no contiguous {N}; "
+            f"received={len(d)} "
+            f"blocks={len(blocks)} "
             f"longest={longest}"
         )
 
-    a,b = valid[-1]
+    a, b = valid[-1]
 
     d = d.iloc[b-N:b].reset_index(drop=True)
 
@@ -159,14 +155,14 @@ def fetch(sym):
             f"{sym}: final={len(d)}"
         )
 
-    if not (
+    gaps = (
         d["ts"]
         .diff()
         .dropna()
         .dt.total_seconds()
-        .eq(STEP)
-        .all()
-    ):
+    )
+
+    if not gaps.eq(STEP).all():
         raise ValueError(
             f"{sym}: final timestamp gap"
         )
@@ -175,6 +171,7 @@ def fetch(sym):
 
 
 def indicators(d):
+    d = d.copy()
 
     c = d["close"]
     h = d["high"]
@@ -208,9 +205,9 @@ def indicators(d):
 
     tr = pd.concat(
         [
-            h-l,
-            (h-c.shift()).abs(),
-            (l-c.shift()).abs()
+            h - l,
+            (h - c.shift()).abs(),
+            (l - c.shift()).abs()
         ],
         axis=1
     ).max(axis=1)
@@ -223,15 +220,12 @@ def indicators(d):
     return d
 
 
-def events(d, tp):
-
+def raw_events(d, tp):
     out = []
 
-    for i in range(
-        21,
-        len(d)-HOLD
-    ):
+    for i in range(21, len(d) - HOLD):
 
+        # Candidate 11 SHORT trigger
         if not (
             d["z"].iloc[i-1] >= 2
             and d["z"].iloc[i] < 2
@@ -256,13 +250,8 @@ def events(d, tp):
         ):
             continue
 
-        entry = float(
-            d["close"].iloc[i]
-        )
-
-        atr = float(
-            d["atr"].iloc[i]
-        )
+        entry = float(d["close"].iloc[i])
+        atr = float(d["atr"].iloc[i])
 
         if not np.isfinite(atr) or atr <= 0:
             continue
@@ -270,41 +259,101 @@ def events(d, tp):
         sl = entry + ATR_M * atr
         target = entry - tp * ATR_M * atr
 
-        result = -COST
         exit_i = i + HOLD - 1
+        outcome = "HOLD"
 
-        for j in range(i+1, i+HOLD):
+        for j in range(i + 1, i + HOLD):
 
             hi = float(d["high"].iloc[j])
             lo = float(d["low"].iloc[j])
 
-            # SL-first
+            # SL FIRST
             if hi >= sl:
-                result = -1 - COST
+                outcome = "SL"
                 exit_i = j
                 break
 
             if lo <= target:
-                result = tp - COST
+                outcome = "TP"
                 exit_i = j
                 break
 
-        out.append([
-            d["ts"].iloc[i],
-            d["ts"].iloc[exit_i],
-            result
-        ])
+        out.append({
+            "entry": d["ts"].iloc[i],
+            "exit": d["ts"].iloc[exit_i],
+            "symbol": None,
+            "outcome": outcome,
+            "tp": tp,
+            "entry_i": i
+        })
 
-    return pd.DataFrame(
-        out,
-        columns=["entry","exit","r"]
+    return pd.DataFrame(out)
+
+
+def apply_cost(e, cost):
+    e = e.copy()
+
+    e["r"] = np.where(
+        e["outcome"].eq("TP"),
+        e["tp"] - cost,
+        np.where(
+            e["outcome"].eq("SL"),
+            -1.0 - cost,
+            -cost
+        )
+    )
+
+    return e
+
+
+def remove_overlaps(e):
+    if e.empty:
+        return e.copy()
+
+    parts = []
+
+    for sym, x in e.groupby("symbol"):
+
+        x = (
+            x.sort_values("entry")
+             .reset_index(drop=True)
+        )
+
+        accepted = []
+        last_exit = None
+
+        for _, row in x.iterrows():
+
+            if (
+                last_exit is None
+                or row["entry"] > last_exit
+            ):
+                accepted.append(row)
+                last_exit = row["exit"]
+
+        if accepted:
+            parts.append(
+                pd.DataFrame(accepted)
+            )
+
+    if not parts:
+        return e.iloc[0:0].copy()
+
+    return pd.concat(
+        parts,
+        ignore_index=True
     )
 
 
 def stats(x):
-
-    if len(x) == 0:
-        return 0, np.nan, np.nan, 0, 0
+    if x.empty:
+        return {
+            "N": 0,
+            "Exp": np.nan,
+            "PF": np.nan,
+            "Total": 0.0,
+            "DD": 0.0
+        }
 
     r = x["r"].to_numpy(float)
 
@@ -324,19 +373,159 @@ def stats(x):
         - np.maximum.accumulate(equity)
     ).min()
 
-    return (
-        len(r),
-        r.mean(),
-        pf,
-        r.sum(),
-        dd
+    return {
+        "N": len(r),
+        "Exp": r.mean(),
+        "PF": pf,
+        "Total": r.sum(),
+        "DD": dd
+    }
+
+
+def print_stats(label, x):
+    s = stats(x)
+
+    print(
+        f"{label:<34} "
+        f"N={s['N']:4d} "
+        f"Exp={s['Exp']:+.4f} "
+        f"PF={s['PF']:.3f} "
+        f"Total={s['Total']:+.2f}R "
+        f"DD={s['DD']:+.2f}R"
     )
+
+
+def concentration(e):
+    if e.empty:
+        return
+
+    p = (
+        e.groupby("symbol")["r"]
+         .sum()
+         .sort_values(ascending=False)
+    )
+
+    total = p.sum()
+
+    print("\n" + "-" * 72)
+    print("CONCENTRATION")
+    print("-" * 72)
+
+    print(f"PORTFOLIO TOTAL = {total:+.2f}R")
+
+    for n in [1, 3, 5]:
+
+        removed = p.iloc[:n].sum()
+        remaining = total - removed
+
+        print(
+            f"REMOVE TOP {n:<2d} = "
+            f"{remaining:+.2f}R"
+        )
+
+    print("\nTOP SYMBOLS:")
+
+    for sym, val in p.head(10).items():
+        print(
+            f"{sym:<6} {val:+.2f}R"
+        )
+
+
+def temporal(e):
+    if e.empty:
+        return
+
+    common = sorted(
+        set(
+            pd.date_range(
+                START_DT,
+                END_DT,
+                freq="4h",
+                tz="UTC"
+            )
+        )
+        & set(e["entry"])
+    )
+
+    if len(common) < 5:
+        return
+
+    folds = np.array_split(
+        np.array(common),
+        5
+    )
+
+    print("\n" + "-" * 72)
+    print("TEMPORAL ROBUSTNESS")
+    print("-" * 72)
+
+    positive = 0
+    all_oos = []
+
+    for k in range(5):
+
+        start = pd.Timestamp(folds[k][0])
+
+        end = (
+            pd.Timestamp(folds[k][-1])
+            + pd.Timedelta(hours=4)
+        )
+
+        ox = e[
+            (e["entry"] >= start) &
+            (e["entry"] < end) &
+            (e["exit"] < end)
+        ]
+
+        s = stats(ox)
+
+        if s["Total"] > 0:
+            positive += 1
+
+        all_oos.append(ox)
+
+        print(
+            f"FOLD {k+1} | "
+            f"OOS N={s['N']:4d} "
+            f"Exp={s['Exp']:+.4f} "
+            f"PF={s['PF']:.3f} "
+            f"Total={s['Total']:+.2f}R "
+            f"DD={s['DD']:+.2f}R"
+        )
+
+    if all_oos:
+        oos = pd.concat(
+            all_oos,
+            ignore_index=True
+        )
+
+        s = stats(oos)
+
+        print("-" * 72)
+
+        print(
+            f"AGG OOS | "
+            f"N={s['N']} "
+            f"Exp={s['Exp']:+.4f} "
+            f"PF={s['PF']:.3f} "
+            f"Total={s['Total']:+.2f}R "
+            f"DD={s['DD']:+.2f}R"
+        )
+
+        print(
+            f"POSITIVE FOLDS = "
+            f"{positive}/5"
+        )
 
 
 print("=" * 72)
 print("CANDIDATE 11 — SHORT ONLY")
-print("TIME-CHUNK KUCOIN FETCH + FIXED R ENGINE")
+print("ROBUSTNESS / STRESS TEST")
 print("=" * 72)
+
+# ---------------------------------------------------------
+# 1. DATA FETCH — فقط یک بار
+# ---------------------------------------------------------
 
 data = {}
 bad = {}
@@ -344,12 +533,11 @@ bad = {}
 for s in SYMS:
 
     try:
-
         d = fetch(s)
         data[s] = indicators(d)
 
         print(
-            f"{s:<6} {len(d)} candles | "
+            f"{s:<6} {len(d)} | "
             f"{d['ts'].iloc[0]} -> "
             f"{d['ts'].iloc[-1]}",
             flush=True
@@ -358,39 +546,33 @@ for s in SYMS:
     except Exception as e:
 
         bad[s] = str(e)
+
         print(
             f"{s:<6} ERROR: {e}",
             flush=True
         )
 
-
 if bad:
-
     raise SystemExit(
         f"ABORT: {len(bad)} symbols failed"
     )
-
 
 common = set(
     data[SYMS[0]]["ts"]
 )
 
 for s in SYMS[1:]:
-
     common &= set(
         data[s]["ts"]
     )
 
 common = sorted(common)
 
-
 if len(common) != N:
-
     raise SystemExit(
         f"ABORT: COMMON TIMESTAMPS="
         f"{len(common)} EXPECTED={N}"
     )
-
 
 print("\n" + "=" * 72)
 print("DATA AUDIT = PASS")
@@ -401,139 +583,107 @@ print(f"END   = {common[-1]}")
 print("=" * 72)
 
 
-folds = np.array_split(
-    np.array(common),
-    5
-)
-
+# ---------------------------------------------------------
+# 2. GENERATE EVENTS — TP1.5 / TP2
+# ---------------------------------------------------------
 
 for tp in [1.5, 2.0]:
 
     all_events = []
 
-    for s, d in data.items():
+    for sym, d in data.items():
 
-        e = events(d, tp)
+        e = raw_events(d, tp)
 
-        if len(e):
-
-            e["symbol"] = s
+        if not e.empty:
+            e["symbol"] = sym
             all_events.append(e)
 
-
     if not all_events:
-
         raise SystemExit(
-            "ABORT: NO EVENTS"
+            f"ABORT: NO EVENTS TP{tp:g}"
         )
 
-
-    ev = (
-        pd.concat(
-            all_events,
-            ignore_index=True
-        )
-        .sort_values("entry")
-        .reset_index(drop=True)
-    )
-
-
-    print("\n" + "=" * 72)
-    print(f"TP{tp:g}R — SHORT ONLY")
-    print(
-        f"TOTAL EVENTS = {len(ev)}"
-    )
-    print("=" * 72)
-
-
-    oos = []
-
-
-    for k in range(5):
-
-        start = pd.Timestamp(
-            folds[k][0]
-        )
-
-        end = (
-            pd.Timestamp(folds[k][-1])
-            + pd.Timedelta(hours=4)
-        )
-
-
-        isx = ev[
-            (ev["entry"] < start) &
-            (ev["exit"] < start)
-        ]
-
-        ox = ev[
-            (ev["entry"] >= start) &
-            (ev["entry"] < end) &
-            (ev["exit"] < end)
-        ]
-
-
-        a = stats(isx)
-        b = stats(ox)
-
-
-        print(
-            f"FOLD {k+1} | "
-            f"IS N={a[0]:4d} "
-            f"Exp={a[1]:+.4f} "
-            f"PF={a[2]:.3f} "
-            f"Total={a[3]:+.2f}R | "
-            f"OOS N={b[0]:4d} "
-            f"Exp={b[1]:+.4f} "
-            f"PF={b[2]:.3f} "
-            f"Total={b[3]:+.2f}R "
-            f"DD={b[4]:+.2f}R"
-        )
-
-        oos.append(ox)
-
-
-    oos_all = pd.concat(
-        oos,
+    ev = pd.concat(
+        all_events,
         ignore_index=True
     )
 
-    z = stats(oos_all)
+    ev = ev.sort_values(
+        "entry"
+    ).reset_index(drop=True)
 
-    positive = sum(
-        stats(x)[3] > 0
-        for x in oos
-    )
+    print("\n" + "=" * 72)
+    print(f"BASELINE TP{tp:g}R")
+    print("=" * 72)
 
+    # -----------------------------------------------------
+    # 3. COST STRESS
+    # -----------------------------------------------------
 
-    print("-" * 72)
+    for cost in BASE_COSTS:
 
-    print(
-        f"TP{tp:g}R AGG OOS | "
-        f"N={z[0]} "
-        f"Exp={z[1]:+.4f} "
-        f"PF={z[2]:.3f} "
-        f"Total={z[3]:+.2f}R "
-        f"DD={z[4]:+.2f}R"
-    )
+        x = apply_cost(ev, cost)
 
-    print(
-        f"Positive OOS folds = "
-        f"{positive}/5"
-    )
-
-    print(
-        "TEMPORAL VALIDATION =",
-        "PASS"
-        if (
-            positive >= 4
-            and z[1] > 0
-            and z[2] > 1
+        print_stats(
+            f"COST {cost:.3f}",
+            x
         )
-        else "FAIL"
+
+    # -----------------------------------------------------
+    # 4. NO-OVERLAP STRESS
+    # -----------------------------------------------------
+
+    x = apply_cost(
+        ev,
+        0.003
     )
+
+    no_overlap = remove_overlaps(x)
+
+    print("\nNO-OVERLAP:")
+
+    print_stats(
+        "NO OVERLAP",
+        no_overlap
+    )
+
+    # -----------------------------------------------------
+    # 5. CONCENTRATION — BASELINE COST
+    # -----------------------------------------------------
+
+    x = apply_cost(
+        ev,
+        0.003
+    )
+
+    concentration(x)
+
+    # -----------------------------------------------------
+    # 6. CONCENTRATION — NO OVERLAP
+    # -----------------------------------------------------
+
+    print("\nNO-OVERLAP CONCENTRATION:")
+
+    concentration(no_overlap)
+
+    # -----------------------------------------------------
+    # 7. TEMPORAL ROBUSTNESS — BASELINE
+    # -----------------------------------------------------
+
+    print("\nBASELINE TEMPORAL:")
+
+    temporal(x)
+
+    # -----------------------------------------------------
+    # 8. TEMPORAL ROBUSTNESS — NO OVERLAP
+    # -----------------------------------------------------
+
+    print("\nNO-OVERLAP TEMPORAL:")
+
+    temporal(no_overlap)
 
 
 print("\n" + "=" * 72)
-print("RUN COMPLETE")
+print("ROBUSTNESS TEST COMPLETE")
 print("=" * 72)
