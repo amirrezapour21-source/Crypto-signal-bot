@@ -303,7 +303,9 @@ def events(d,tp,end_limit):
         out.append({
             "ts":d.index[ei],
             "exit":exit_ts,
-            "r":result
+            "r":result,
+            "risk_pct":risk/ep,
+            "bars":(exit_ts-d.index[ei])/pd.Timedelta(hours=4)+1
         })
 
     return pd.DataFrame(out)
@@ -483,7 +485,7 @@ for tp in TPS:
         if parts
         else
         pd.DataFrame(
-            columns=["ts","exit","r","sym"]
+            columns=["ts","exit","r","sym","risk_pct","bars"]
         )
     )
 
@@ -625,39 +627,78 @@ print("="*72)
 
 
 # ============================================================
-# DEPENDENCY-AWARE ROBUSTNESS
+# REALISTIC COST TEST (percent-of-price fees + funding)
 # ============================================================
 
-def cluster_boot(ev,B=20000,seed=20261002):
-    rng=np.random.default_rng(seed)
-    d=pd.DataFrame(ev)
-    d["net"]=d["r"]-0.003
-    g=d.groupby("ts")["net"].sum().to_numpy(float)
-    x=rng.choice(g,(B,len(g)),replace=True).sum(1)
-    return len(g),x.mean(),np.quantile(x,[.025,.5,.975]),(x>0).mean()
+RT_FEES = [0.0010, 0.0020, 0.0030]   # round-trip fee+slippage, % of price
+FUND_8H = [0.0, 0.0001]              # funding paid per 8h by the short (0 = none)
+
+
+def net_r(ev, rt, fund):
+    return (
+        ev["r"]
+        - rt / ev["risk_pct"]
+        - fund * (ev["bars"] / 2.0) / ev["risk_pct"]
+    )
+
+
+def stat_series(r, ts):
+    r = pd.Series(r.values, index=ts.values).sort_index()
+    if r.empty:
+        return 0, 0, 0, 0, 0
+    win = float(r[r > 0].sum())
+    loss = float(-r[r < 0].sum())
+    pf = win / loss if loss else np.inf
+    eq = r.cumsum()
+    dd = float((eq - eq.cummax()).min())
+    return len(r), float(r.mean()), pf, float(r.sum()), dd
+
+
+def cluster_p(ev, net, B=20000, seed=20261003):
+    rng = np.random.default_rng(seed)
+    g = (
+        pd.DataFrame({"ts": ev["ts"].values, "net": net.values})
+        .groupby("ts")["net"].sum().to_numpy(float)
+    )
+    x = rng.choice(g, (B, len(g)), replace=True).sum(1)
+    return len(g), np.quantile(x, [.025, .5, .975]), (x > 0).mean()
 
 
 print()
 print("#"*72)
-print("CANDIDATE 11 — DEPENDENCY-AWARE ROBUSTNESS")
+print("CANDIDATE 11 — REALISTIC COST TEST")
 print("#"*72)
 
-for name,tp in [("TP1.5",1.5),("TP2",2.0)]:
+for tp in TPS:
 
-    ev=ALL[tp]
-    n,m,ci,p=cluster_boot(ev)
+    ev = ALL[tp]
 
-    print(f"\n{name} — TIMESTAMP CLUSTER BOOTSTRAP")
-    print("CLUSTERS",n)
-    print("MEAN_TOTAL",round(m,2))
-    print("CI95",np.round(ci,2))
-    print("P_TOTAL_GT_0",round(p,4))
+    print()
+    print("="*72)
+    print(f"TP{tp}R")
+    print("="*72)
+    print(
+        f"SL distance % of price: "
+        f"median={ev['risk_pct'].median()*100:.2f}% "
+        f"min={ev['risk_pct'].min()*100:.2f}% "
+        f"max={ev['risk_pct'].max()*100:.2f}%"
+    )
+    print(f"mean bars held={ev['bars'].mean():.1f}")
 
-    d=pd.DataFrame(ev)
-    d["net"]=d["r"]-0.003
-    d["month"]=pd.to_datetime(d["ts"],utc=True).dt.strftime("%Y-%m")
+    for fund in FUND_8H:
+        for rt in RT_FEES:
 
-    print("\nMONTHLY")
-    print(d.groupby("month")["net"].agg(["count","sum","mean"]).to_string())
+            nr = net_r(ev, rt, fund)
+            n, ex, pf, total, dd = stat_series(nr, ev["ts"])
+            cn, ci, p = cluster_p(ev, nr)
 
-print("\nDONE — Candidate 11 dependency-aware robustness")
+            print(
+                f"FEE {rt*100:.2f}% FUND/8h {fund*100:.3f}% | "
+                f"N={n} Exp={ex:+.4f} PF={pf:.3f} "
+                f"Total={total:+.2f}R DD={dd:+.2f}R | "
+                f"CLUSTER CI95=[{ci[0]:+.1f},{ci[2]:+.1f}] "
+                f"P(>0)={p:.3f}"
+            )
+
+print()
+print("DONE — Candidate 11 realistic cost test")
