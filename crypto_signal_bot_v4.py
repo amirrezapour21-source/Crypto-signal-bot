@@ -23,17 +23,11 @@ HOLDOUT = 0.20
 URL = "https://api.kucoin.com/api/v1/market/candles"
 
 
-def fetch(sym):
+def get_page(sym, start_at, end_at):
 
-    rows = []
-    cursor = int(END.timestamp())
+    last = None
 
-    # Extra room for possible non-published candles
-    min_ts = int(
-        (END - pd.Timedelta(hours=4*(N+100))).timestamp()
-    )
-
-    while cursor >= min_ts:
+    for attempt in range(3):
 
         try:
             r = requests.get(
@@ -41,46 +35,78 @@ def fetch(sym):
                 params={
                     "symbol": f"{sym}-USDT",
                     "type": "4hour",
-                    "endAt": cursor
+                    "startAt": start_at,
+                    "endAt": end_at
                 },
-                timeout=30
+                timeout=15
             )
 
+            if r.status_code == 429:
+                time.sleep(2 * (attempt + 1))
+                continue
+
             r.raise_for_status()
-            j = r.json()
-
-            if j.get("code") != "200000":
-                return None, f"API_CODE={j.get('code')}"
-
-            data = j.get("data",[])
-
-            if not data:
-                return None, "EMPTY_PAGE"
-
-            rows.extend(data)
-
-            ts = [
-                int(x[0])
-                for x in data
-                if len(x) >= 7
-            ]
-
-            if not ts:
-                return None, "BAD_PAGE"
-
-            oldest = min(ts)
-
-            # CRITICAL:
-            # next page starts from the ACTUAL oldest candle
-            cursor = oldest - STEP
-
-            if len(rows) > N + 500:
-                # enough history; continue only until
-                # we have sufficient contiguous data
-                pass
+            return r.json(), None
 
         except Exception as e:
-            return None, f"REQUEST_ERROR={e}"
+            last = e
+            time.sleep(1)
+
+    return None, f"REQUEST_ERROR={last}"
+
+
+def fetch(sym):
+
+    rows = []
+
+    # FIX 1: endAt در KuCoin شامل کندل مرزی نیست -> یک کندل جلوتر شروع می‌کنیم
+    # (کندل‌های بعد از END بعداً فیلتر می‌شوند)
+    cursor = int(END.timestamp()) + STEP
+
+    min_ts = int(
+        (END - pd.Timedelta(hours=4*(N+100))).timestamp()
+    )
+
+    while cursor >= min_ts:
+
+        # FIX 2: startAt صریح -> هر صفحه تا ~1490 کندل
+        j, err = get_page(
+            sym,
+            cursor - PAGE * STEP,
+            cursor
+        )
+
+        if err:
+            return None, err
+
+        if j.get("code") != "200000":
+            return None, f"API_CODE={j.get('code')}"
+
+        data = j.get("data", [])
+
+        if not data:
+            return None, "EMPTY_PAGE"
+
+        rows.extend(data)
+
+        ts = [
+            int(x[0])
+            for x in data
+            if len(x) >= 7
+        ]
+
+        if not ts:
+            return None, "BAD_PAGE"
+
+        oldest = min(ts)
+
+        # حفاظ در برابر حلقه بی‌پایان
+        if oldest >= cursor:
+            return None, "NO_PROGRESS"
+
+        # FIX 3: صفحه بعد دقیقاً از قدیمی‌ترین کندل شروع می‌شود
+        # تا بین صفحه‌ها gap ایجاد نشود؛ تکراری‌ها حذف می‌شوند
+        cursor = oldest
 
         time.sleep(0.08)
 
@@ -365,13 +391,14 @@ for s in SYMS:
     d,msg=fetch(s)
 
     if d is None:
-        print(f"{s:<6} FAIL | {msg}")
+        print(f"{s:<6} FAIL | {msg}", flush=True)
     else:
         DATA[s]=prepare(d)
         print(
             f"{s:<6} PASS | "
             f"{len(d)} | "
-            f"{d.index[0]} -> {d.index[-1]}"
+            f"{d.index[0]} -> {d.index[-1]}",
+            flush=True
         )
 
 print()
