@@ -2264,5 +2264,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "SKY_1790972418",
+    "symbol": "SKY",
+    "coin_id": "sky",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.08801,
+    "sl": 0.09132196317268412,
+    "tp1": 0.08064297660923764,
+    "tp2": 0.07090838581779489,
+    "signal_time": "2026-10-02T20:20:18.870554+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
