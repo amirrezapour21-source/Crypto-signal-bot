@@ -1,640 +1,455 @@
-import requests
-import pandas as pd
-import numpy as np
-import time
+import requests, pandas as pd, numpy as np, time
 
-BASE = "https://api.kucoin.com/api/v1/market/candles"
-
-SYMS = [
-    "BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT",
-    "SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC",
-    "BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP",
-    "WIF","PEPE","FLOKI"
-]
+SYMS = ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","LINK","AVAX","DOT","SUI","TRX","NEAR","AAVE","OP","ARB","APT","ATOM","FIL","LTC","BCH","ETC","UNI","INJ","SEI","VET","HBAR","ALGO","XLM","ICP","WIF","PEPE","FLOKI"]
 
 N = 4380
 STEP = 14400
-HOLD = 30
-ATR_M = 1.25
+CHUNK = 900
+OVERLAP = 2
+
+START = pd.Timestamp("2024-09-29 12:00:00", tz="UTC")
+END   = pd.Timestamp("2026-09-29 20:00:00", tz="UTC")
+
+HOLDOUT_FRAC = 0.20
 COSTS = [0.003, 0.004, 0.005]
+TPS = [1.5, 2.0]
 
-START_DT = pd.Timestamp("2024-09-30T00:00:00Z")
-END_DT = pd.Timestamp("2026-09-29T20:00:00Z")
-
-START_TS = int(START_DT.timestamp())
-END_TS = int(END_DT.timestamp())
-
-
-def get_json(params):
-    last = None
-
-    for attempt in range(4):
-        try:
-            r = requests.get(
-                BASE,
-                params=params,
-                timeout=12
-            )
-
-            if r.status_code == 429:
-                time.sleep(2 * (attempt + 1))
-                continue
-
-            r.raise_for_status()
-            return r.json().get("data", [])
-
-        except requests.RequestException as e:
-            last = e
-            time.sleep(1.5 * (attempt + 1))
-
-    raise RuntimeError(f"request failed: {last}")
-
+BASE = "https://api.kucoin.com/api/v1/market/candles"
 
 def fetch(sym):
     rows = []
+    end = END
 
-    CHUNK = 900
-    pos = START_TS - 3 * STEP
-    end_fetch = END_TS + 3 * STEP
+    while end >= START:
+        begin = max(START, end - pd.Timedelta(seconds=(CHUNK-1)*STEP))
 
-    while pos <= end_fetch:
+        try:
+            r = requests.get(
+                BASE,
+                params={
+                    "symbol": f"{sym}-USDT",
+                    "type": "4hour",
+                    "startAt": int(begin.timestamp()),
+                    "endAt": int(end.timestamp())
+                },
+                timeout=20
+            )
+            j = r.json()
+            data = j.get("data", [])
+        except Exception:
+            data = []
 
-        chunk_end = min(
-            pos + (CHUNK - 1) * STEP,
-            end_fetch
-        )
+        for x in data:
+            if len(x) >= 7:
+                rows.append(x)
 
-        rows.extend(
-            get_json({
-                "symbol": f"{sym}-USDT",
-                "type": "4hour",
-                "startAt": pos,
-                "endAt": chunk_end
-            })
-        )
-
-        if chunk_end >= end_fetch:
-            break
-
-        pos = chunk_end - STEP
-        time.sleep(0.03)
+        end = begin - pd.Timedelta(seconds=STEP)
+        time.sleep(0.12)
 
     if not rows:
-        raise ValueError(f"{sym}: no data")
+        return None
 
-    d = pd.DataFrame(
-        rows,
-        columns=[
-            "ts","open","close","high",
-            "low","vol","turn"
-        ]
-    )
+    d = pd.DataFrame(rows, columns=[
+        "ts","open","close","high","low","volume","turnover"
+    ])
 
-    d["ts"] = pd.to_datetime(
-        pd.to_numeric(d["ts"]),
-        unit="s",
-        utc=True
-    )
+    d["ts"] = pd.to_datetime(pd.to_numeric(d["ts"]), unit="s", utc=True)
 
-    for c in ["open","close","high","low","vol"]:
-        d[c] = pd.to_numeric(
-            d[c],
-            errors="coerce"
-        )
+    for c in ["open","close","high","low","volume"]:
+        d[c] = pd.to_numeric(d[c], errors="coerce")
 
     d = (
-        d.drop_duplicates("ts")
+        d.dropna()
+         .drop_duplicates("ts")
          .sort_values("ts")
-         .reset_index(drop=True)
+         .set_index("ts")
     )
 
-    d = d[
-        (d["ts"] >= START_DT) &
-        (d["ts"] <= END_DT)
-    ].copy()
+    idx = pd.date_range(
+        START,
+        END,
+        freq="4h",
+        tz="UTC"
+    )
+
+    d = d.reindex(idx).dropna()
+
+    if len(d) < N:
+        return None
+
+    d = d.iloc[-N:].copy()
 
     if len(d) != N:
-        raise ValueError(
-            f"{sym}: candles={len(d)} expected={N}"
-        )
+        return None
 
-    gaps = (
-        d["ts"]
-        .diff()
-        .dropna()
-        .dt.total_seconds()
-    )
+    if not d.index.is_monotonic_increasing:
+        return None
 
-    if not gaps.eq(STEP).all():
-        raise ValueError(
-            f"{sym}: timestamp gap"
-        )
+    if len(d.index.unique()) != N:
+        return None
 
-    return d.reset_index(drop=True)
+    gaps = d.index.to_series().diff().dropna()
+    if not (gaps == pd.Timedelta(hours=4)).all():
+        return None
 
+    return d
 
-def indicators(d):
+def prepare(d):
     d = d.copy()
 
-    c = d["close"]
-    h = d["high"]
-    l = d["low"]
-    v = d["vol"]
+    d["mean20"] = d["close"].rolling(20).mean()
+    d["std20"] = d["close"].rolling(20).std()
+    d["z"] = (d["close"] - d["mean20"]) / d["std20"]
 
-    d["z"] = (
-        c - c.rolling(20).mean()
-    ) / c.rolling(20).std()
+    d["range20"] = (
+        d["high"].rolling(20).max()
+        - d["low"].rolling(20).min()
+    )
 
-    d["ema"] = c.ewm(
-        span=200,
+    d["range_med"] = d["range20"].rolling(20).median()
+    d["vol_med"] = d["volume"].rolling(20).median()
+
+    tr = pd.concat([
+        d["high"] - d["low"],
+        (d["high"] - d["close"].shift()).abs(),
+        (d["low"] - d["close"].shift()).abs()
+    ], axis=1).max(axis=1)
+
+    d["atr20"] = tr.ewm(
+        alpha=1/20,
         adjust=False
     ).mean()
 
-    d["range20"] = (
-        h.rolling(20).max()
-        - l.rolling(20).min()
-    )
-
-    d["rmed"] = (
-        d["range20"]
-        .rolling(20)
-        .median()
-    )
-
-    d["vmed"] = (
-        v.rolling(20)
-        .median()
-    )
-
-    tr = pd.concat(
-        [
-            h - l,
-            (h - c.shift()).abs(),
-            (l - c.shift()).abs()
-        ],
-        axis=1
-    ).max(axis=1)
-
-    d["atr"] = tr.ewm(
-        alpha=1/20,
+    d["ema200"] = d["close"].ewm(
+        span=200,
         adjust=False
     ).mean()
 
     return d
 
-
-def events(d, tp, symbol):
+def events(d, tp):
     out = []
 
-    for i in range(21, len(d) - HOLD):
+    for i in range(200, len(d)-1):
+        p = d.iloc[i-1]
+        c = d.iloc[i]
 
         if not (
-            d["z"].iloc[i-1] >= 2
-            and d["z"].iloc[i] < 2
+            np.isfinite(p["z"]) and
+            np.isfinite(c["z"]) and
+            np.isfinite(c["atr20"])
         ):
             continue
 
-        if d["close"].iloc[i] >= d["ema"].iloc[i]:
+        # SHORT ONLY — Candidate 11 unchanged
+        signal = (
+            c["close"] < c["ema200"]
+            and p["z"] >= 2
+            and c["z"] < 2
+            and c["range20"] >= c["range_med"]
+            and c["volume"] >= c["vol_med"]
+        )
+
+        if not signal:
             continue
 
-        if d["range20"].iloc[i] < d["rmed"].iloc[i]:
+        entry_i = i + 1
+
+        if entry_i >= len(d):
             continue
 
-        if d["vol"].iloc[i] < d["vmed"].iloc[i]:
-            continue
+        entry = d.iloc[entry_i]
+        ep = float(entry["open"])
+        sl = ep + 1.25 * float(c["atr20"])
+        risk = sl - ep
+        target = ep - tp * risk
 
-        entry = float(d["close"].iloc[i])
-        atr = float(d["atr"].iloc[i])
+        result = None
+        exit_ts = None
 
-        if not np.isfinite(atr) or atr <= 0:
-            continue
+        last = min(len(d), entry_i + 31)
 
-        sl = entry + ATR_M * atr
-        target = entry - tp * ATR_M * atr
+        for j in range(entry_i, last):
+            x = d.iloc[j]
 
-        exit_i = i + HOLD - 1
-        outcome = "HOLD"
-
-        for j in range(i + 1, i + HOLD):
-
-            hi = float(d["high"].iloc[j])
-            lo = float(d["low"].iloc[j])
-
-            if hi >= sl:
-                outcome = "SL"
-                exit_i = j
+            # SHORT: SL first when both touch same candle
+            if x["high"] >= sl:
+                result = -1.0
+                exit_ts = d.index[j]
                 break
 
-            if lo <= target:
-                outcome = "TP"
-                exit_i = j
+            if x["low"] <= target:
+                result = tp
+                exit_ts = d.index[j]
                 break
 
-        out.append([
-            d["ts"].iloc[i],
-            d["ts"].iloc[exit_i],
-            symbol,
-            outcome
-        ])
+        if result is None:
+            result = 0.0
+            exit_ts = d.index[last-1]
 
-    return pd.DataFrame(
-        out,
-        columns=[
-            "entry",
-            "exit",
-            "symbol",
-            "outcome"
-        ]
-    )
+        out.append({
+            "ts": d.index[entry_i],
+            "exit": exit_ts,
+            "r": result
+        })
 
+    return pd.DataFrame(out)
 
-def add_r(e, cost, tp):
-    x = e.copy()
+def stat(ev, cost=0.003):
+    if ev.empty:
+        return (0, 0, 0, 0, 0)
 
-    x["r"] = np.where(
-        x["outcome"].eq("TP"),
-        tp - cost,
-        np.where(
-            x["outcome"].eq("SL"),
-            -1.0 - cost,
-            -cost
-        )
-    )
+    x = ev.sort_values("ts").copy()
+    r = x["r"] - cost
 
-    return x.sort_values(
-        "entry"
-    ).reset_index(drop=True)
+    total = float(r.sum())
+    exp = float(r.mean())
 
+    wins = r[r > 0].sum()
+    losses = -r[r < 0].sum()
 
-def no_overlap(e):
-    if e.empty:
-        return e.copy()
+    pf = wins / losses if losses > 0 else np.inf
 
-    accepted = []
+    eq = r.cumsum()
+    dd = float((eq - eq.cummax()).min())
 
-    for symbol, g in e.groupby("symbol"):
+    return len(r), exp, pf, total, dd
 
-        g = g.sort_values(
-            "entry"
-        )
+def no_overlap(ev):
+    if ev.empty:
+        return ev
 
-        last_exit = None
+    x = ev.sort_values(["sym","ts"]).copy()
+    keep = []
+    last_exit = {}
 
-        for _, row in g.iterrows():
+    for _, row in x.iterrows():
+        s = row["sym"]
 
-            if (
-                last_exit is None
-                or row["entry"] > last_exit
-            ):
-                accepted.append(row)
-                last_exit = row["exit"]
+        if s not in last_exit or row["ts"] >= last_exit[s]:
+            keep.append(True)
+            last_exit[s] = row["exit"]
+        else:
+            keep.append(False)
 
-    if not accepted:
-        return e.iloc[0:0].copy()
+    return x.loc[keep].sort_values("ts")
 
-    return (
-        pd.DataFrame(accepted)
-        .sort_values("entry")
-        .reset_index(drop=True)
-    )
-
-
-def stats(e):
-    if e.empty:
-        return 0, np.nan, np.nan, 0.0, 0.0
-
-    r = e["r"].to_numpy(float)
-
-    gain = r[r > 0].sum()
-    loss = -r[r < 0].sum()
-
-    pf = (
-        gain / loss
-        if loss > 0
-        else np.inf
-    )
-
-    equity = np.cumsum(r)
-
-    dd = (
-        equity
-        - np.maximum.accumulate(equity)
-    ).min()
-
-    return (
-        len(r),
-        r.mean(),
-        pf,
-        r.sum(),
-        dd
-    )
-
-
-def temporal(e, timestamps):
-    folds = np.array_split(
-        np.array(timestamps),
-        5
-    )
-
-    results = []
-
-    for k, fold in enumerate(folds):
-
-        start = pd.Timestamp(fold[0])
-
-        end = (
-            pd.Timestamp(fold[-1])
-            + pd.Timedelta(hours=4)
-        )
-
-        x = e[
-            (e["entry"] >= start) &
-            (e["entry"] < end) &
-            (e["exit"] < end)
-        ].copy()
-
-        s = stats(x)
-
-        results.append(x)
-
-        print(
-            f"FOLD {k+1} | "
-            f"N={s[0]:4d} "
-            f"Exp={s[1]:+.4f} "
-            f"PF={s[2]:.3f} "
-            f"Total={s[3]:+.2f}R "
-            f"DD={s[4]:+.2f}R"
-        )
-
-    all_oos = pd.concat(
-        results,
-        ignore_index=True
-    )
-
-    s = stats(
-        all_oos.sort_values("entry")
-    )
-
-    positive = sum(
-        stats(x)[3] > 0
-        for x in results
-    )
-
-    print("-" * 72)
-    print(
-        f"AGG OOS | "
-        f"N={s[0]} "
-        f"Exp={s[1]:+.4f} "
-        f"PF={s[2]:.3f} "
-        f"Total={s[3]:+.2f}R "
-        f"DD={s[4]:+.2f}R"
-    )
-
-    print(
-        f"POSITIVE FOLDS = {positive}/5"
-    )
-
-    return s, positive
-
-
-def concentration(e):
-    p = (
-        e.groupby("symbol")["r"]
-        .sum()
-        .sort_values(ascending=False)
-    )
-
-    total = p.sum()
-
-    print(
-        f"PORTFOLIO = {total:+.2f}R"
-    )
-
-    for n in [1, 3, 5, 10]:
-
-        remaining = (
-            total
-            - p.head(n).sum()
-        )
-
-        print(
-            f"REMOVE TOP {n:2d} = "
-            f"{remaining:+.2f}R"
-        )
-
-    print("\nSYMBOL CONTRIBUTION:")
-
-    for sym, value in p.items():
-        print(
-            f"{sym:<6} {value:+.2f}R"
-        )
-
-
-def leave_one_out(e):
-    total = stats(e)[3]
-
-    vals = []
-
-    for sym in sorted(
-        e["symbol"].unique()
-    ):
-
-        x = e[
-            e["symbol"] != sym
-        ]
-
-        vals.append(
-            (
-                sym,
-                stats(x)[3]
-            )
-        )
-
-    vals.sort(
-        key=lambda z: z[1]
-    )
-
-    print("\nLEAVE-ONE-SYMBOL-OUT")
-
-    print(
-        f"FULL = {total:+.2f}R"
-    )
-
-    print(
-        f"WORST REMOVAL:"
-    )
-
-    for sym, value in vals[:5]:
-        print(
-            f"remove {sym:<6} "
-            f"=> {value:+.2f}R"
-        )
-
-
-print("=" * 72)
+print("="*72)
 print("CANDIDATE 11 — SHORT ONLY")
-print("FINAL ROBUSTNESS GATE")
-print("=" * 72)
+print("FINAL INTERNAL HOLDOUT VALIDATION")
+print("="*72)
 
-data = {}
-bad = {}
+DATA = {}
 
-for sym in SYMS:
+for s in SYMS:
+    d = fetch(s)
 
-    try:
+    if d is None:
+        print(f"{s:<6} FAIL")
+        continue
 
-        d = fetch(sym)
-        data[sym] = indicators(d)
+    DATA[s] = prepare(d)
+    print(f"{s:<6} PASS {len(d)}")
 
-        print(
-            f"{sym:<6} PASS {len(d)}",
-            flush=True
-        )
+print()
+print("DATA AUDIT")
 
-    except Exception as e:
-
-        bad[sym] = str(e)
-
-        print(
-            f"{sym:<6} ERROR {e}",
-            flush=True
-        )
-
-if bad:
+if len(DATA) != len(SYMS):
     raise SystemExit(
-        f"ABORT: {len(bad)} symbols failed"
+        f"ABORT: {len(DATA)}/{len(SYMS)} symbols passed"
     )
 
+common = set(next(iter(DATA.values())).index)
 
-common = set(
-    data[SYMS[0]]["ts"]
-)
+for d in DATA.values():
+    common &= set(d.index)
 
-for sym in SYMS[1:]:
-    common &= set(
-        data[sym]["ts"]
-    )
-
-common = sorted(common)
+common = pd.DatetimeIndex(sorted(common))
 
 if len(common) != N:
     raise SystemExit(
-        f"ABORT COMMON={len(common)} "
-        f"EXPECTED={N}"
+        f"ABORT: COMMON={len(common)} expected={N}"
     )
 
-print("\nDATA AUDIT = PASS")
-print(
-    f"SYMBOLS={len(data)} "
-    f"COMMON={len(common)}"
-)
-print(
-    f"{common[0]} -> {common[-1]}"
-)
+print(f"SYMBOLS={len(DATA)} COMMON={len(common)}")
+print(f"{common[0]} -> {common[-1]}")
 
+# ------------------------------------------------------------
+# INTERNAL HOLDOUT: LAST 20%
+# ------------------------------------------------------------
 
-for tp in [1.5, 2.0]:
+cut = int(N * (1 - HOLDOUT_FRAC))
+holdout_ts = common[cut:]
 
-    all_events = []
+HSTART = holdout_ts[0]
+HEND = holdout_ts[-1]
 
-    for sym, d in data.items():
+print()
+print("="*72)
+print("HOLDOUT DEFINITION")
+print("="*72)
+print(f"TRAIN/DEV CANDLES : {cut}")
+print(f"HOLDOUT CANDLES   : {len(holdout_ts)}")
+print(f"HOLDOUT START     : {HSTART}")
+print(f"HOLDOUT END       : {HEND}")
+print("STRATEGY PARAMETERS: FROZEN")
+print("="*72)
 
-        x = events(
-            d,
-            tp,
-            sym
-        )
+ALL = {}
 
-        if not x.empty:
-            all_events.append(x)
+for tp in TPS:
+    parts = []
 
-    if not all_events:
-        raise SystemExit(
-            f"NO EVENTS TP{tp:g}"
-        )
+    for s, d in DATA.items():
+        e = events(d, tp)
 
-    raw = (
-        pd.concat(
-            all_events,
-            ignore_index=True
-        )
-        .sort_values("entry")
-        .reset_index(drop=True)
+        if e.empty:
+            continue
+
+        e["sym"] = s
+
+        # Only untouched tail timestamp block
+        e = e[
+            (e["ts"] >= HSTART) &
+            (e["ts"] <= HEND)
+        ]
+
+        if not e.empty:
+            parts.append(e)
+
+    ALL[tp] = (
+        pd.concat(parts, ignore_index=True)
+        .sort_values("ts")
+        if parts else
+        pd.DataFrame(columns=["ts","exit","r","sym"])
     )
 
-    print("\n" + "=" * 72)
-    print(f"TP{tp:g}R — FINAL ROBUSTNESS")
-    print(
-        f"EVENTS = {len(raw)}"
-    )
-    print("=" * 72)
+# ------------------------------------------------------------
+# RESULTS
+# ------------------------------------------------------------
+
+for tp in TPS:
+
+    ev = ALL[tp]
+
+    print()
+    print("="*72)
+    print(f"TP{tp}R — HOLDOUT")
+    print("="*72)
+
+    print(f"EVENTS = {len(ev)}")
 
     for cost in COSTS:
-
-        x = add_r(
-            raw,
-            cost,
-            tp
-        )
-
-        s = stats(x)
-
+        n, ex, pf, total, dd = stat(ev, cost)
         print(
             f"COST {cost:.3f} | "
-            f"N={s[0]} "
-            f"Exp={s[1]:+.4f} "
-            f"PF={s[2]:.3f} "
-            f"Total={s[3]:+.2f}R "
-            f"DD={s[4]:+.2f}R"
+            f"N={n} Exp={ex:+.4f} "
+            f"PF={pf:.3f} Total={total:+.2f}R DD={dd:+.2f}R"
         )
 
-    base = add_r(
-        raw,
-        0.003,
-        tp
-    )
+    # --------------------------------------------------------
+    # NO OVERLAP
+    # --------------------------------------------------------
 
-    print("\nNO-OVERLAP")
+    no = no_overlap(ev)
 
-    no = no_overlap(base)
+    n, ex, pf, total, dd = stat(no, 0.003)
 
-    s = stats(no)
-
+    print()
+    print("NO-OVERLAP")
     print(
-        f"N={s[0]} "
-        f"Exp={s[1]:+.4f} "
-        f"PF={s[2]:.3f} "
-        f"Total={s[3]:+.2f}R "
-        f"DD={s[4]:+.2f}R"
+        f"N={n} Exp={ex:+.4f} "
+        f"PF={pf:.3f} Total={total:+.2f}R DD={dd:+.2f}R"
     )
 
-    print("\nCONCENTRATION")
+    # --------------------------------------------------------
+    # EXACT TEMPORAL BLOCKS
+    # --------------------------------------------------------
 
-    concentration(
-        base
+    print()
+    print("TEMPORAL HOLDOUT BLOCKS")
+
+    folds = np.array_split(holdout_ts, 5)
+
+    positive = 0
+    aggregate = []
+
+    for k, block in enumerate(folds, 1):
+
+        a = block[0]
+        b = block[-1]
+
+        f = ev[
+            (ev["ts"] >= a) &
+            (ev["ts"] <= b)
+        ].sort_values("ts")
+
+        n, ex, pf, total, dd = stat(f, 0.003)
+
+        if total > 0:
+            positive += 1
+
+        aggregate.append(f)
+
+        print(
+            f"FOLD {k} | "
+            f"{a} -> {b} | "
+            f"N={n:3d} "
+            f"Exp={ex:+.4f} "
+            f"PF={pf:.3f} "
+            f"Total={total:+.2f}R "
+            f"DD={dd:+.2f}R"
+        )
+
+    agg = (
+        pd.concat(aggregate, ignore_index=True)
+        if aggregate else
+        pd.DataFrame(columns=ev.columns)
     )
 
-    print("\nLEAVE-ONE-OUT")
+    n, ex, pf, total, dd = stat(agg, 0.003)
 
-    leave_one_out(
-        base
+    print("-"*72)
+    print(
+        f"AGG HOLDOUT | "
+        f"N={n} Exp={ex:+.4f} "
+        f"PF={pf:.3f} "
+        f"Total={total:+.2f}R "
+        f"DD={dd:+.2f}R"
     )
 
-    print("\nTEMPORAL BASELINE")
+    print(f"POSITIVE FOLDS = {positive}/5")
 
-    temporal(
-        base,
-        common
-    )
+    # --------------------------------------------------------
+    # SYMBOL JACKKNIFE
+    # --------------------------------------------------------
 
-    print("\nTEMPORAL NO-OVERLAP")
+    print()
+    print("SYMBOL JACKKNIFE")
 
-    temporal(
-        no,
-        common
-    )
+    full = stat(ev, 0.003)[3]
 
+    removals = []
 
-print("\n" + "=" * 72)
-print("FINAL ROBUSTNESS GATE COMPLETE")
-print("=" * 72)
+    for s in SYMS:
+        x = ev[ev["sym"] != s]
+        t = stat(x, 0.003)[3]
+        removals.append((s, t))
+
+    removals.sort(key=lambda z: z[1])
+
+    print(f"FULL = {full:+.2f}R")
+
+    for s, t in removals[:5]:
+        print(f"REMOVE {s:<6} => {t:+.2f}R")
+
+    print()
+    print("BEST REMOVALS")
+
+    for s, t in removals[-5:][::-1]:
+        print(f"REMOVE {s:<6} => {t:+.2f}R")
+
+print()
+print("="*72)
+print("FINAL INTERNAL HOLDOUT VALIDATION COMPLETE")
+print("="*72)
