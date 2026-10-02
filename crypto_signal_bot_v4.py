@@ -9,94 +9,83 @@ SYMS = [
 
 N = 4380
 STEP = 14400
-CHUNK = 900
+PAGE = 1490
 
-# Authoritative end of the previously validated window
-END = pd.Timestamp("2026-09-29 20:00:00", tz="UTC")
-
-# Extra history is intentional: the API window may contain
-# missing/non-published candles at boundaries.
-FETCH_START = END - pd.Timedelta(
-    hours=4 * (N + 30)
+END = pd.Timestamp(
+    "2026-09-29 20:00:00",
+    tz="UTC"
 )
 
-COSTS = [0.003, 0.004, 0.005]
-TPS = [1.5, 2.0]
+COSTS = [0.003,0.004,0.005]
+TPS = [1.5,2.0]
+HOLDOUT = 0.20
 
-HOLDOUT_FRAC = 0.20
-
-BASE = "https://api.kucoin.com/api/v1/market/candles"
+URL = "https://api.kucoin.com/api/v1/market/candles"
 
 
 def fetch(sym):
 
     rows = []
+    cursor = int(END.timestamp())
 
-    end = END
+    # Extra room for possible non-published candles
+    min_ts = int(
+        (END - pd.Timedelta(hours=4*(N+100))).timestamp()
+    )
 
-    while end >= FETCH_START:
+    while cursor >= min_ts:
 
-        begin = max(
-            FETCH_START,
-            end - pd.Timedelta(
-                seconds=(CHUNK - 1) * STEP
+        try:
+            r = requests.get(
+                URL,
+                params={
+                    "symbol": f"{sym}-USDT",
+                    "type": "4hour",
+                    "endAt": cursor
+                },
+                timeout=30
             )
-        )
 
-        data = None
+            r.raise_for_status()
+            j = r.json()
 
-        for attempt in range(3):
+            if j.get("code") != "200000":
+                return None, f"API_CODE={j.get('code')}"
 
-            try:
+            data = j.get("data",[])
 
-                r = requests.get(
-                    BASE,
-                    params={
-                        "symbol": f"{sym}-USDT",
-                        "type": "4hour",
-                        "startAt": int(begin.timestamp()),
-                        "endAt": int(end.timestamp())
-                    },
-                    timeout=30
-                )
+            if not data:
+                return None, "EMPTY_PAGE"
 
-                r.raise_for_status()
+            rows.extend(data)
 
-                j = r.json()
+            ts = [
+                int(x[0])
+                for x in data
+                if len(x) >= 7
+            ]
 
-                if j.get("code") not in (None, "200000"):
-                    raise RuntimeError(
-                        f"KuCoin code={j.get('code')}"
-                    )
+            if not ts:
+                return None, "BAD_PAGE"
 
-                data = j.get("data", [])
+            oldest = min(ts)
 
-                if data is not None:
-                    break
+            # CRITICAL:
+            # next page starts from the ACTUAL oldest candle
+            cursor = oldest - STEP
 
-            except Exception as e:
+            if len(rows) > N + 500:
+                # enough history; continue only until
+                # we have sufficient contiguous data
+                pass
 
-                if attempt == 2:
-                    return None, f"API error: {e}"
-
-                time.sleep(1)
-
-        if data is None:
-            return None, "empty API response"
-
-        for x in data:
-
-            if len(x) >= 7:
-                rows.append(x)
-
-        end = begin - pd.Timedelta(
-            seconds=STEP
-        )
+        except Exception as e:
+            return None, f"REQUEST_ERROR={e}"
 
         time.sleep(0.08)
 
     if not rows:
-        return None, "NO_DATA"
+        return None,"NO_DATA"
 
     d = pd.DataFrame(
         rows,
@@ -107,10 +96,7 @@ def fetch(sym):
     )
 
     d["ts"] = pd.to_datetime(
-        pd.to_numeric(
-            d["ts"],
-            errors="coerce"
-        ),
+        pd.to_numeric(d["ts"]),
         unit="s",
         utc=True
     )
@@ -124,158 +110,109 @@ def fetch(sym):
         )
 
     d = (
-        d.dropna(
-            subset=[
-                "ts","open","close",
-                "high","low","volume"
-            ]
-        )
-        .drop_duplicates("ts")
-        .sort_values("ts")
-        .set_index("ts")
+        d.dropna()
+         .drop_duplicates("ts")
+         .sort_values("ts")
+         .set_index("ts")
     )
 
-    # Only data up to the authoritative END.
-    d = d[d.index <= END].copy()
+    d = d[d.index <= END]
 
     if len(d) < N:
-        return None, (
-            f"received={len(d)} "
-            f"need_at_least={N}"
-        )
+        return None,f"TOTAL={len(d)}"
 
     # --------------------------------------------------------
-    # Find the latest TRUE contiguous 4380-candle block.
-    # Do not fabricate missing candles.
+    # Find LAST contiguous block of exactly N candles
     # --------------------------------------------------------
 
     idx = d.index
 
-    diff = idx.to_series().diff()
-
-    group = (
-        diff.ne(pd.Timedelta(hours=4))
-        .cumsum()
+    gap = (
+        idx.to_series()
+        .diff()
+        .ne(pd.Timedelta(hours=4))
     )
 
+    group = gap.cumsum()
+
     blocks = (
-        pd.DataFrame({"idx": idx, "g": group.values})
+        pd.DataFrame({
+            "ts":idx,
+            "g":group.values
+        })
         .groupby("g")
         .agg(
-            count=("idx", "size"),
-            start=("idx", "min"),
-            end=("idx", "max")
+            n=("ts","size"),
+            start=("ts","min"),
+            end=("ts","max")
         )
     )
 
     valid = blocks[
-        blocks["count"] >= N
+        blocks["n"] >= N
     ]
 
     if valid.empty:
 
-        longest = int(
-            blocks["count"].max()
-        )
-
-        return None, (
+        return None,(
             f"NO_CONTIGUOUS_{N}; "
-            f"longest={longest}; "
-            f"received={len(d)}"
+            f"TOTAL={len(d)}; "
+            f"LONGEST={int(blocks['n'].max())}"
         )
 
-    # Latest valid contiguous block.
     b = valid.iloc[-1]
 
-    block = d.loc[
+    out = d.loc[
         (d.index >= b["start"]) &
         (d.index <= b["end"])
     ].copy()
 
-    if len(block) > N:
-        block = block.iloc[-N:].copy()
+    if len(out) > N:
+        out = out.iloc[-N:]
 
-    if len(block) != N:
-        return None, (
-            f"BLOCK_SIZE={len(block)} "
-            f"expected={N}"
-        )
+    if len(out) != N:
+        return None,f"BLOCK={len(out)}"
 
-    gaps = (
-        block.index.to_series()
-        .diff()
-        .dropna()
-    )
-
-    if not (
-        gaps == pd.Timedelta(hours=4)
-    ).all():
-
-        return None, "BLOCK_GAP"
-
-    return block, (
-        f"PASS {block.index[0]} -> "
-        f"{block.index[-1]}"
-    )
+    return out,"PASS"
 
 
 def prepare(d):
 
-    d = d.copy()
+    d=d.copy()
 
-    d["mean20"] = (
-        d["close"]
-        .rolling(20)
-        .mean()
-    )
+    d["mean20"]=d["close"].rolling(20).mean()
+    d["std20"]=d["close"].rolling(20).std()
 
-    d["std20"] = (
-        d["close"]
-        .rolling(20)
-        .std()
-    )
-
-    d["z"] = (
-        (d["close"] - d["mean20"]) /
+    d["z"]=(
+        (d["close"]-d["mean20"]) /
         d["std20"]
     )
 
-    d["range20"] = (
-        d["high"].rolling(20).max()
-        -
+    d["range20"]=(
+        d["high"].rolling(20).max() -
         d["low"].rolling(20).min()
     )
 
-    d["range_med"] = (
-        d["range20"]
-        .rolling(20)
-        .median()
+    d["range_med"]=(
+        d["range20"].rolling(20).median()
     )
 
-    d["vol_med"] = (
-        d["volume"]
-        .rolling(20)
-        .median()
+    d["vol_med"]=(
+        d["volume"].rolling(20).median()
     )
 
-    tr = pd.concat([
-        d["high"] - d["low"],
-        (
-            d["high"]
-            - d["close"].shift()
-        ).abs(),
-        (
-            d["low"]
-            - d["close"].shift()
-        ).abs()
-    ], axis=1).max(axis=1)
+    tr=pd.concat([
+        d["high"]-d["low"],
+        (d["high"]-d["close"].shift()).abs(),
+        (d["low"]-d["close"].shift()).abs()
+    ],axis=1).max(axis=1)
 
-    d["atr20"] = tr.ewm(
+    d["atr20"]=tr.ewm(
         alpha=1/20,
         adjust=False
     ).mean()
 
-    d["ema200"] = d["close"].ewm(
+    d["ema200"]=d["close"].ewm(
         span=200,
         adjust=False
     ).mean()
@@ -283,153 +220,105 @@ def prepare(d):
     return d
 
 
-def events(d, tp, end_limit=None):
+def events(d,tp,end_limit):
 
-    out = []
+    out=[]
 
-    for i in range(
-        200,
-        len(d) - 1
-    ):
+    for i in range(200,len(d)-1):
 
-        p = d.iloc[i - 1]
-        c = d.iloc[i]
+        p=d.iloc[i-1]
+        c=d.iloc[i]
 
         if not (
             np.isfinite(p["z"]) and
             np.isfinite(c["z"]) and
-            np.isfinite(c["atr20"]) and
-            np.isfinite(c["range20"]) and
-            np.isfinite(c["range_med"]) and
-            np.isfinite(c["vol_med"])
+            np.isfinite(c["atr20"])
         ):
             continue
 
-        # ====================================================
-        # CANDIDATE 11 — SHORT ONLY
-        # ====================================================
-
-        signal = (
-            c["close"] < c["ema200"]
-            and p["z"] >= 2
-            and c["z"] < 2
-            and c["range20"] >= c["range_med"]
-            and c["volume"] >= c["vol_med"]
+        signal=(
+            c["close"]<c["ema200"]
+            and p["z"]>=2
+            and c["z"]<2
+            and c["range20"]>=c["range_med"]
+            and c["volume"]>=c["vol_med"]
         )
 
         if not signal:
             continue
 
-        # Next candle OPEN = entry
-        entry_i = i + 1
+        ei=i+1
 
-        if entry_i >= len(d):
+        if ei>=len(d):
             continue
 
-        entry = d.iloc[entry_i]
+        ep=float(d.iloc[ei]["open"])
 
-        ep = float(entry["open"])
+        sl=ep+1.25*float(c["atr20"])
+        risk=sl-ep
+        target=ep-tp*risk
 
-        sl = (
-            ep
-            + 1.25 * float(c["atr20"])
-        )
+        result=None
+        exit_ts=None
 
-        risk = sl - ep
+        last=min(len(d),ei+31)
 
-        target = ep - tp * risk
+        for j in range(ei,last):
 
-        result = None
-        exit_ts = None
+            x=d.iloc[j]
 
-        last = min(
-            len(d),
-            entry_i + 31
-        )
-
-        for j in range(
-            entry_i,
-            last
-        ):
-
-            x = d.iloc[j]
-
-            # SHORT: SL first
-            if x["high"] >= sl:
-
-                result = -1.0
-                exit_ts = d.index[j]
+            if x["high"]>=sl:
+                result=-1.0
+                exit_ts=d.index[j]
                 break
 
-            if x["low"] <= target:
-
-                result = tp
-                exit_ts = d.index[j]
+            if x["low"]<=target:
+                result=tp
+                exit_ts=d.index[j]
                 break
 
         if result is None:
+            result=0.0
+            exit_ts=d.index[last-1]
 
-            result = 0.0
-            exit_ts = d.index[last - 1]
-
-        # Strict holdout boundary
-        if (
-            end_limit is not None
-            and exit_ts > end_limit
-        ):
+        # Strict holdout
+        if exit_ts>end_limit:
             continue
 
         out.append({
-            "ts": d.index[entry_i],
-            "exit": exit_ts,
-            "r": result
+            "ts":d.index[ei],
+            "exit":exit_ts,
+            "r":result
         })
 
     return pd.DataFrame(out)
 
 
-def stat(ev, cost=0.003):
+def stat(ev,cost=.003):
 
     if ev.empty:
-        return 0, 0, 0, 0, 0
+        return 0,0,0,0,0
 
-    x = (
-        ev.sort_values("ts")
-        .copy()
+    r=(
+        ev.sort_values("ts")["r"]
+        -cost
     )
 
-    r = x["r"] - cost
+    total=float(r.sum())
+    exp=float(r.mean())
 
-    total = float(r.sum())
-    exp = float(r.mean())
+    win=float(r[r>0].sum())
+    loss=float(-r[r<0].sum())
 
-    wins = float(
-        r[r > 0].sum()
+    pf=win/loss if loss else np.inf
+
+    eq=r.cumsum()
+
+    dd=float(
+        (eq-eq.cummax()).min()
     )
 
-    losses = float(
-        -r[r < 0].sum()
-    )
-
-    pf = (
-        wins / losses
-        if losses > 0
-        else np.inf
-    )
-
-    eq = r.cumsum()
-
-    dd = float(
-        (eq - eq.cummax()).min()
-    )
-
-    return (
-        len(r),
-        exp,
-        pf,
-        total,
-        dd
-    )
+    return len(r),exp,pf,total,dd
 
 
 def no_overlap(ev):
@@ -437,134 +326,88 @@ def no_overlap(ev):
     if ev.empty:
         return ev
 
-    x = (
-        ev.sort_values(
-            ["sym","ts"]
-        )
-        .copy()
-    )
+    x=ev.sort_values(
+        ["sym","ts"]
+    ).copy()
 
-    keep = []
-    last_exit = {}
+    keep=[]
+    last={}
 
-    for _, row in x.iterrows():
+    for _,r in x.iterrows():
 
-        s = row["sym"]
+        s=r["sym"]
 
         if (
-            s not in last_exit
-            or row["ts"] >= last_exit[s]
+            s not in last or
+            r["ts"]>=last[s]
         ):
-
             keep.append(True)
-            last_exit[s] = row["exit"]
-
+            last[s]=r["exit"]
         else:
-
             keep.append(False)
 
-    return (
-        x.loc[keep]
-        .sort_values("ts")
-    )
+    return x.loc[keep].sort_values("ts")
 
 
 # ============================================================
-# START
+# DATA
 # ============================================================
 
-print("=" * 72)
+print("="*72)
 print("CANDIDATE 11 — SHORT ONLY")
 print("FINAL INTERNAL HOLDOUT VALIDATION")
-print("=" * 72)
+print("="*72)
 
-DATA = {}
+DATA={}
 
 for s in SYMS:
 
-    d, msg = fetch(s)
+    d,msg=fetch(s)
 
     if d is None:
-
+        print(f"{s:<6} FAIL | {msg}")
+    else:
+        DATA[s]=prepare(d)
         print(
-            f"{s:<6} FAIL | {msg}"
+            f"{s:<6} PASS | "
+            f"{len(d)} | "
+            f"{d.index[0]} -> {d.index[-1]}"
         )
 
-        continue
-
-    DATA[s] = prepare(d)
-
-    print(
-        f"{s:<6} PASS | "
-        f"{len(d)} | "
-        f"{msg}"
-    )
-
-
-# ============================================================
-# DATA AUDIT
-# ============================================================
-
 print()
-print("=" * 72)
+print("="*72)
 print("DATA AUDIT")
-print("=" * 72)
+print("="*72)
 
-if len(DATA) != len(SYMS):
-
+if len(DATA)!=len(SYMS):
     raise SystemExit(
         f"ABORT: {len(DATA)}/{len(SYMS)} symbols passed"
     )
 
-
-common = set(
-    next(iter(DATA.values())).index
-)
+common=set(next(iter(DATA.values())).index)
 
 for d in DATA.values():
-
     common &= set(d.index)
 
-common = pd.DatetimeIndex(
-    sorted(common)
-)
+common=pd.DatetimeIndex(sorted(common))
 
-if len(common) != N:
-
+if len(common)!=N:
     raise SystemExit(
-        f"ABORT: COMMON={len(common)} "
-        f"expected={N}"
+        f"ABORT: COMMON={len(common)} expected={N}"
     )
 
+g=common.to_series().diff().dropna()
 
-gaps = (
-    common.to_series()
-    .diff()
-    .dropna()
-)
-
-if not (
-    gaps == pd.Timedelta(hours=4)
-).all():
-
+if not (g==pd.Timedelta(hours=4)).all():
     raise SystemExit(
-        "ABORT: COMMON TIMESTAMP GAP"
+        "ABORT: COMMON GAP"
     )
 
-
+print(f"SYMBOLS={len(DATA)}")
+print(f"COMMON={len(common)}")
 print(
-    f"SYMBOLS={len(DATA)}"
+    f"WINDOW={common[0]} -> {common[-1]}"
 )
-
-print(
-    f"COMMON={len(common)}"
-)
-
-print(
-    f"COMMON WINDOW="
-    f"{common[0]} -> {common[-1]}"
-)
-
 print("DATA AUDIT=PASS")
 
 
@@ -572,88 +415,61 @@ print("DATA AUDIT=PASS")
 # HOLDOUT
 # ============================================================
 
-cut = int(
-    N * (1 - HOLDOUT_FRAC)
-)
+cut=int(N*(1-HOLDOUT))
 
-holdout_ts = common[cut:]
+hold=common[cut:]
 
-HSTART = holdout_ts[0]
-HEND = holdout_ts[-1]
+HSTART=hold[0]
+HEND=hold[-1]
 
 print()
-print("=" * 72)
+print("="*72)
 print("HOLDOUT DEFINITION")
-print("=" * 72)
-
-print(
-    f"TRAIN/DEV CANDLES : {cut}"
-)
-
-print(
-    f"HOLDOUT CANDLES   : {len(holdout_ts)}"
-)
-
-print(
-    f"HOLDOUT START     : {HSTART}"
-)
-
-print(
-    f"HOLDOUT END       : {HEND}"
-)
-
-print(
-    "STRATEGY PARAMETERS: FROZEN"
-)
-
-print("=" * 72)
+print("="*72)
+print(f"TRAIN/DEV={cut}")
+print(f"HOLDOUT={len(hold)}")
+print(f"START={HSTART}")
+print(f"END={HEND}")
+print("PARAMETERS=FROZEN")
+print("="*72)
 
 
-ALL = {}
+ALL={}
 
 for tp in TPS:
 
-    parts = []
+    parts=[]
 
-    for s, d in DATA.items():
+    for s,d in DATA.items():
 
-        e = events(
+        e=events(
             d,
             tp,
-            end_limit=HEND
+            HEND
         )
 
         if e.empty:
             continue
 
-        e["sym"] = s
+        e["sym"]=s
 
-        e = e[
-            (e["ts"] >= HSTART) &
-            (e["ts"] <= HEND)
+        e=e[
+            (e["ts"]>=HSTART) &
+            (e["ts"]<=HEND)
         ]
 
         if not e.empty:
             parts.append(e)
 
-    if parts:
-
-        ALL[tp] = (
-            pd.concat(
-                parts,
-                ignore_index=True
-            )
-            .sort_values("ts")
-            .reset_index(drop=True)
+    ALL[tp]=(
+        pd.concat(parts,ignore_index=True)
+        .sort_values("ts")
+        if parts
+        else
+        pd.DataFrame(
+            columns=["ts","exit","r","sym"]
         )
-
-    else:
-
-        ALL[tp] = pd.DataFrame(
-            columns=[
-                "ts","exit","r","sym"
-            ]
-        )
+    )
 
 
 # ============================================================
@@ -662,24 +478,19 @@ for tp in TPS:
 
 for tp in TPS:
 
-    ev = ALL[tp]
+    ev=ALL[tp]
 
     print()
-    print("=" * 72)
-    print(
-        f"TP{tp}R — HOLDOUT"
-    )
-    print("=" * 72)
+    print("="*72)
+    print(f"TP{tp}R — HOLDOUT")
+    print("="*72)
 
-    print(
-        f"EVENTS={len(ev)}"
-    )
+    print(f"EVENTS={len(ev)}")
 
     for cost in COSTS:
 
-        n, ex, pf, total, dd = stat(
-            ev,
-            cost
+        n,ex,pf,total,dd=stat(
+            ev,cost
         )
 
         print(
@@ -691,21 +502,14 @@ for tp in TPS:
             f"DD={dd:+.2f}R"
         )
 
+    no=no_overlap(ev)
 
-    # ========================================================
-    # NO OVERLAP
-    # ========================================================
-
-    no = no_overlap(ev)
-
-    n, ex, pf, total, dd = stat(
-        no,
-        0.003
+    n,ex,pf,total,dd=stat(
+        no,.003
     )
 
     print()
     print("NO-OVERLAP")
-
     print(
         f"N={n} "
         f"Exp={ex:+.4f} "
@@ -714,76 +518,52 @@ for tp in TPS:
         f"DD={dd:+.2f}R"
     )
 
-
-    # ========================================================
-    # TEMPORAL BLOCKS
-    # ========================================================
-
     print()
-    print(
-        "TEMPORAL HOLDOUT BLOCKS"
-    )
+    print("TEMPORAL HOLDOUT BLOCKS")
 
-    folds = np.array_split(
-        holdout_ts,
-        5
-    )
+    folds=np.array_split(hold,5)
 
-    positive = 0
-    aggregate = []
+    positive=0
+    parts=[]
 
-    for k, block in enumerate(
-        folds,
-        1
-    ):
+    for k,b in enumerate(folds,1):
 
-        a = block[0]
-        b = block[-1]
+        a=b[0]
+        z=b[-1]
 
-        f = ev[
-            (ev["ts"] >= a) &
-            (ev["ts"] <= b)
-        ].sort_values("ts")
+        f=ev[
+            (ev["ts"]>=a) &
+            (ev["ts"]<=z)
+        ]
 
-        n, ex, pf, total, dd = stat(
-            f,
-            0.003
+        n,ex,pf,total,dd=stat(
+            f,.003
         )
 
-        if total > 0:
-            positive += 1
+        if total>0:
+            positive+=1
 
-        aggregate.append(f)
+        parts.append(f)
 
         print(
             f"FOLD {k} | "
-            f"{a} -> {b} | "
-            f"N={n:3d} "
+            f"N={n} "
             f"Exp={ex:+.4f} "
             f"PF={pf:.3f} "
             f"Total={total:+.2f}R "
             f"DD={dd:+.2f}R"
         )
 
-    agg = (
-        pd.concat(
-            aggregate,
-            ignore_index=True
-        )
-        if aggregate
-        else
-        pd.DataFrame(
-            columns=ev.columns
-        )
+    agg=pd.concat(
+        parts,
+        ignore_index=True
     )
 
-    n, ex, pf, total, dd = stat(
-        agg,
-        0.003
+    n,ex,pf,total,dd=stat(
+        agg,.003
     )
 
-    print("-" * 72)
-
+    print("-"*72)
     print(
         f"AGG HOLDOUT | "
         f"N={n} "
@@ -794,69 +574,35 @@ for tp in TPS:
     )
 
     print(
-        f"POSITIVE FOLDS="
-        f"{positive}/5"
+        f"POSITIVE FOLDS={positive}/5"
     )
-
-
-    # ========================================================
-    # SYMBOL JACKKNIFE
-    # ========================================================
 
     print()
     print("SYMBOL JACKKNIFE")
 
-    full = stat(
-        ev,
-        0.003
-    )[3]
+    full=stat(ev,.003)[3]
 
-    removals = []
+    rem=[]
 
     for s in SYMS:
 
-        x = ev[
-            ev["sym"] != s
-        ]
-
-        t = stat(
-            x,
-            0.003
+        t=stat(
+            ev[ev["sym"]!=s],
+            .003
         )[3]
 
-        removals.append(
-            (s, t)
-        )
+        rem.append((s,t))
 
-    removals.sort(
-        key=lambda z: z[1]
-    )
+    rem.sort(key=lambda x:x[1])
 
-    print(
-        f"FULL={full:+.2f}R"
-    )
+    print(f"FULL={full:+.2f}R")
 
-    for s, t in removals[:5]:
-
+    for s,t in rem[:5]:
         print(
-            f"REMOVE {s:<6} "
-            f"=> {t:+.2f}R"
+            f"REMOVE {s:<6} => {t:+.2f}R"
         )
-
-    print()
-    print("BEST REMOVALS")
-
-    for s, t in removals[-5:][::-1]:
-
-        print(
-            f"REMOVE {s:<6} "
-            f"=> {t:+.2f}R"
-        )
-
 
 print()
-print("=" * 72)
-print(
-    "FINAL INTERNAL HOLDOUT VALIDATION COMPLETE"
-)
-print("=" * 72)
+print("="*72)
+print("FINAL INTERNAL HOLDOUT VALIDATION COMPLETE")
+print("="*72)
