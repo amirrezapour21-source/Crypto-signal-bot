@@ -1,97 +1,109 @@
 # ============================================================
-# CANDIDATE 11 — FORWARD PAPER TRADING
+# CANDIDATE 11 — FORWARD PAPER TRADING ENGINE (v2)
 # FROZEN: 4H | SHORT ONLY | SL=1.25 ATR | TP=2R | HOLD=30
+# Run every 4H (GitHub Actions cron). State is committed to the repo.
 # ============================================================
 
 import os
+import sys
 import json
 import time
+from collections import Counter
+
 import requests
 import pandas as pd
 import numpy as np
 
 
 BASE = "https://api-futures.kucoin.com"
-STATE_FILE = "candidate11_paper_state.json"
+STATE_FILE = os.environ.get(
+    "PAPER_STATE_FILE",
+    "candidate11_paper_state.json"
+)
+STATE_VERSION = 2
 
-INTERVAL = 240
+GRANULARITY = 240                # minutes -> 4H
+BAR = pd.Timedelta(hours=4)
+N_FETCH = 400                    # API cap is 500 rows
+MIN_CANDLES = 250                # warm-up for EMA200 / ATR
+
+# FROZEN STRATEGY
 SL_ATR = 1.25
 TP_R = 2.0
 HOLD = 30
+MAX_BARS = HOLD + 1              # entry candle + 30 (same window as backtest)
+
+# EXECUTION / REPORTING (not strategy parameters)
+MAX_ENTRY_DELAY_MIN = 90         # later than this -> signal is MISSED, not traded
+FEE_RT = 0.002                   # assumed round-trip fee+slippage (% of price)
+TARGET_TRADES = 40
+MAX_FAIL_FRAC = 0.2              # >20% symbols failing -> exit code 1
+PAUSE = 0.15
 
 SYMS = [
-    "XBTUSDTM",
-    "ETHUSDTM",
-    "SOLUSDTM",
-    "BNBUSDTM",
-    "XRPUSDTM",
-    "DOGEUSDTM",
-    "ADAUSDTM",
-    "LINKUSDTM",
-    "AVAXUSDTM",
-    "DOTUSDTM",
-    "SUIUSDTM",
-    "TRXUSDTM",
-    "NEARUSDTM",
-    "AAVEUSDTM",
-    "OPUSDTM",
-    "ARBUSDTM",
-    "APTUSDTM",
-    "ATOMUSDTM",
-    "FILUSDTM",
-    "LTCUSDTM",
-    "BCHUSDTM",
-    "ETCUSDTM",
-    "UNIUSDTM",
-    "INJUSDTM",
-    "SEIUSDTM",
-    "VETUSDTM",
-    "HBARUSDTM",
-    "ALGOUSDTM",
-    "XLMUSDTM",
-    "ICPUSDTM",
-    "WIFUSDTM",
-    "PEPEUSDTM",
-    "FLOKIUSDTM",
+    "XBTUSDTM", "ETHUSDTM", "SOLUSDTM", "BNBUSDTM", "XRPUSDTM",
+    "DOGEUSDTM", "ADAUSDTM", "LINKUSDTM", "AVAXUSDTM", "DOTUSDTM",
+    "SUIUSDTM", "TRXUSDTM", "NEARUSDTM", "AAVEUSDTM", "OPUSDTM",
+    "ARBUSDTM", "APTUSDTM", "ATOMUSDTM", "FILUSDTM", "LTCUSDTM",
+    "BCHUSDTM", "ETCUSDTM", "UNIUSDTM", "INJUSDTM", "SEIUSDTM",
+    "VETUSDTM", "HBARUSDTM", "ALGOUSDTM", "XLMUSDTM", "ICPUSDTM",
+    "WIFUSDTM", "PEPEUSDTM", "FLOKIUSDTM",
 ]
+
+
+def utcnow():
+    return pd.Timestamp.now(tz="UTC")
 
 
 # ============================================================
 # STATE
 # ============================================================
 
-def load_state():
+def new_state(now):
+    return {
+        "version": STATE_VERSION,
+        "created": now.isoformat(),
+        "last_run": None,
+        "symbols": {},      # per-symbol: last processed candle
+        "open": {},
+        "closed": [],
+        "signals": [],      # traded signals
+        "missed": [],       # signals not traded (late / position open)
+    }
+
+
+def load_state(now):
     if not os.path.exists(STATE_FILE):
-        return {
-            "open": {},
-            "closed": [],
-            "signals": [],
-            "last_scan": None
-        }
+        return new_state(now), True
 
     try:
-        with open(STATE_FILE, "r") as f:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
             s = json.load(f)
+    except Exception as e:
+        # never silently reset: that would erase the forward record
+        raise SystemExit(
+            f"ABORT: STATE FILE UNREADABLE ({e!r}). "
+            f"Fix or delete {STATE_FILE} manually."
+        )
 
-        for k in ["open", "closed", "signals"]:
-            if k not in s:
-                s[k] = []
+    if s.get("version") != STATE_VERSION:
+        raise SystemExit(
+            f"ABORT: STATE VERSION {s.get('version')} != {STATE_VERSION}"
+        )
 
-        return s
+    for k, default in (
+        ("symbols", {}), ("open", {}), ("closed", []),
+        ("signals", []), ("missed", [])
+    ):
+        s.setdefault(k, default)
 
-    except Exception:
-        return {
-            "open": {},
-            "closed": [],
-            "signals": [],
-            "last_scan": None
-        }
+    return s, False
 
 
 def save_state(state):
     tmp = STATE_FILE + ".tmp"
 
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
     os.replace(tmp, STATE_FILE)
@@ -101,77 +113,105 @@ def save_state(state):
 # API
 # ============================================================
 
-def get_klines(symbol, n=260):
-    now = int(time.time())
-    start = now - n * INTERVAL * 60
+def check_ohlc(d):
+    """Detects a wrong column order: high must be the max, low the min."""
+    hi_ok = d["high"] >= d[["open", "close"]].max(axis=1) - d["close"].abs() * 1e-9
+    lo_ok = d["low"] <= d[["open", "close"]].min(axis=1) + d["close"].abs() * 1e-9
+    frac = float((hi_ok & lo_ok).mean())
 
-    r = requests.get(
-        f"{BASE}/api/v1/kline/query",
-        params={
-            "symbol": symbol,
-            "granularity": INTERVAL,
-            "from": start * 1000,
-            "to": now * 1000
-        },
-        timeout=20
-    )
-
-    r.raise_for_status()
-
-    raw = r.json().get("data", [])
-
-    if not raw:
-        return pd.DataFrame()
-
-    d = pd.DataFrame(
-        raw,
-        columns=[
-            "ts",
-            "open",
-            "close",
-            "high",
-            "low",
-            "volume",
-            "turnover"
-        ]
-    )
-
-    d["ts"] = pd.to_numeric(
-        d["ts"],
-        errors="coerce"
-    )
-
-    for c in [
-        "open",
-        "close",
-        "high",
-        "low",
-        "volume",
-        "turnover"
-    ]:
-        d[c] = pd.to_numeric(
-            d[c],
-            errors="coerce"
+    if frac < 0.99:
+        raise ValueError(
+            f"OHLC_INCONSISTENT ok={frac:.2f} (check column order)"
         )
 
+
+def parse_klines(rows):
+    # KuCoin FUTURES row order: time, open, high, low, close, volume, turnover
+    if not rows:
+        raise ValueError("EMPTY_DATA")
+
+    if any(len(r) < 6 for r in rows):
+        raise ValueError("BAD_ROW_LENGTH")
+
+    d = pd.DataFrame(
+        [r[:6] for r in rows],
+        columns=["ts", "open", "high", "low", "close", "volume"]
+    )
+
+    for c in d.columns:
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+
+    d = d.dropna().copy()
+
     d["ts"] = pd.to_datetime(
-        d["ts"],
+        d["ts"].astype("int64"),
         unit="ms",
         utc=True
     )
 
     d = (
-        d.dropna()
-         .drop_duplicates("ts")
+        d.drop_duplicates("ts")
          .sort_values("ts")
          .reset_index(drop=True)
     )
 
+    check_ohlc(d)
+
     return d
 
 
+def fetch_raw(symbol, now):
+    end_ms = int(now.timestamp() * 1000)
+    start_ms = end_ms - N_FETCH * GRANULARITY * 60 * 1000
+
+    last_err = None
+
+    for attempt in range(3):
+
+        try:
+            r = requests.get(
+                f"{BASE}/api/v1/kline/query",
+                params={
+                    "symbol": symbol,
+                    "granularity": GRANULARITY,
+                    "from": start_ms,
+                    "to": end_ms
+                },
+                timeout=20
+            )
+        except requests.RequestException as e:
+            last_err = repr(e)
+            time.sleep(1 + attempt)
+            continue
+
+        if r.status_code == 429 or r.status_code >= 500:
+            last_err = f"HTTP_{r.status_code}"
+            time.sleep(2 * (attempt + 1))
+            continue
+
+        r.raise_for_status()
+        j = r.json()
+
+        if str(j.get("code")) != "200000":
+            raise ValueError(f"API_CODE={j.get('code')}")
+
+        return parse_klines(j.get("data") or [])
+
+    raise RuntimeError(f"REQUEST_FAILED: {last_err}")
+
+
+def check_contiguous(closed):
+    if len(closed) < MIN_CANDLES:
+        raise ValueError(f"TOO_FEW_CANDLES={len(closed)}")
+
+    tail = closed.tail(MIN_CANDLES)
+
+    if not (tail["ts"].diff().dropna() == BAR).all():
+        raise ValueError("GAP_OR_WRONG_GRANULARITY")
+
+
 # ============================================================
-# INDICATORS
+# INDICATORS (FROZEN — identical to the validated backtest)
 # ============================================================
 
 def prepare(d):
@@ -188,429 +228,355 @@ def prepare(d):
         axis=1
     ).max(axis=1)
 
-    # FROZEN ATR
-    d["atr"] = tr.ewm(
-        alpha=1 / 20,
-        adjust=False
-    ).mean()
+    d["atr"] = tr.ewm(alpha=1 / 20, adjust=False).mean()
+    d["ema200"] = d["close"].ewm(span=200, adjust=False).mean()
 
-    # FROZEN EMA
-    d["ema200"] = d["close"].ewm(
-        span=200,
-        adjust=False
-    ).mean()
-
-    # FROZEN Z-SCORE
     mean20 = d["close"].rolling(20).mean()
     std20 = d["close"].rolling(20).std()
+    d["z"] = (d["close"] - mean20) / std20
 
-    d["z"] = (
-        d["close"] - mean20
-    ) / std20
-
-    # FROZEN RANGE
     d["range20"] = (
-        d["high"].rolling(20).max()
-        -
-        d["low"].rolling(20).min()
+        d["high"].rolling(20).max() - d["low"].rolling(20).min()
     )
-
-    d["range_med"] = (
-        d["range20"].rolling(20).median()
-    )
-
-    # FROZEN VOLUME
-    d["vol_med"] = (
-        d["volume"].rolling(20).median()
-    )
+    d["range_med"] = d["range20"].rolling(20).median()
+    d["vol_med"] = d["volume"].rolling(20).median()
 
     return d
 
 
-# ============================================================
-# TIME
-# ============================================================
+def explain(d, k):
+    """First failed condition for candle k (or SIGNAL)."""
+    c = d.iloc[k]
+    p = d.iloc[k - 1]
 
-def completed_data(d):
-    now = pd.Timestamp.now(tz="UTC")
-
-    if d.empty:
-        return d
-
-    return d[
-        d["ts"] + pd.Timedelta(hours=4) <= now
-    ].copy().reset_index(drop=True)
-
-
-# ============================================================
-# SIGNAL
-# ============================================================
-
-def detect_signal(d):
-    if len(d) < 220:
-        return None
-
-    p = d.iloc[-2]
-    c = d.iloc[-1]
-
-    vals = [
-        c["atr"],
-        c["ema200"],
-        c["z"],
-        c["range20"],
-        c["range_med"],
-        c["vol_med"]
+    need = [
+        c["atr"], c["ema200"], c["z"], p["z"],
+        c["range20"], c["range_med"], c["vol_med"]
     ]
 
-    if any(pd.isna(x) for x in vals):
-        return None
+    if any(pd.isna(x) for x in need):
+        return "WARMUP_NAN"
 
-    valid = (
-        c["close"] < c["ema200"]
-        and
-        p["z"] >= 2
-        and
-        c["z"] < 2
-        and
-        c["range20"] >= c["range_med"]
-        and
-        c["volume"] >= c["vol_med"]
-    )
+    if not (p["z"] >= 2 and c["z"] < 2):
+        return "NO_Z_CROSS"
 
-    if not valid:
-        return None
+    if not c["close"] < c["ema200"]:
+        return "ABOVE_EMA200"
 
-    signal_ts = c["ts"]
+    if not c["range20"] >= c["range_med"]:
+        return "LOW_RANGE"
 
-    entry_ts = (
-        signal_ts +
-        pd.Timedelta(hours=4)
-    )
+    if not c["volume"] >= c["vol_med"]:
+        return "LOW_VOLUME"
 
-    return {
-        "signal_ts": signal_ts.isoformat(),
-        "entry_ts": entry_ts.isoformat(),
-        "atr": float(c["atr"]),
-        "signal_close": float(c["close"])
-    }
+    return "SIGNAL"
 
 
 # ============================================================
-# EXISTING SIGNAL CHECK
+# POSITIONS
 # ============================================================
 
-def signal_exists(state, symbol, signal_ts):
-    for x in state["signals"]:
-        if (
-            x.get("symbol") == symbol
-            and
-            x.get("signal_ts") == signal_ts
-        ):
+def seen(state, sym, sig_iso):
+    for x in state["signals"] + state["missed"] + state["closed"]:
+        if x.get("symbol") == sym and x.get("signal_ts") == sig_iso:
             return True
 
-    for x in state["closed"]:
-        if (
-            x.get("symbol") == symbol
-            and
-            x.get("signal_ts") == signal_ts
-        ):
-            return True
-
-    for x in state["open"].values():
-        if (
-            x.get("symbol") == symbol
-            and
-            x.get("signal_ts") == signal_ts
-        ):
-            return True
-
-    return False
+    p = state["open"].get(sym)
+    return p is not None and p.get("signal_ts") == sig_iso
 
 
-# ============================================================
-# OPEN POSITION
-# ============================================================
+def handle_signal(state, sym, d, k, raw, now, run):
+    sig_ts = d["ts"].iloc[k]
+    sig_iso = sig_ts.isoformat()
 
-def open_position(state, symbol, signal, entry_row):
-    entry = float(entry_row["open"])
-    atr = float(signal["atr"])
+    if seen(state, sym, sig_iso):
+        return
+
+    run["new_signals"] += 1
+
+    entry_ts = sig_ts + BAR
+    delay = (now - entry_ts).total_seconds() / 60.0
+
+    if sym in state["open"]:
+        reason = "OPEN_POSITION"
+    elif delay > MAX_ENTRY_DELAY_MIN:
+        reason = f"LATE_{int(delay)}MIN"
+    else:
+        reason = None
+
+    if reason:
+        state["missed"].append({
+            "symbol": sym,
+            "signal_ts": sig_iso,
+            "reason": reason
+        })
+        run["missed"] += 1
+        print("MISSED", sym, sig_iso, reason)
+        return
+
+    atr = float(d["atr"].iloc[k])
+
+    if not np.isfinite(atr) or atr <= 0:
+        return
+
+    er = raw[raw["ts"] == entry_ts]
+
+    if len(er):
+        entry = float(er["open"].iloc[0])
+        src = "entry_open"
+    else:
+        entry = float(d["close"].iloc[k])
+        src = "signal_close"
 
     risk = SL_ATR * atr
 
-    if risk <= 0:
-        return
-
-    state["open"][symbol] = {
-        "symbol": symbol,
-        "signal_ts": signal["signal_ts"],
-        "entry_ts": entry_row["ts"].isoformat(),
+    state["open"][sym] = {
+        "symbol": sym,
+        "signal_ts": sig_iso,
+        "entry_ts": entry_ts.isoformat(),
         "entry": entry,
+        "entry_src": src,
+        "entry_delay_min": round(delay, 1),
+        "detect_price": float(raw["close"].iloc[-1]),
         "atr": atr,
         "risk": risk,
+        "risk_pct": risk / entry,
         "sl": entry + risk,
         "tp": entry - TP_R * risk,
-        "bars": 0
+        "bars": 0,
+        "last_bar_ts": None
     }
 
     state["signals"].append({
-        "symbol": symbol,
-        "signal_ts": signal["signal_ts"],
-        "entry_ts": entry_row["ts"].isoformat()
+        "symbol": sym,
+        "signal_ts": sig_iso,
+        "entry_ts": entry_ts.isoformat()
     })
 
+    run["opened"] += 1
+
     print(
-        "ENTRY",
-        symbol,
+        "ENTRY", sym,
         "ENTRY=", round(entry, 8),
         "SL=", round(entry + risk, 8),
-        "TP=", round(entry - TP_R * risk, 8)
+        "TP=", round(entry - TP_R * risk, 8),
+        f"(delay {delay:.0f}min, {src})"
     )
 
 
-# ============================================================
-# MONITOR
-# ============================================================
+def monitor_bar(state, sym, pos, row, run):
+    ts = row["ts"]
 
-def monitor_position(state, symbol, d):
-    if symbol not in state["open"]:
+    # idempotent: every candle is counted once
+    if pos.get("last_bar_ts") and pd.Timestamp(pos["last_bar_ts"]) >= ts:
         return
 
-    p = state["open"][symbol]
+    pos["last_bar_ts"] = ts.isoformat()
+    pos["bars"] += 1
 
-    entry_ts = pd.Timestamp(
-        p["entry_ts"]
-    )
+    high = float(row["high"])
+    low = float(row["low"])
+    close = float(row["close"])
 
-    rows = d[
-        d["ts"] > entry_ts
-    ].copy()
+    # FROZEN: SL FIRST
+    if high >= pos["sl"]:
+        exit_price, gross_r, reason = pos["sl"], -1.0, "SL"
 
-    if rows.empty:
+    elif low <= pos["tp"]:
+        exit_price, gross_r, reason = pos["tp"], TP_R, "TP"
+
+    elif pos["bars"] >= MAX_BARS:
+        exit_price = close
+        gross_r = (pos["entry"] - close) / pos["risk"]
+        reason = "TIMEOUT"
+
+    else:
         return
 
-    for _, row in rows.iterrows():
+    state["closed"].append({
+        **pos,
+        "exit_ts": ts.isoformat(),
+        "exit": exit_price,
+        "reason": reason,
+        "gross_r": float(gross_r)
+    })
 
-        p["bars"] += 1
+    del state["open"][sym]
+    run["closed"] += 1
 
-        high = float(row["high"])
-        low = float(row["low"])
+    print("CLOSED", sym, reason, "R=", round(gross_r, 4))
 
-        sl_hit = high >= p["sl"]
-        tp_hit = low <= p["tp"]
 
-        # FROZEN: SL FIRST
-        if sl_hit:
-            exit_price = p["sl"]
-            gross_r = -1.0
-            reason = "SL"
+def process_symbol(state, sym, raw, now, run):
+    closed = raw[raw["ts"] + BAR <= now].reset_index(drop=True)
 
-        elif tp_hit:
-            exit_price = p["tp"]
-            gross_r = TP_R
-            reason = "TP"
+    check_contiguous(closed)
 
-        elif p["bars"] >= HOLD:
-            exit_price = float(row["close"])
+    d = prepare(closed)
+    n = len(d)
 
-            gross_r = (
-                p["entry"] - exit_price
-            ) / p["risk"]
+    run["reasons"][explain(d, n - 1)] += 1
 
-            reason = "TIMEOUT"
+    last = d.iloc[-1]
 
-        else:
+    if (
+        pd.notna(last["z"])
+        and last["z"] >= 2
+        and last["close"] < last["ema200"]
+    ):
+        run["watch"].append(sym)
+
+    if run["last_candle"] is None or d["ts"].iloc[-1] > run["last_candle"]:
+        run["last_candle"] = d["ts"].iloc[-1]
+
+    ss = state["symbols"].get(sym)
+
+    if ss is None:
+        # first sight: only the latest completed candle is evaluated
+        ss = {"last_ts": d["ts"].iloc[-2].isoformat()}
+        state["symbols"][sym] = ss
+
+    last_ts = pd.Timestamp(ss["last_ts"])
+
+    for k in range(1, n):
+
+        ts = d["ts"].iloc[k]
+
+        if ts <= last_ts:
             continue
 
-        state["closed"].append({
-            **p,
-            "exit_ts": row["ts"].isoformat(),
-            "exit": exit_price,
-            "reason": reason,
-            "gross_r": gross_r
-        })
+        pos = state["open"].get(sym)
 
-        del state["open"][symbol]
+        if pos is not None and ts >= pd.Timestamp(pos["entry_ts"]):
+            monitor_bar(state, sym, pos, d.iloc[k], run)
 
-        print(
-            "CLOSED",
-            symbol,
-            reason,
-            "R=",
-            round(gross_r, 4)
-        )
+        if explain(d, k) == "SIGNAL":
+            handle_signal(state, sym, d, k, raw, now, run)
 
-        break
+        ss["last_ts"] = ts.isoformat()
 
 
 # ============================================================
 # REPORT
 # ============================================================
 
+def block(name, r):
+    wins = r[r > 0].sum()
+    losses = -r[r < 0].sum()
+    pf = wins / losses if losses > 0 else float("inf")
+    eq = np.cumsum(r)
+    dd = (eq - np.maximum.accumulate(eq)).min()
+
+    print(
+        f"{name:<22} Exp={r.mean():+.4f} PF={pf:.3f} "
+        f"Total={r.sum():+.2f}R DD={dd:+.2f}R "
+        f"Win={(r > 0).mean():.2%}"
+    )
+
+
 def report(state):
-    trades = state["closed"]
-
-    if not trades:
-        print()
-        print("CLOSED=0")
-        print("OPEN=", len(state["open"]))
-        print("SIGNALS=", len(state["signals"]))
-        return
-
-    r = np.array(
-        [
-            float(x["gross_r"])
-            for x in trades
-        ],
-        dtype=float
-    )
-
-    wins = r[r > 0]
-    losses = r[r < 0]
-
-    pf = (
-        wins.sum() / abs(losses.sum())
-        if len(losses)
-        else float("inf")
-    )
-
-    equity = np.cumsum(r)
-
-    drawdown = (
-        equity -
-        np.maximum.accumulate(equity)
-    ).min()
+    tr = state["closed"]
 
     print()
     print("=" * 60)
-    print("CANDIDATE 11 — PAPER TRADING")
+    print("CUMULATIVE PAPER RESULTS")
     print("=" * 60)
-    print("CLOSED =", len(r))
     print(
-        "WINRATE =",
-        round(float((r > 0).mean()), 4)
+        f"CLOSED={len(tr)}/{TARGET_TRADES} | "
+        f"OPEN={len(state['open'])} | "
+        f"TRADED={len(state['signals'])} | "
+        f"MISSED={len(state['missed'])}"
     )
-    print(
-        "EXP =",
-        round(float(r.mean()), 4)
-    )
-    print(
-        "PF =",
-        round(float(pf), 3)
-    )
-    print(
-        "TOTAL_R =",
-        round(float(r.sum()), 3)
-    )
-    print(
-        "MAX_DD =",
-        round(float(drawdown), 3)
-    )
-    print("OPEN =", len(state["open"]))
-    print("SIGNALS =", len(state["signals"]))
-    print("=" * 60)
 
+    if not tr:
+        return
 
-# ============================================================
-# MAIN
-# ============================================================
+    g = np.array([x["gross_r"] for x in tr], dtype=float)
+    rp = np.array([x["risk_pct"] for x in tr], dtype=float)
+
+    block("GROSS", g)
+    block(f"NET (fee {FEE_RT * 100:.2f}%)", g - FEE_RT / rp)
+
+    reasons = Counter(x["reason"] for x in tr)
+    print("EXITS:", dict(reasons))
+
+    if len(tr) >= TARGET_TRADES:
+        print(f"TARGET REACHED ({TARGET_TRADES}) -> READY FOR REVIEW")
+
 
 def main():
+    now = utcnow()
+    state, fresh = load_state(now)
 
     print("=" * 60)
-    print("CANDIDATE 11 — FORWARD PAPER TRADING")
-    print("4H | SHORT ONLY | SL 1.25 ATR | TP 2R | HOLD 30")
+    print("CANDIDATE 11 — FORWARD PAPER TRADING (v2)")
+    print("4H | SHORT ONLY | SL 1.25 ATR | TP 2R | MAX 31 BARS")
+    print(f"RUN_TIME_UTC = {now.isoformat()}")
+    print(
+        f"STATE = {'NEW (baseline run)' if fresh else 'LOADED'} | "
+        f"open={len(state['open'])} closed={len(state['closed'])}"
+    )
     print("=" * 60)
 
-    state = load_state()
+    run = {
+        "reasons": Counter(),
+        "watch": [],
+        "new_signals": 0,
+        "opened": 0,
+        "closed": 0,
+        "missed": 0,
+        "last_candle": None
+    }
 
-    for symbol in SYMS:
+    ok = 0
+    failed = {}
+
+    for sym in SYMS:
 
         try:
-
-            raw = get_klines(symbol)
-
-            if raw.empty:
-                print("NO_DATA", symbol)
-                continue
-
-            # Monitor existing position
-            monitor_position(
-                state,
-                symbol,
-                raw
-            )
-
-            closed = completed_data(raw)
-
-            if closed.empty:
-                continue
-
-            # New signal
-            if symbol not in state["open"]:
-
-                signal = detect_signal(
-                    closed
-                )
-
-                if signal is not None:
-
-                    if not signal_exists(
-                        state,
-                        symbol,
-                        signal["signal_ts"]
-                    ):
-
-                        entry_ts = pd.Timestamp(
-                            signal["entry_ts"]
-                        )
-
-                        current_ts = pd.Timestamp.now(
-                            tz="UTC"
-                        )
-
-                        # Signal must be processed
-                        # during its actual next candle.
-                        if (
-                            entry_ts <= current_ts
-                            and
-                            current_ts <
-                            entry_ts +
-                            pd.Timedelta(hours=4)
-                        ):
-
-                            current = raw[
-                                raw["ts"] == entry_ts
-                            ]
-
-                            if not current.empty:
-
-                                open_position(
-                                    state,
-                                    symbol,
-                                    signal,
-                                    current.iloc[0]
-                                )
+            raw = fetch_raw(sym, now)
+            process_symbol(state, sym, raw, now, run)
+            ok += 1
 
         except Exception as e:
+            failed[sym] = f"{type(e).__name__}: {e}"
 
-            print(
-                "ERROR",
-                symbol,
-                repr(e)
-            )
+        time.sleep(PAUSE)
 
-    state["last_scan"] = (
-        pd.Timestamp.now(
-            tz="UTC"
-        ).isoformat()
+    state["last_run"] = now.isoformat()
+    save_state(state)
+
+    print()
+    print(f"SYMBOLS_OK={ok}/{len(SYMS)} FAILED={len(failed)}")
+
+    for s, m in failed.items():
+        print("FAIL", s, m)
+
+    print("LAST CLOSED CANDLE =", run["last_candle"])
+    print("CANDLE CHECK (first failed condition):", dict(run["reasons"]))
+    print("WATCH (z>=2 & below EMA200):", run["watch"])
+    print(
+        f"THIS RUN: NEW_SIGNALS={run['new_signals']} "
+        f"OPENED={run['opened']} CLOSED={run['closed']} "
+        f"MISSED={run['missed']}"
     )
 
-    save_state(state)
+    for s, p in state["open"].items():
+        print(
+            "OPEN", s,
+            "entry=", round(p["entry"], 8),
+            "sl=", round(p["sl"], 8),
+            "tp=", round(p["tp"], 8),
+            "bars=", p["bars"]
+        )
 
     report(state)
 
     print()
     print("DONE — Candidate 11 Paper Trading")
+
+    if ok < (1 - MAX_FAIL_FRAC) * len(SYMS):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
