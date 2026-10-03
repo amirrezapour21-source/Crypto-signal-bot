@@ -1,0 +1,178 @@
+{
+  "closed": [],
+  "created_at": "2026-10-03T19:01:24.103942+00:00",
+  "errors": [],
+  "last_run_at": "2026-10-03T19:01:24.104023+00:00",
+  "missed": [],
+  "open": {},
+  "signals": [],
+  "state_version": 3,
+  "strategy": "candidate11_short_only_frozen_v3",
+  "symbols": {
+    "AAVEUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ADAUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ALGOUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "APTUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ARBUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ATOMUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "AVAXUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "BCHUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "BNBUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "DOGEUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "DOTUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ETCUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ETHUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "FILUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "FLOKIUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "HBARUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "ICPUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "INJUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "LINKUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "LTCUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "NEARUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "OPUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "PEPEUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "SEIUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "SOLUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "SUIUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "TRXUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "UNIUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "VETUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "WIFUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "XBTUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "XLMUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    },
+    "XRPUSDTM": {
+      "baseline_done": false,
+      "last_status": "GAP_OR_DUPLICATE:0 days 08:00:00",
+      "last_ts": null
+    }
+  }
+}
