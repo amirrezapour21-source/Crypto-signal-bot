@@ -2298,5 +2298,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "LTC_1791008409",
+    "symbol": "LTC",
+    "coin_id": "litecoin",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 69.11407573519855,
+    "sl": 68.25053564362156,
+    "tp1": 71.0927401769514,
+    "tp2": 71.35380453694235,
+    "signal_time": "2026-10-03T06:20:09.236234+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
