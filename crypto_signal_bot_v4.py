@@ -24,7 +24,9 @@ STATE_VERSION = 2
 
 GRANULARITY = 240                # minutes -> 4H
 BAR = pd.Timedelta(hours=4)
-N_FETCH = 400                    # API cap is 500 rows
+CHUNK = 150                      # candles per request (API returns only ~200 max)
+OVERLAP = 2                      # candles shared between chunks (no gaps)
+N_CHUNKS = 4                     # ~600 candles in total
 MIN_CANDLES = 250                # warm-up for EMA200 / ATR
 
 # FROZEN STRATEGY
@@ -160,10 +162,7 @@ def parse_klines(rows):
     return d
 
 
-def fetch_raw(symbol, now):
-    end_ms = int(now.timestamp() * 1000)
-    start_ms = end_ms - N_FETCH * GRANULARITY * 60 * 1000
-
+def fetch_chunk(symbol, start_ms, end_ms):
     last_err = None
 
     for attempt in range(3):
@@ -195,9 +194,26 @@ def fetch_raw(symbol, now):
         if str(j.get("code")) != "200000":
             raise ValueError(f"API_CODE={j.get('code')}")
 
-        return parse_klines(j.get("data") or [])
+        return j.get("data") or []
 
     raise RuntimeError(f"REQUEST_FAILED: {last_err}")
+
+
+def fetch_raw(symbol, now):
+    # The endpoint returns only ~200 rows per call, so history is
+    # collected in several overlapping time windows (newest first).
+    bar_ms = GRANULARITY * 60 * 1000
+    end_ms = int(now.timestamp() * 1000)
+
+    rows = []
+
+    for i in range(N_CHUNKS):
+        e = end_ms - i * CHUNK * bar_ms
+        s = e - (CHUNK + OVERLAP) * bar_ms
+        rows.extend(fetch_chunk(symbol, s, e))
+        time.sleep(PAUSE)
+
+    return parse_klines(rows)
 
 
 def check_contiguous(closed):
