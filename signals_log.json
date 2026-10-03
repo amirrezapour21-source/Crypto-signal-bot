@@ -2281,5 +2281,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ADA_1790990509",
+    "symbol": "ADA",
+    "coin_id": "cardano",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 0.24665855264723807,
+    "sl": 0.24415977450724655,
+    "tp1": 0.25347233784960366,
+    "tp2": 0.2536772258866241,
+    "signal_time": "2026-10-03T01:21:49.070300+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
