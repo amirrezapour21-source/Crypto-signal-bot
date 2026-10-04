@@ -2310,10 +2310,10 @@
     "tp1": 71.0927401769514,
     "tp2": 71.35380453694235,
     "signal_time": "2026-10-03T06:20:09.236234+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-10-03T10:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-10-04T15:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   }
 ]
