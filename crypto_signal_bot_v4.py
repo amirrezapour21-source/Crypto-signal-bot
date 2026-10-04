@@ -1,5 +1,5 @@
 # ============================================================
-# CANDIDATE 11 — FORWARD PAPER TRADING ENGINE (v3)
+# CANDIDATE 11 — FORWARD PAPER TRADING ENGINE (v4)
 # FROZEN: 4H | SHORT ONLY | ZSCORE20 +2 CROSS-DOWN
 #         | BELOW EMA200 | RANGE20 >= RANGE MEDIAN20
 #         | VOLUME >= VOLUME MEDIAN20
@@ -8,6 +8,7 @@
 # PAPER ONLY — NO REAL ORDERS
 # ============================================================
 
+import copy
 import json
 import os
 import sys
@@ -42,7 +43,10 @@ BAR_SECONDS = 4 * 60 * 60
 
 CHUNK = 150
 N_CHUNKS = 4
+
+# Real overlap between adjacent chunks.
 OVERLAP = 2
+
 MIN_CANDLES = 250
 
 # ------------------------------------------------------------
@@ -62,14 +66,18 @@ ATR_N = 20
 SL_ATR = 1.25
 TP_R = 2.0
 HOLD = 30
+
+# IMPORTANT:
+# Entry candle is the first monitored candle.
+# Therefore HOLD=30 means exactly 30 monitored candles.
 MAX_BARS = HOLD
 
 # Signal candle closes -> next candle opens.
-# If the workflow arrives too late, the signal is missed.
+# If workflow arrives too late, signal is missed.
 MAX_ENTRY_DELAY_MIN = 90
 
 # Paper-report stress assumption only.
-# This is NOT an actual exchange fee/funding calculation.
+# NOT an actual exchange fee/funding calculation.
 FEE_RT = 0.002
 
 # ------------------------------------------------------------
@@ -82,6 +90,12 @@ MAX_FAIL_FRAC = 0.20
 PAUSE = 0.15
 REQUEST_TIMEOUT = 25
 RETRIES = 4
+
+# Keep diagnostic history bounded.
+MAX_ERRORS = 100
+MAX_MISSED = 500
+MAX_SIGNALS = 500
+MAX_CLOSED = 5000
 
 # ------------------------------------------------------------
 # SYMBOLS
@@ -127,7 +141,7 @@ SYMS = [
 SESSION = requests.Session()
 SESSION.headers.update(
     {
-        "User-Agent": "candidate11-paper-v3/1.0"
+        "User-Agent": "candidate11-paper-v4/1.0"
     }
 )
 
@@ -153,6 +167,9 @@ def new_state():
         "state_version": STATE_VERSION,
         "strategy": "candidate11_short_only_frozen_v3",
         "created_at": utc_now().isoformat(),
+
+        # Intentionally NOT updated every run.
+        # This prevents 15-minute state churn.
         "last_run_at": None,
 
         "symbols": {
@@ -191,6 +208,15 @@ def atomic_save(state):
         f.write("\n")
 
     os.replace(tmp, STATE_FILE)
+
+
+def state_fingerprint(state):
+    return json.dumps(
+        state,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def load_state():
@@ -249,6 +275,8 @@ def load_state():
                 "last_status": None,
             }
         )
+
+    state.setdefault("last_run_at", None)
 
     return state, False
 
@@ -479,9 +507,16 @@ def fetch_raw(symbol, now):
                     * 1000
                 )
 
+                # IMPORTANT:
+                # Move BACKWARD while preserving overlap.
+                # Previous code used oldest - OVERLAP,
+                # which creates a gap.
+                #
+                # oldest + OVERLAP means the next chunk
+                # overlaps the previous chunk by OVERLAP bars.
                 newest_end = (
                     oldest
-                    - (
+                    + (
                         OVERLAP
                         * BAR_SECONDS
                         * 1000
@@ -599,7 +634,6 @@ def prepare(df):
     ).mean()
 
     # Frozen Candidate 11 Z-score.
-    # IMPORTANT:
     # pandas rolling std default ddof=1.
     mean20 = (
         d["close"]
@@ -822,6 +856,11 @@ def add_missed(
 
     state["missed"].append(item)
 
+    if len(state["missed"]) > MAX_MISSED:
+        del state["missed"][
+            :-MAX_MISSED
+        ]
+
 
 # ============================================================
 # SIGNAL -> NEXT CANDLE OPEN
@@ -858,11 +897,7 @@ def handle_signal(
     if delay_min < 0:
         return "NOT_DUE"
 
-    # --------------------------------------------------------
-    # IMPORTANT:
     # NEVER use signal candle close as fallback entry.
-    # --------------------------------------------------------
-
     if delay_min > MAX_ENTRY_DELAY_MIN:
 
         add_missed(
@@ -880,11 +915,7 @@ def handle_signal(
 
         return "MISSED"
 
-    # --------------------------------------------------------
-    # The entry candle can still be incomplete.
-    # We only use its OPEN.
-    # --------------------------------------------------------
-
+    # Entry is exactly next candle OPEN.
     entry_row = entry_source[
         entry_source["ts"] == entry_ts
     ]
@@ -966,7 +997,7 @@ def handle_signal(
         f"{iso(signal_ts)}"
     )
 
-    state["open"][pos_id] = {
+    position = {
 
         "id": pos_id,
 
@@ -1003,6 +1034,8 @@ def handle_signal(
         "status": "OPEN",
     }
 
+    state["open"][pos_id] = position
+
     state["signals"].append(
         {
             "id": pos_id,
@@ -1030,6 +1063,11 @@ def handle_signal(
             "source": "next_candle_open",
         }
     )
+
+    if len(state["signals"]) > MAX_SIGNALS:
+        del state["signals"][
+            :-MAX_SIGNALS
+        ]
 
     return "OPENED"
 
@@ -1086,11 +1124,8 @@ def monitor_bar(
         sl = float(pos["sl"])
         tp = float(pos["tp"])
 
-        # ----------------------------------------------------
         # FROZEN INTRABAR PRIORITY:
-        # SL FIRST
-        # ----------------------------------------------------
-
+        # SL FIRST.
         hit_sl = hi >= sl
         hit_tp = lo <= tp
 
@@ -1160,6 +1195,11 @@ def monitor_bar(
             closed
         )
 
+        if len(state["closed"]) > MAX_CLOSED:
+            del state["closed"][
+                :-MAX_CLOSED
+            ]
+
         del state["open"][pos_id]
 
         return reason
@@ -1189,29 +1229,24 @@ def process_symbol(
             "last_status"
         ] = "NO_COMPLETED_DATA"
 
-        return {
-            "signals": 0,
-            "opened": 0,
-            "closed": 0,
-            "missed": 0,
-        }
+        raise RuntimeError(
+            "NO_COMPLETED_DATA"
+        )
 
     ok, status = check_contiguous(
         completed
     )
 
+    # IMPORTANT:
+    # Data-quality failure is a real symbol failure.
+    # Never silently return OK.
     if not ok:
 
         state["symbols"][symbol][
             "last_status"
         ] = status
 
-        return {
-            "signals": 0,
-            "opened": 0,
-            "closed": 0,
-            "missed": 0,
-        }
+        raise RuntimeError(status)
 
     d = prepare(completed)
 
@@ -1220,7 +1255,7 @@ def process_symbol(
     # --------------------------------------------------------
     # FIRST RUN:
     # Do NOT replay historical signals.
-    # Evaluate only the latest completed candle.
+    # Start from the latest completed candle.
     # --------------------------------------------------------
 
     if not st.get("baseline_done"):
@@ -1236,6 +1271,7 @@ def process_symbol(
                 "opened": 0,
                 "closed": 0,
                 "missed": 0,
+                "reasons": {},
             }
 
         st["last_ts"] = iso(
@@ -1265,6 +1301,7 @@ def process_symbol(
         "opened": 0,
         "closed": 0,
         "missed": 0,
+        "reasons": {},
     }
 
     for _, row in new_rows.iterrows():
@@ -1300,6 +1337,11 @@ def process_symbol(
         reason = signal_reason(
             d,
             idx,
+        )
+
+        stats["reasons"][reason] = (
+            stats["reasons"].get(reason, 0)
+            + 1
         )
 
         if reason == "SIGNAL":
@@ -1339,6 +1381,9 @@ def process_symbol(
 def report(
     state,
     now,
+    run_stats,
+    ok_count,
+    fail_count,
 ):
 
     closed = state["closed"]
@@ -1444,7 +1489,7 @@ def report(
 
     print(
         "CANDIDATE 11 — "
-        "FORWARD PAPER TRADING (v3)"
+        "FORWARD PAPER TRADING (v4)"
     )
 
     print(
@@ -1472,6 +1517,23 @@ def report(
     print("=" * 72)
 
     print(
+        f"SYMBOLS_OK={ok_count}/{len(SYMS)} "
+        f"FAILED={fail_count}"
+    )
+
+    print(
+        f"THIS RUN: "
+        f"NEW_SIGNALS="
+        f"{run_stats['signals']} "
+        f"OPENED="
+        f"{run_stats['opened']} "
+        f"CLOSED="
+        f"{run_stats['closed']} "
+        f"MISSED="
+        f"{run_stats['missed']}"
+    )
+
+    print(
         f"CLOSED={len(closed)}/{TARGET_TRADES} "
         f"| OPEN={len(state['open'])} "
         f"| SIGNALS={len(state['signals'])} "
@@ -1494,6 +1556,28 @@ def report(
         f"ASSUMED_ROUND_TRIP_COST="
         f"{FEE_RT * 100:.2f}% of price"
     )
+
+    # --------------------------------------------------------
+    # SIGNAL REASONS
+    # --------------------------------------------------------
+
+    reason_totals = {}
+
+    for reason, count in run_stats[
+        "reasons"
+    ].items():
+
+        reason_totals[reason] = (
+            reason_totals.get(reason, 0)
+            + count
+        )
+
+    if reason_totals:
+
+        print(
+            "THIS_RUN_SIGNAL_REASONS="
+            f"{dict(sorted(reason_totals.items()))}"
+        )
 
     if state["missed"]:
 
@@ -1563,13 +1647,15 @@ def main():
 
     now = utc_now()
 
-    state["last_run_at"] = (
-        now.isoformat()
+    # Snapshot before processing.
+    # This lets us save ONLY if the state really changed.
+    before_fingerprint = state_fingerprint(
+        state
     )
 
     print(
         "CANDIDATE 11 — "
-        "FORWARD PAPER TRADING ENGINE (v3)"
+        "FORWARD PAPER TRADING ENGINE (v4)"
     )
 
     print(
@@ -1597,6 +1683,7 @@ def main():
         "opened": 0,
         "closed": 0,
         "missed": 0,
+        "reasons": {},
     }
 
     diagnostics = {}
@@ -1647,10 +1734,28 @@ def main():
 
             ok_count += 1
 
-            for key in all_run_stats:
+            for key in [
+                "signals",
+                "opened",
+                "closed",
+                "missed",
+            ]:
 
                 all_run_stats[key] += (
                     stats[key]
+                )
+
+            for reason, count in stats[
+                "reasons"
+            ].items():
+
+                all_run_stats[
+                    "reasons"
+                ][reason] = (
+                    all_run_stats[
+                        "reasons"
+                    ].get(reason, 0)
+                    + count
                 )
 
         except Exception as e:
@@ -1669,6 +1774,11 @@ def main():
                 }
             )
 
+            if len(state["errors"]) > MAX_ERRORS:
+                del state["errors"][
+                    :-MAX_ERRORS
+                ]
+
             state["symbols"][symbol][
                 "last_status"
             ] = (
@@ -1682,14 +1792,9 @@ def main():
                 f"{str(e)[:180]}"
             )
 
-    # Save state even when some symbols fail.
-    atomic_save(state)
-
-    print(
-        f"SYMBOLS_OK="
-        f"{ok_count}/{len(SYMS)} "
-        f"FAILED={fail_count}"
-    )
+    # --------------------------------------------------------
+    # DATA QUALITY SUMMARY
+    # --------------------------------------------------------
 
     valid_last = [
         x["last_completed"]
@@ -1704,22 +1809,9 @@ def main():
             f"{max(valid_last)}"
         )
 
-    print(
-        f"THIS RUN: "
-        f"NEW_SIGNALS="
-        f"{all_run_stats['signals']} "
-        f"OPENED="
-        f"{all_run_stats['opened']} "
-        f"CLOSED="
-        f"{all_run_stats['closed']} "
-        f"MISSED="
-        f"{all_run_stats['missed']}"
-    )
-
-    report(
-        state,
-        now,
-    )
+    # --------------------------------------------------------
+    # FAILURE THRESHOLD
+    # --------------------------------------------------------
 
     failure_fraction = (
         fail_count / len(SYMS)
@@ -1738,7 +1830,62 @@ def main():
             "TOO_MANY_SYMBOL_FAILURES"
         )
 
+        # Save diagnostic/error state only if changed.
+        after_fingerprint = state_fingerprint(
+            state
+        )
+
+        if (
+            is_new
+            or
+            after_fingerprint
+            != before_fingerprint
+        ):
+            atomic_save(state)
+            print(
+                "STATE_SAVE = CHANGED"
+            )
+        else:
+            print(
+                "STATE_SAVE = UNCHANGED"
+            )
+
         sys.exit(2)
+
+    # --------------------------------------------------------
+    # STATE SAVE
+    # --------------------------------------------------------
+
+    after_fingerprint = state_fingerprint(
+        state
+    )
+
+    if (
+        is_new
+        or
+        after_fingerprint
+        != before_fingerprint
+    ):
+
+        atomic_save(state)
+
+        print(
+            "STATE_SAVE = CHANGED"
+        )
+
+    else:
+
+        print(
+            "STATE_SAVE = UNCHANGED"
+        )
+
+    report(
+        state,
+        now,
+        all_run_stats,
+        ok_count,
+        fail_count,
+    )
 
     print(
         "RUN_STATUS = OK"
