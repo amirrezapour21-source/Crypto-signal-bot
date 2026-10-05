@@ -2383,5 +2383,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "OKB_1791238945",
+    "symbol": "OKB",
+    "coin_id": "okb",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 128.32889952031462,
+    "sl": 130.26839479839518,
+    "tp1": 124.31999095898502,
+    "tp2": 119.66137320668768,
+    "signal_time": "2026-10-05T22:22:25.304791+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
