@@ -2344,11 +2344,11 @@
     "tp1": 122.47934551759019,
     "tp2": 117.51429016584143,
     "signal_time": "2026-10-05T13:20:16.268292+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-10-05T15:00:00+00:00",
+    "closed_time": "2026-10-05T20:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ADA_1791206416",
