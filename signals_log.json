@@ -2332,5 +2332,39 @@
     "entry_time": "2026-10-05T09:00:00+00:00",
     "closed_time": "2026-10-05T11:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "OKB_1791206416",
+    "symbol": "OKB",
+    "coin_id": "okb",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 126.85004181083892,
+    "sl": 128.71884487803234,
+    "tp1": 122.47934551759019,
+    "tp2": 117.51429016584143,
+    "signal_time": "2026-10-05T13:20:16.268292+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "ADA_1791206416",
+    "symbol": "ADA",
+    "coin_id": "cardano",
+    "direction": "SHORT",
+    "strategy_type": "Mean Reversion",
+    "entry": 0.2761,
+    "sl": 0.2819674074533209,
+    "tp1": 0.26126945567360665,
+    "tp2": 0.24332077901058846,
+    "signal_time": "2026-10-05T13:20:16.270717+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
