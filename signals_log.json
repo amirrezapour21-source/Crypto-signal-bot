@@ -2400,5 +2400,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "HBAR_1791292819",
+    "symbol": "HBAR",
+    "coin_id": "hedera-hashgraph",
+    "direction": "LONG",
+    "strategy_type": "Trend + Volume Profile + Liquidity",
+    "entry": 0.1011136917298899,
+    "sl": 0.10046623454334257,
+    "tp1": 0.10248957937018209,
+    "tp2": 0.10250438679706386,
+    "signal_time": "2026-10-06T13:20:19.685100+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
