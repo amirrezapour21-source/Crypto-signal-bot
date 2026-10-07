@@ -2451,5 +2451,22 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ETH_1791395420",
+    "symbol": "ETH",
+    "coin_id": "ethereum",
+    "direction": "LONG",
+    "strategy_type": "Mean Reversion",
+    "entry": 2561.079408238275,
+    "sl": 2536.6532776907584,
+    "tp1": 2658.284624179664,
+    "tp2": 2754.2932102878553,
+    "signal_time": "2026-10-07T17:50:20.381563+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
