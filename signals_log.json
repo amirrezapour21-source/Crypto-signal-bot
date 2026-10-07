@@ -2123,11 +2123,11 @@
     "tp1": 4258.796159808648,
     "tp2": 4367.908781694114,
     "signal_time": "2026-09-28T12:21:52.220542+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-09-28T15:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-07T13:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "PAXG_1790615655",
@@ -2378,11 +2378,11 @@
     "tp1": 89.44534521614966,
     "tp2": 85.0975877611812,
     "signal_time": "2026-10-05T19:16:50.430790+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-10-06T06:00:00+00:00",
     "closed_time": null,
-    "result": null
+    "result": "WIN (TP1)"
   },
   {
     "id": "OKB_1791238945",
@@ -2446,9 +2446,9 @@
     "tp1": 0.6385652080343264,
     "tp2": 0.6983219381035362,
     "signal_time": "2026-10-07T08:45:15.623911+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-07T19:00:00+00:00",
     "closed_time": null,
     "result": null
   },
@@ -2463,9 +2463,9 @@
     "tp1": 2658.284624179664,
     "tp2": 2754.2932102878553,
     "signal_time": "2026-10-07T17:50:20.381563+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-07T19:00:00+00:00",
     "closed_time": null,
     "result": null
   },
