@@ -2208,11 +2208,11 @@
     "tp1": 0.2150498407320675,
     "tp2": 0.19790117416127168,
     "signal_time": "2026-09-29T11:21:51.391980+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-09-29T15:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-10-08T13:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "ASTER_1790788446",
@@ -2378,11 +2378,11 @@
     "tp1": 89.44534521614966,
     "tp2": 85.0975877611812,
     "signal_time": "2026-10-05T19:16:50.430790+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-10-06T06:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-10-08T13:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "OKB_1791238945",
@@ -2446,11 +2446,11 @@
     "tp1": 0.6385652080343264,
     "tp2": 0.6983219381035362,
     "signal_time": "2026-10-07T08:45:15.623911+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-10-07T19:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-08T12:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "ETH_1791395420",
@@ -2463,11 +2463,11 @@
     "tp1": 2658.284624179664,
     "tp2": 2754.2932102878553,
     "signal_time": "2026-10-07T17:50:20.381563+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-10-07T19:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-08T12:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "GRAM_1791406213",
@@ -2480,10 +2480,10 @@
     "tp1": 1.5004382760189485,
     "tp2": 1.578331094067762,
     "signal_time": "2026-10-07T20:50:13.772057+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-10-07T22:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-08T13:00:00+00:00",
+    "result": "LOSS"
   }
 ]
