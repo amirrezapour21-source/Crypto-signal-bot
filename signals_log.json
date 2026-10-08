@@ -2485,5 +2485,22 @@
     "entry_time": "2026-10-07T22:00:00+00:00",
     "closed_time": "2026-10-08T13:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "XRP_1791490533",
+    "symbol": "XRP",
+    "coin_id": "ripple",
+    "direction": "LONG",
+    "strategy_type": "Mean Reversion",
+    "entry": 1.37763,
+    "sl": 1.3613400052772926,
+    "tp1": 1.4824718034180875,
+    "tp2": 1.5903421223658258,
+    "signal_time": "2026-10-08T20:15:33.878449+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
