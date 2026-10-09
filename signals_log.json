@@ -2140,11 +2140,11 @@
     "tp1": 4244.36682495527,
     "tp2": 4361.66368079421,
     "signal_time": "2026-09-28T17:14:15.197817+00:00",
-    "status": "OPEN",
+    "status": "TIMEOUT",
     "entered": true,
     "entry_time": "2026-09-28T21:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-09T00:26:49.423337+00:00",
+    "result": "OPEN_TIMEOUT"
   },
   {
     "id": "LINK_1790630423",
@@ -2157,10 +2157,10 @@
     "tp1": 13.721290539553095,
     "tp2": 12.133730846573082,
     "signal_time": "2026-09-28T21:20:23.795071+00:00",
-    "status": "TP1_HIT",
+    "status": "TIMEOUT",
     "entered": true,
     "entry_time": "2026-09-28T23:00:00+00:00",
-    "closed_time": null,
+    "closed_time": "2026-10-09T00:26:51.309083+00:00",
     "result": "WIN (TP1)"
   },
   {
@@ -2497,9 +2497,9 @@
     "tp1": 1.4824718034180875,
     "tp2": 1.5903421223658258,
     "signal_time": "2026-10-08T20:15:33.878449+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-08T22:00:00+00:00",
     "closed_time": null,
     "result": null
   }
