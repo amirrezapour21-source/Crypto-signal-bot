@@ -2412,10 +2412,10 @@
     "tp1": 0.10248957937018209,
     "tp2": 0.10250438679706386,
     "signal_time": "2026-10-06T13:20:19.685100+00:00",
-    "status": "ENTRY_PENDING",
+    "status": "EXPIRED",
     "entered": false,
     "entry_time": null,
-    "closed_time": null,
+    "closed_time": "2026-10-09T13:41:43.201138+00:00",
     "result": null
   },
   {
