@@ -2514,10 +2514,10 @@
     "tp1": 722.8660528614855,
     "tp2": 721.9158017415665,
     "signal_time": "2026-10-09T16:53:30.745342+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-10-09T18:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-10T06:00:00+00:00",
+    "result": "LOSS"
   }
 ]
