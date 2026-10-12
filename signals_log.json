@@ -2497,11 +2497,11 @@
     "tp1": 1.4824718034180875,
     "tp2": 1.5903421223658258,
     "signal_time": "2026-10-08T20:15:33.878449+00:00",
-    "status": "OPEN",
+    "status": "SL_HIT",
     "entered": true,
     "entry_time": "2026-10-08T22:00:00+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-12T17:00:00+00:00",
+    "result": "LOSS"
   },
   {
     "id": "BNB_1791564810",
