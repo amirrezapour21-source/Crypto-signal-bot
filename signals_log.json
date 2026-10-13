@@ -2395,11 +2395,11 @@
     "tp1": 124.31999095898502,
     "tp2": 119.66137320668768,
     "signal_time": "2026-10-05T22:22:25.304791+00:00",
-    "status": "TP1_HIT",
+    "status": "TP2_HIT",
     "entered": true,
     "entry_time": "2026-10-08T08:00:00+00:00",
-    "closed_time": null,
-    "result": "WIN (TP1)"
+    "closed_time": "2026-10-13T01:00:00+00:00",
+    "result": "WIN (TP2 - Full)"
   },
   {
     "id": "HBAR_1791292819",
