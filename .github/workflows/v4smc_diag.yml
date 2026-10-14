@@ -1,0 +1,151 @@
+name: V4 SMC Data Availability Diagnostic (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - name: Read-only availability diagnostic (nothing is saved or committed)
+        run: |
+          python - <<'PY'
+          # V4 SMC - READ-ONLY KuCoin Futures 4H history availability diagnostic.
+          # Reads timestamps only (rows are discarded, nothing is saved or committed). Not part of Cycle 1.
+          import time, math, datetime as dt
+          import requests
+
+          BASE = "https://api-futures.kucoin.com"
+          BAR = 14400
+          MS = BAR * 1000
+          WIN = 150
+          SYMS = ["XBTUSDTM","ETHUSDTM","SOLUSDTM","BNBUSDTM","XRPUSDTM","DOGEUSDTM","ADAUSDTM","LINKUSDTM","AVAXUSDTM","DOTUSDTM",
+                  "SUIUSDTM","TRXUSDTM","NEARUSDTM","AAVEUSDTM","OPUSDTM","ARBUSDTM","APTUSDTM","ATOMUSDTM","FILUSDTM","LTCUSDTM",
+                  "BCHUSDTM","ETCUSDTM","UNIUSDTM","INJUSDTM","SEIUSDTM","VETUSDTM","HBARUSDTM","ALGOUSDTM","XLMUSDTM","ICPUSDTM",
+                  "WIFUSDTM","PEPEUSDTM","FLOKIUSDTM"]
+          # Observed in the committed Cycle 1 IS run (ASSUMPTIONS for the projection, not forecasts):
+          RATE_A = 23 / 15819.0      # filled Variant A orders per eligible symbol-day
+          RATE_B = 5 / 15819.0       # filled Variant B orders per eligible symbol-day
+          OBS_IS_DAYS = 480
+
+          def get(path, params=None):
+              err = None
+              for a in range(5):
+                  try:
+                      r = requests.get(BASE + path, params=params, timeout=25)
+                      if r.status_code == 429 or r.status_code >= 500:
+                          err = "HTTP_%d" % r.status_code; time.sleep(2 * (a + 1)); continue
+                      r.raise_for_status()
+                      j = r.json()
+                      if str(j.get("code")) != "200000":
+                          raise RuntimeError("API_CODE=%s" % j.get("code"))
+                      return j.get("data")
+                  except Exception as e:
+                      err = repr(e)[:150]; time.sleep(1 + a)
+              raise RuntimeError(err)
+
+          def stamps(sym, s_ms, e_ms):
+              time.sleep(0.15)
+              rows = get("/api/v1/kline/query", {"symbol": sym, "granularity": 240, "from": int(s_ms), "to": int(e_ms)}) or []
+              return sorted({int(r[0]) for r in rows if len(r) >= 7})        # timestamps only; OHLCV discarded
+
+          def d(ms):
+              return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+          def floor_bar(ms):
+              return (int(ms) // MS) * MS
+
+          now_ms = int(time.time() * 1000)
+          last_closed = floor_bar(now_ms) - MS
+          meta = {c["symbol"]: c for c in (get("/api/v1/contracts/active") or [])}
+          print("RUN_UTC", d(now_ms), "| last closed 4H bar open", d(last_closed))
+          print("contracts/active returned", len(meta), "contracts; requested symbols missing from it:", [s for s in SYMS if s not in meta])
+
+          res = {}
+          for s in SYMS:
+              try:
+                  c = meta.get(s)
+                  first_meta = int(c["firstOpenDate"]) if c and c.get("firstOpenDate") else None
+                  status = c.get("status") if c else None
+                  # earliest candle: first non-empty 150-bar window from the listing date, then walk back until empty
+                  start = floor_bar(first_meta) if first_meta else floor_bar(now_ms - 2500 * 86400 * 1000)
+                  found = None
+                  for _ in range(60):
+                      ts = stamps(s, start, start + WIN * MS)
+                      if ts:
+                          found = start; break
+                      start += WIN * MS
+                  if found is None:
+                      res[s] = {"err": "NO_CANDLES_FOUND_FROM_LISTING", "status": status, "first_meta": first_meta}; continue
+                  earliest = min(stamps(s, found, found + WIN * MS))
+                  for _ in range(20):                                          # verify nothing earlier exists
+                      prev = stamps(s, found - WIN * MS, found - MS)
+                      if not prev: break
+                      found -= WIN * MS
+                      earliest = min(prev)
+                  latest_ts = stamps(s, last_closed - 12 * MS, now_ms)
+                  latest = max(latest_ts) if latest_ts else None
+                  samples = []
+                  if latest:
+                      for k in (0.25, 0.5, 0.75):
+                          st = floor_bar(earliest + k * (latest - earliest))
+                          got = [t for t in stamps(s, st, st + WIN * MS) if st <= t < st + WIN * MS]
+                          samples.append(100.0 * (WIN - len(got)) / WIN)
+                  res[s] = {"status": status, "first_meta": first_meta, "earliest": earliest, "latest": latest,
+                            "lag_bars": (last_closed - latest) // MS if latest else None, "miss": samples}
+              except Exception as e:
+                  res[s] = {"err": repr(e)[:200]}
+              r = res[s]
+              print("%-10s %s" % (s, ("ERR " + r["err"]) if "err" in r else "earliest=%s latest=%s listing_meta=%s" % (d(r["earliest"]), d(r["latest"]) if r["latest"] else None, d(r["first_meta"]) if r["first_meta"] else None)), flush=True)
+
+          print("\n=== PER-SYMBOL (VERIFIED from live API) ===")
+          print("symbol      status  listing(meta)     earliest candle   latest candle     lag(bars) days_hist  sampled_missing%(25/50/75% of life)")
+          ok = {s: r for s, r in res.items() if "err" not in r and r.get("latest")}
+          for s in SYMS:
+              r = res[s]
+              if "err" in r or not r.get("latest"):
+                  print("%-10s  UNVERIFIED %s" % (s, r.get("err", "no latest candle"))); continue
+              print("%-10s  %-6s  %s  %s  %s  %6s  %8.0f   %s" % (s, r["status"], d(r["first_meta"]) if r["first_meta"] else "-", d(r["earliest"]), d(r["latest"]),
+                    r["lag_bars"], (r["latest"] - r["earliest"]) / 86400000.0, "/".join("%.1f" % m for m in r["miss"])))
+          mism = [s for s, r in ok.items() if r["first_meta"] and abs(r["earliest"] - r["first_meta"]) > 3 * 86400000]
+          print("symbols whose earliest candle differs from listing metadata by > 3 days:", mism)
+          print("symbols with a sampled window missing > 0.2%:", [s for s, r in ok.items() if any(m > 0.2 for m in r["miss"])])
+          print("symbols UNVERIFIED:", [s for s in SYMS if s not in ok])
+
+          # ---- projection (ESTIMATE; uses VERIFIED earliest dates + OBSERVED fill rates as assumptions)
+          print("\n=== SAMPLE-SIZE PROJECTION (ESTIMATE, NOT A FORECAST) ===")
+          day = 86400000.0
+          elig = {s: r["earliest"] + 200 * day for s, r in ok.items()}                 # warm-up 200 complete days (upper-bound: ignores gaps)
+          D1 = last_closed
+          cand = sorted(elig.values())
+          D0 = None
+          if len(cand) >= 20 and "XBTUSDTM" in elig and "ETHUSDTM" in elig:
+              D0 = max(cand[19], elig["XBTUSDTM"], elig["ETHUSDTM"])
+          if D0 is None or D0 >= D1:
+              print("cannot compute D0 (fewer than 20 verified symbols or BTC/ETH unverified)")
+          else:
+              span = (D1 - D0) / day
+              t_is = D0 + 0.6 * (D1 - D0)
+              def sdays(a, b):
+                  return sum(max(0.0, (b - max(a, e)) / day) for e in elig.values())
+              sd_is, sd_all = sdays(D0, t_is), sdays(D0, D1)
+              print("verified symbols:", len(ok), "| earliest possible D0 (>=20 symbols past 200d warm-up, incl BTC+ETH):", d(D0), "| D1:", d(D1))
+              print("D0..D1 span: %.0f days (%.1f y) | IS (60%%) span: %.0f days (%.1f y)" % (span, span / 365.25, span * 0.6, span * 0.6 / 365.25))
+              print("eligible symbol-days: IS %.0f, whole D0..D1 %.0f   (committed Cycle-1 run had IS symbol-days 15819, IS 480 d)" % (sd_is, sd_all))
+              for nm, rate in (("A", RATE_A), ("B", RATE_B)):
+                  print("Variant %s (assumed rate %.6f fills/symbol-day): expected fills IS-only ~ %.0f | whole-history ~ %.0f | symbol-days needed for N=100: %.0f" % (
+                      nm, rate, rate * sd_is, rate * sd_all, 100 / rate))
+              print("Assumes the Cycle-1 per-symbol-day fill rate stays constant across regimes; 23 and 5 are small counts (Poisson 95% ranges 14.6-34.5 and 1.6-11.7).")
+          print("\nNOTE: this diagnostic read candle timestamps only (no OHLCV kept), saved nothing, committed nothing, and did not run the Cycle 1 pipeline.")
+          PY
