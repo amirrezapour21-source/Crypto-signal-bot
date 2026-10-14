@@ -1,0 +1,286 @@
+name: V4 SMC Universe Liquidity and History Diagnostic (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  universe-diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - name: Read-only universe diagnostic (nothing is saved or committed)
+        run: |
+          python - <<'PY'
+          # V4 SMC - READ-ONLY expanded-universe liquidity & 4H history diagnostic (KuCoin Futures public API).
+          # Timestamps and aggregate statistics only. OHLCV rows are discarded inside the helper functions.
+          # Nothing is written to disk, committed, cached or uploaded. Not part of Cycle 1; no detection/backtest/P&L.
+          import time, datetime as dt, statistics
+          import requests
+
+          BASE = "https://api-futures.kucoin.com"
+          BAR = 14400
+          MS = BAR * 1000
+          WIN = 150
+          DAY = 86400000.0
+          STUDY33 = ["XBTUSDTM","ETHUSDTM","SOLUSDTM","BNBUSDTM","XRPUSDTM","DOGEUSDTM","ADAUSDTM","LINKUSDTM","AVAXUSDTM","DOTUSDTM",
+                     "SUIUSDTM","TRXUSDTM","NEARUSDTM","AAVEUSDTM","OPUSDTM","ARBUSDTM","APTUSDTM","ATOMUSDTM","FILUSDTM","LTCUSDTM",
+                     "BCHUSDTM","ETCUSDTM","UNIUSDTM","INJUSDTM","SEIUSDTM","VETUSDTM","HBARUSDTM","ALGOUSDTM","XLMUSDTM","ICPUSDTM",
+                     "WIFUSDTM","PEPEUSDTM","FLOKIUSDTM"]
+          # PREDECLARED (before any result was seen):
+          TOP_HIST = 100                     # history is verified for the top-100 by 24h turnover (+ the 33 study symbols as baseline)
+          RANK_CUTS = (50, 100)              # scenario axis 1: turnover-rank cutoff (snapshot rank)
+          HIST_MIN = (365, 730, 1000)        # scenario axis 2: minimum verified history in days (latest closed - earliest candle)
+          TURN_FLOOR = (0, 10e6, 50e6)       # scenario axis 3: minimum 24h turnover snapshot (USDT)
+          WARM_DAYS = 200                    # frozen spec warm-up
+          SAMPLE_K = (0.1, 0.3, 0.5, 0.7, 0.9)   # 5 sampled 150-bar windows inside each symbol's life
+          # Observed in the committed Cycle-1 IS run (ASSUMPTIONS for projection only):
+          OBS_SD = 15819.0
+          OBS_A, OBS_B = 23, 5
+          CI_A = (14.58, 34.51)              # exact Poisson 95% for 23
+          CI_B = (1.62, 11.67)               # exact Poisson 95% for 5
+
+          REQS = 0
+          def get(path, params=None):
+              global REQS
+              err = None
+              for a in range(6):
+                  try:
+                      REQS += 1
+                      r = requests.get(BASE + path, params=params, timeout=25)
+                      if r.status_code == 429 or r.status_code >= 500:
+                          err = "HTTP_%d" % r.status_code
+                          try:
+                              ra = float(r.headers.get("Retry-After", 0))
+                          except Exception:
+                              ra = 0
+                          time.sleep(max(ra, 2 * (a + 1)))
+                          continue
+                      r.raise_for_status()
+                      j = r.json()
+                      if str(j.get("code")) != "200000":
+                          raise RuntimeError("API_CODE=%s" % j.get("code"))
+                      return j.get("data")
+                  except Exception as e:
+                      err = repr(e)[:150]
+                      time.sleep(1 + a)
+              raise RuntimeError(err)
+
+          def num(x):
+              try:
+                  v = float(x)
+                  return v if v == v else None
+              except Exception:
+                  return None
+
+          def ts_only(sym, s_ms, e_ms):
+              time.sleep(0.15)
+              rows = get("/api/v1/kline/query", {"symbol": sym, "granularity": 240, "from": int(s_ms), "to": int(e_ms)}) or []
+              return sorted({int(r[0]) for r in rows if len(r) >= 7})          # timestamps only
+
+          def sample_window(sym, s_ms, last_ms):
+              """Returns (timestamps in window, volumes, turnovers) - aggregates are taken by the caller, rows are not kept."""
+              time.sleep(0.15)
+              rows = get("/api/v1/kline/query", {"symbol": sym, "granularity": 240, "from": int(s_ms), "to": int(s_ms + WIN * MS)}) or []
+              out = [(int(r[0]), num(r[5]), num(r[6])) for r in rows if len(r) >= 7 and s_ms <= int(r[0]) < s_ms + WIN * MS and int(r[0]) <= last_ms]
+              return out
+
+          def d(ms):
+              return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+          def floor_bar(ms):
+              return (int(ms) // MS) * MS
+
+          snap_ms = int(time.time() * 1000)
+          last_closed = floor_bar(snap_ms) - MS
+          print("SNAPSHOT_UTC", d(snap_ms), "| last closed 4H bar open", d(last_closed))
+
+          # ---------------- 1) UNIVERSE & LIQUIDITY ----------------
+          contracts = get("/api/v1/contracts/active") or []
+          print("\n=== 1) UNIVERSE (contracts/active) ===")
+          print("active contracts returned:", len(contracts))
+          def tally(key):
+              t = {}
+              for c in contracts:
+                  t[str(c.get(key))] = t.get(str(c.get(key)), 0) + 1
+              return dict(sorted(t.items(), key=lambda kv: -kv[1]))
+          print("by status:", tally("status"))
+          print("by quoteCurrency:", tally("quoteCurrency"))
+          print("by isInverse:", tally("isInverse"))
+          print("by type:", tally("type"))
+          n_exp = sum(1 for c in contracts if c.get("expireDate"))
+          print("contracts with an expireDate (dated futures):", n_exp)
+          tv_present = sum(1 for c in contracts if num(c.get("turnoverOf24h")) is not None)
+          tv_pos = sum(1 for c in contracts if (num(c.get("turnoverOf24h")) or 0) > 0)
+          vol_present = sum(1 for c in contracts if num(c.get("volumeOf24h")) is not None)
+          vol_pos = sum(1 for c in contracts if (num(c.get("volumeOf24h")) or 0) > 0)
+          print("turnoverOf24h metadata present: %d/%d (>0: %d) | volumeOf24h present: %d/%d (>0: %d)" % (tv_present, len(contracts), tv_pos, vol_present, len(contracts), vol_pos))
+
+          meta = {c["symbol"]: c for c in contracts}
+          def is_eligible(c):
+              return c.get("status") == "Open" and c.get("quoteCurrency") == "USDT" and not c.get("isInverse") and not c.get("expireDate")
+          elig_c = [c for c in contracts if is_eligible(c)]
+          print("RANKING UNIVERSE (predeclared filter: status=Open, quoteCurrency=USDT, not inverse, no expireDate):", len(elig_c), "contracts;",
+                "excluded:", len(contracts) - len(elig_c))
+          elig_c.sort(key=lambda c: -(num(c.get("turnoverOf24h")) or 0.0))
+          rank = {}
+          for i, c in enumerate(elig_c, 1):
+              rank[c["symbol"]] = i
+          missing_tv = [c["symbol"] for c in elig_c if num(c.get("turnoverOf24h")) is None]
+          zero_tv = [c["symbol"] for c in elig_c if num(c.get("turnoverOf24h")) == 0]
+          print("ranking-universe contracts with MISSING turnover:", len(missing_tv), missing_tv[:30])
+          print("ranking-universe contracts with ZERO turnover:", len(zero_tv), zero_tv[:30])
+          study_missing = [s for s in STUDY33 if s not in meta]
+          study_not_ranked = [s for s in STUDY33 if s in meta and s not in rank]
+          print("study symbols absent from contracts/active:", study_missing, "| present but outside ranking filter:", study_not_ranked)
+          for N in (50, 100, 200):
+              top = [c["symbol"] for c in elig_c[:N]]
+              inn = [s for s in top if s in STUDY33]
+              print("TOP %-3d by 24h turnover (snapshot): %d contracts available | study symbols inside: %d/33 | additional (not in 33): %d | turnover of rank-%d: %.0f USDT" % (
+                  N, len(top), len(inn), len(top) - len(inn), len(top), num(elig_c[len(top) - 1].get("turnoverOf24h")) or 0.0))
+          print("study symbols outside top-200 (rank):", {s: rank.get(s) for s in STUDY33 if rank.get(s, 10**9) > 200})
+          print("\nTOP-200 TABLE (rank symbol turnover24h_USDT volume24h in33 listing_meta_UTC)")
+          for i, c in enumerate(elig_c[:200], 1):
+              fo = num(c.get("firstOpenDate"))
+              print("%3d %-14s %16.0f %16.0f %s %s" % (i, c["symbol"], num(c.get("turnoverOf24h")) or 0.0, num(c.get("volumeOf24h")) or 0.0,
+                    "Y" if c["symbol"] in STUDY33 else "-", d(fo) if fo else "-"))
+          print("Single 24h turnover snapshot is NOT proof of persistent liquidity; order-book depth and historical liquidity are NOT measured here.")
+
+          # ---------------- 2) HISTORY ----------------
+          todo = [c["symbol"] for c in elig_c[:TOP_HIST]]
+          extra = [s for s in STUDY33 if s in meta and s not in todo]
+          todo_all = todo + extra
+          print("\n=== 2) 4H HISTORY (top-%d by turnover + %d study symbols outside it as baseline) : %d symbols ===" % (TOP_HIST, len(extra), len(todo_all)))
+          res = {}
+          for s in todo_all:
+              try:
+                  c = meta[s]
+                  first_meta = num(c.get("firstOpenDate"))
+                  start = floor_bar(max(first_meta or 0, snap_ms - 1400 * 86400000))
+                  found = None
+                  for _ in range(70):
+                      if start > snap_ms:
+                          break
+                      if ts_only(s, start, start + WIN * MS):
+                          found = start; break
+                      start += WIN * MS
+                  if found is None:
+                      res[s] = {"err": "NO_CANDLES_FOUND"}; continue
+                  earliest = min(ts_only(s, found, found + WIN * MS))
+                  for _ in range(20):
+                      prev = ts_only(s, found - WIN * MS, found - MS)
+                      if not prev:
+                          break
+                      found -= WIN * MS
+                      earliest = min(earliest, min(prev))
+                  lt = [t for t in ts_only(s, last_closed - 12 * MS, snap_ms) if t <= last_closed]
+                  latest = max(lt) if lt else None
+                  if latest is None:
+                      res[s] = {"err": "NO_CLOSED_CANDLE_NEAR_NOW", "earliest": earliest}; continue
+                  span = max(0, latest - earliest - (WIN - 1) * MS)
+                  exp_tot = got_tot = zero_vol = n_bars = 0
+                  wmed = []
+                  for k in SAMPLE_K:
+                      st0 = floor_bar(earliest + k * span)
+                      w = sample_window(s, st0, latest)
+                      expected = min(WIN, (latest - st0) // MS + 1)
+                      exp_tot += expected; got_tot += len(w)
+                      zero_vol += sum(1 for (_, v, _) in w if v == 0)
+                      tv = [t for (_, _, t) in w if t is not None]
+                      n_bars += len(w)
+                      if tv:
+                          wmed.append(statistics.median(tv))
+                  res[s] = {"first_meta": first_meta, "earliest": earliest, "latest": latest, "lag": (last_closed - latest) // MS,
+                            "miss": 100.0 * (exp_tot - got_tot) / exp_tot if exp_tot else None, "zerovol": 100.0 * zero_vol / n_bars if n_bars else None,
+                            "medturn": statistics.median(wmed) if wmed else None,
+                            "ratio": (max(wmed) / min(wmed)) if wmed and min(wmed) > 0 else None, "sampled_bars": exp_tot}
+              except Exception as e:
+                  res[s] = {"err": repr(e)[:200]}
+              r = res[s]
+              print("%-14s %s" % (s, ("ERR " + r["err"]) if "err" in r else "ok"), flush=True)
+
+          ok = {s: r for s, r in res.items() if "err" not in r}
+          print("\nVERIFIED PER-SYMBOL (live API; samples = %d x %d-bar windows per symbol; sampled continuity is NOT full-history continuity)" % (len(SAMPLE_K), WIN))
+          print("rank symbol         in33 turn24h_USDT  listing(meta)     earliest_candle   latest_closed     lag  days  miss%(sampled) zeroVol% med4Hturn(kline field) maxmin_window_ratio")
+          for s in todo_all:
+              r = res[s]
+              rk = rank.get(s, "-")
+              t24 = num(meta[s].get("turnoverOf24h")) or 0.0
+              if "err" in r:
+                  print("%4s %-14s %s %14.0f  UNVERIFIED %s" % (rk, s, "Y" if s in STUDY33 else "-", t24, r["err"])); continue
+              print("%4s %-14s %s %14.0f  %s  %s  %s  %3d %5.0f  %6.2f  %6.2f  %14.0f  %s" % (
+                  rk, s, "Y" if s in STUDY33 else "-", t24, d(r["first_meta"]) if r["first_meta"] else "-          ", d(r["earliest"]), d(r["latest"]), r["lag"],
+                  (r["latest"] - r["earliest"]) / DAY, r["miss"] if r["miss"] is not None else -1, r["zerovol"] if r["zerovol"] is not None else -1,
+                  r["medturn"] or 0, ("%.1f" % r["ratio"]) if r["ratio"] else "-"))
+          unver = [s for s in todo_all if s not in ok]
+          print("UNVERIFIED symbols (%d):" % len(unver), {s: res[s]["err"] for s in unver})
+          print("symbols with sampled missing-bar share > 0.2%:", [s for s in ok if ok[s]["miss"] and ok[s]["miss"] > 0.2])
+          print("symbols with stale latest closed candle (lag > 0 bars):", {s: ok[s]["lag"] for s in ok if ok[s]["lag"] > 0})
+          print("symbols with sampled zero-volume bars > 1%:", [s for s in ok if ok[s]["zerovol"] and ok[s]["zerovol"] > 1])
+          print("symbols whose window-median turnover varies > 10x between sampled windows:", [s for s in ok if ok[s]["ratio"] and ok[s]["ratio"] > 10])
+          print("earliest-candle date distribution (verified):", {k: v for k, v in sorted(
+              {x: sum(1 for r in ok.values() if d(r['earliest'])[:10] == x) for x in {d(r['earliest'])[:10] for r in ok.values()}}.items(), key=lambda kv: -kv[1])[:8]})
+          print("NOTE: listing dates come from contract metadata only; they are NOT inferred from earliest candles.")
+
+          # ---------------- 3) SAMPLE-SIZE SCENARIOS ----------------
+          print("\n=== 3) SAMPLE-SIZE SCENARIOS (ILLUSTRATIVE EXTRAPOLATION - NOT A FORECAST) ===")
+          print("Observed Cycle-1 IS (the ONLY observed quantities): A %d fills, B %d fills over %.0f usable symbol-days (480 d, 33 symbols)." % (OBS_A, OBS_B, OBS_SD))
+          print("Rate A = %d/%.0f = %.6f, rate B = %d/%.0f = %.6f per eligible symbol-day. Poisson 95%% (count noise only): A %.2f-%.2f, B %.2f-%.2f." % (
+              OBS_A, OBS_SD, OBS_A / OBS_SD, OBS_B, OBS_SD, OBS_B / OBS_SD, CI_A[0], CI_A[1], CI_B[0], CI_B[1]))
+          def project(symset):
+              el = {s: ok[s]["earliest"] + WARM_DAYS * DAY for s in symset if s in ok}
+              cand = sorted(el.values())
+              if len(cand) < 20 or "XBTUSDTM" not in el or "ETHUSDTM" not in el:
+                  return None
+              D0 = max(cand[19], el["XBTUSDTM"], el["ETHUSDTM"])
+              D1 = last_closed
+              if D0 >= D1:
+                  return None
+              t_is = D0 + 0.6 * (D1 - D0)
+              def sd(a, b):
+                  return sum(max(0.0, (b - max(a, e)) / DAY) for e in el.values())
+              return {"n": len(el), "D0": D0, "span": (D1 - D0) / DAY, "sd_is": sd(D0, t_is), "sd_all": sd(D0, D1)}
+          def line(tag, nadd, p):
+              if p is None:
+                  print("%-34s additional=%-3s  cannot compute (fewer than 20 eligible symbols or BTC/ETH missing)" % (tag, nadd)); return
+              f = lambda k, sdv: k / OBS_SD * sdv
+              print("%-34s add=%-3s n=%-3d D0=%s sd_IS=%7.0f sd_all=%7.0f | A: IS %5.1f (%4.1f-%5.1f) all %5.1f (%4.1f-%5.1f) | B: IS %4.1f (%4.1f-%5.1f) all %4.1f (%4.1f-%5.1f)" % (
+                  tag, nadd, p["n"], d(p["D0"])[:10], p["sd_is"], p["sd_all"],
+                  f(OBS_A, p["sd_is"]), f(CI_A[0], p["sd_is"]), f(CI_A[1], p["sd_is"]), f(OBS_A, p["sd_all"]), f(CI_A[0], p["sd_all"]), f(CI_A[1], p["sd_all"]),
+                  f(OBS_B, p["sd_is"]), f(CI_B[0], p["sd_is"]), f(CI_B[1], p["sd_is"]), f(OBS_B, p["sd_all"]), f(CI_B[0], p["sd_all"]), f(CI_B[1], p["sd_all"])))
+          base = set(s for s in STUDY33 if s in ok)
+          pb = project(base)
+          print("\nBASELINE (the 33 study symbols, same method; verified %d/33):" % len(base))
+          line("BASELINE33", 0, pb)
+          if pb:
+              print("N=100 filled orders needs: A %.0f symbol-days, B %.0f symbol-days (= A %.2fx / B %.2fx of baseline whole-period symbol-days)." % (
+                  100 * OBS_SD / OBS_A, 100 * OBS_SD / OBS_B, 100 * OBS_SD / OBS_A / pb["sd_all"], 100 * OBS_SD / OBS_B / pb["sd_all"]))
+          print("\nSCENARIOS (predeclared grid; additional = contracts outside the 33 meeting ALL of: snapshot rank <= R, verified history >= H days, 24h turnover >= F):")
+          print("sd_IS/sd_all = eligible symbol-days in the revised IS (60% of D0..D1) / whole D0..D1; fills = rate x symbol-days; ranges = Poisson count noise only.")
+          for R in RANK_CUTS:
+              for H in HIST_MIN:
+                  for F in TURN_FLOOR:
+                      add = [s for s in ok if s not in STUDY33 and rank.get(s, 10**9) <= R and (ok[s]["latest"] - ok[s]["earliest"]) / DAY >= H
+                             and (num(meta[s].get("turnoverOf24h")) or 0.0) >= F]
+                      line("R<=%d H>=%d F>=%dM" % (R, H, int(F / 1e6)), len(add), project(base | set(add)))
+          print("""
+          CAVEATS (read with every number above):
+          - All projections assume the Cycle-1 per-symbol-day fill rate (from 23 and 5 fills, small counts) is constant across symbols, regimes and time; this is an assumption, not a measurement.
+          - Crypto perpetuals are strongly cross-correlated and fills cluster in time (same market regimes); effective independent sample size is smaller than nominal symbol-days, and ranges above cover count noise only.
+          - Regime changes: the available window (about 2.5 to 3 years) is one specific market regime sequence; rates may differ in other regimes.
+          - Turnover rank is a single 24h snapshot; turnover can be unstable (see window-median ratio column); order-book depth and historical liquidity are NOT measured.
+          - The original 33 symbols may not be representative of lower-ranked contracts (listing age, volatility, microstructure, behaviour of SMT pairs vs XBTUSDTM).
+          - Adding symbols only changes the nominal sample size. It says nothing about profitability and does not validate either variant.
+          """)
+          print("REQUESTS_MADE", REQS)
+          print("PERSISTENCE: no market data written, committed, cached or uploaded (workflow has contents: read, no checkout, no artifact step). Cycle 1 was NOT rerun; no detection, causality, backtest or P&L code executed.")
+          PY
