@@ -477,7 +477,7 @@ def run_dir(D, S, B, sgn, dname, i0, upto, tis_idx, ev, viol):
                                 emit("SMT_REPLACED", b, smt=active["id"], by=pid)
                                 active = None
                             emit("SMT_CONFIRMED", b, smt=pid, pivot_ts=int(G[p]),
-                                 pivot_price=float(sgn * H[p]) if sgn == 1 else float(-(-H[p])) * 1.0,
+                                 pivot_price=float(sgn * H[p]),
                                  partner=B.sym, partner_ref=float(sgn * href), partner_win=float(sgn * hwin))
                             active = smt_reference(D, S, B, sgn, dname, b, p, pid, emit, inv)
         if trk[0] > b:
@@ -610,6 +610,31 @@ def order_states(ev, t):
 
 
 FILLED_STATES = ("FILLED", "STOPPED_ON_FILL_CANDLE")
+
+
+def pt_differences(ev):
+    """Per-order comparison of tracker P (trade-through) vs tracker T (touch) from the event log.
+    Reporting only: reads events, changes nothing. Returns (n_orders, list of differing orders)."""
+    placed, st = {}, defaultdict(dict)
+    for e in ev:
+        if e["type"] == "ORDER_PLACED":
+            placed[e["order"]] = e
+        elif e["type"] == "ORDER_STATE":
+            st[e["order"]][e["tracker"]] = e
+    out = []
+    for oid, o in placed.items():
+        p, t = st[oid].get("P"), st[oid].get("T")
+        ps, pb = (p["state"], p["bar"]) if p else ("PENDING", None)
+        tsx, tb = (t["state"], t["bar"]) if t else ("PENDING", None)
+        if (ps, pb) == (tsx, tb):
+            continue
+        out.append({"order": oid, "variant": o["variant"], "sym": o["sym"], "dir": o["dir"],
+                    "placed_ts": o["ts"], "embargo": o.get("embargo", False),
+                    "P_state": ps, "P_ts": p["ts"] if p else None, "P_candle": (pb - o["bar"]) if p else None,
+                    "T_state": tsx, "T_ts": t["ts"] if t else None, "T_candle": (tb - o["bar"]) if t else None,
+                    "state_diff": ps != tsx, "candle_diff": pb != tb})
+    out.sort(key=lambda r: (r["placed_ts"], r["order"]))
+    return len(placed), out
 
 
 # ----------------------------------------------------------------------------
@@ -938,6 +963,19 @@ def build_report(V, ev, caus, files, meta):
               f"CANCELLED_GAP={c['CANCELLED_GAP']} CANCELLED_FAR_EDGE={c['CANCELLED_FAR_EDGE']} "
               f"EXPIRED={c['EXPIRED']} ABORTED_GAP={c['ABORTED_GAP']} PENDING_AT_END={c['PENDING']} "
               f"SL_reached_on_fill_candle={sl_fill[(v, m)]}")
+    w("")
+    n_ord, pt = pt_differences(ev)
+    w("4b) P vs T PER-ORDER DIFFERENCES (fill/terminal candle and final state; all orders compared)")
+    w(f"  orders compared={n_ord}  differing={len(pt)}  final-state differences={sum(r['state_diff'] for r in pt)}  "
+      f"same state but different candle/timestamp={sum((not r['state_diff']) and r['candle_diff'] for r in pt)}")
+    for r in pt:
+        pts = ts_str(r["P_ts"]) if r["P_ts"] else "-"
+        tts = ts_str(r["T_ts"]) if r["T_ts"] else "-"
+        w(f"   {r['order']} placed={ts_str(r['placed_ts'])} embargo={r['embargo']} | "
+          f"P={r['P_state']}@candle{r['P_candle']} ({pts}) | T={r['T_state']}@candle{r['T_candle']} ({tts}) | "
+          f"{'STATE_DIFF' if r['state_diff'] else 'timing_only'}")
+    if not pt:
+        w("   none")
     w("")
     w("5) CAUSALITY")
     if caus is None:
@@ -1351,9 +1389,51 @@ def test_negative_control():
           M.canon(ev_leak, t) != M.canon(e2))
 
 
+def test_buy_pivot_price_logging():
+    n, base, s = crafted(False)
+    _, ev0, _ = run_world(mk_raw(s, n))
+    sell = [e for e in ev0 if e["type"] == "SMT_CONFIRMED" and e["dir"] == "SELL" and e["sym"] == M.ETH and e["bar"] == base + 8]
+    check("SELL pivot_price logged = pivot high 1080", len(sell) == 1 and sell[0]["pivot_price"] == 1080.0, str(sell))
+    o, h, l, c = s[M.ETH]
+    m = 2000.0
+    mir = {M.ETH: (m - o, m - l, m - h, m - c),
+           M.BTC: (m - s[M.BTC][0], m - s[M.BTC][2], m - s[M.BTC][1], m - s[M.BTC][3])}
+    _, ev1, _ = run_world(mk_raw(mir, n))
+    buy = [e for e in ev1 if e["type"] == "SMT_CONFIRMED" and e["dir"] == "BUY" and e["sym"] == M.ETH and e["bar"] == base + 8]
+    check("BUY pivot_price logged positive and = real pivot low (2000-1080=920)", len(buy) == 1 and buy[0]["pivot_price"] == 920.0, str(buy))
+    allbuy = [e for e in ev1 if e["type"] == "SMT_CONFIRMED" and e["dir"] == "BUY"]
+    check("no SMT_CONFIRMED has a non-positive pivot_price", all(e["pivot_price"] > 0 for e in ev0 + ev1 if e["type"] == "SMT_CONFIRMED") and len(allbuy) >= 1)
+
+
+def test_pt_difference_report():
+    # crafted scenario A: touch fills at r0+15, trade-through at r0+16 -> exactly one timing-only difference
+    n, base, s = crafted(False)
+    D, ev, _ = run_world(mk_raw(s, n))
+    n_ord, pt = M.pt_differences(ev)
+    check("P/T report: crafted A has 1 order, 1 timing-only difference", n_ord == 1 and len(pt) == 1 and not pt[0]["state_diff"]
+          and pt[0]["candle_diff"] and (pt[0]["T_candle"], pt[0]["P_candle"]) == (2, 3), str(pt))
+    check("P/T report: affected order id and placed timestamp are reported", pt and pt[0]["order"].endswith("|A") and pt[0]["placed_ts"] == int(D.G[base + 13]) + M.BAR, str(pt))
+    # crafted scenario B: both trackers fill on the same candle -> no differences
+    n, base, s = crafted(True)
+    _, ev, _ = run_world(mk_raw(s, n))
+    n_ord, pt = M.pt_differences(ev)
+    check("P/T report: crafted B (same candle) has 0 differences", n_ord == 2 and pt == [], str(pt))
+    # synthetic events: state difference and pending handling
+    mk = lambda typ, **k: dict(type=typ, ts=k.pop("ts", 0), bar=k.pop("bar", 0), **k)
+    evs = [mk("ORDER_PLACED", order="X|SELL|1|A", variant="A", sym="X", dir="SELL", ts=100, bar=10, embargo=False),
+           mk("ORDER_STATE", order="X|SELL|1|A", tracker="T", state="FILLED", ts=200, bar=12),
+           mk("ORDER_STATE", order="X|SELL|1|A", tracker="P", state="EXPIRED", ts=300, bar=22),
+           mk("ORDER_PLACED", order="Y|BUY|1|A", variant="A", sym="Y", dir="BUY", ts=100, bar=10, embargo=False),
+           mk("ORDER_STATE", order="Y|BUY|1|A", tracker="T", state="FILLED", ts=200, bar=12),
+           mk("ORDER_STATE", order="Y|BUY|1|A", tracker="P", state="FILLED", ts=200, bar=12)]
+    n_ord, pt = M.pt_differences(evs)
+    check("P/T report: state difference detected, identical order not listed",
+          n_ord == 2 and len(pt) == 1 and pt[0]["order"] == "X|SELL|1|A" and pt[0]["state_diff"], str(pt))
+
+
 def run_selftest():
     for f in (test_atr, test_pivots, test_ema, test_eligibility, test_order_tracker, test_crafted,
-              test_buy_mirror, test_end_to_end, test_negative_control):
+              test_buy_mirror, test_buy_pivot_price_logging, test_pt_difference_report, test_end_to_end, test_negative_control):
         print(f"--- {f.__name__}")
         f()
     print(f"\nSELFTEST passes={PASSES} fails={len(FAILS)}")
