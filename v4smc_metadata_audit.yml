@@ -1,0 +1,201 @@
+name: V4 SMC Contract Metadata Snapshot Audit (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - name: Read-only metadata snapshot (one request; nothing is saved or committed)
+        run: |
+          python - <<'PY'
+          # V4 SMC - READ-ONLY contract-metadata snapshot audit (KuCoin Futures public API).
+          # ONE request: GET /api/v1/contracts/active. No candles, prices, trades or order-book data are requested.
+          # Nothing is written to disk, committed, cached or uploaded. Output exists only in this Actions log.
+          # Not part of Cycle 1 / Cycle 2: no detection, backtest, P&L, threshold or trading-rule code.
+          import json, hashlib, datetime as dt, collections
+          import requests
+
+          URL = "https://api-futures.kucoin.com/api/v1/contracts/active"
+          MISSING = "<<MISSING>>"
+          FIELDS = ["symbol", "marketType", "assetClass", "subMarketType", "indexSymbol", "sourceExchanges", "marketStage", "firstOpenDate"]
+
+          # Classification of the 107 audited symbols from the PRIOR summarized-read audit (used ONLY to report discrepancies;
+          # it never influences the deterministic classification below). A=CRYPTO-A, B=CRYPTO-B, EQ=equity-linked,
+          # CM=commodity-linked, UN=uncertain (prior: metadata endpoint returned 404000).
+          PRIOR_A = [
+              "0GUSDTM", "1000BONKUSDTM", "AAVEUSDTM", "ADAUSDTM", "ALLOUSDTM", "APTUSDTM", "ARBUSDTM", "ARCUSDTM",
+              "ASTERUSDTM", "ATOMUSDTM", "AVAXUSDTM", "AVNTUSDTM", "BASEDUSDTM", "BCHUSDTM", "BNBUSDTM", "BTWUSDTM",
+              "CAKEUSDTM", "CASHCATUSDTM", "CTUSDTM", "EDENUSDTM", "ENAUSDTM", "ETHUSDTM", "EVAAUSDTM", "FETUSDTM",
+              "FILUSDTM", "FLOKIUSDTM", "GALAUSDTM", "GRAMUSDTM", "HEMIUSDTM", "ICNTUSDTM", "ICPUSDTM", "INJUSDTM",
+              "JELLYJELLYUSDTM", "JUPUSDTM", "KASUSDTM", "LDOUSDTM", "LIGHTUSDTM", "LINKUSDTM", "METUSDTM", "MYXUSDTM",
+              "NEARUSDTM", "NIULAIUSDTM", "ONDOUSDTM", "OPUSDTM", "PEPEUSDTM", "PIEVERSEUSDTM", "POWERUSDTM",
+              "PTBUSDTM", "PUMPUSDTM", "QNTUSDTM", "QUSDTM", "RENDERUSDTM", "RSRUSDTM", "SEIUSDTM", "SOLUSDTM",
+              "SOMIUSDTM", "SOONUSDTM", "SUIUSDTM", "SUSDTM", "TAOUSDTM", "TIAUSDTM", "TRXUSDTM", "UNIUSDTM",
+              "USELESSUSDTM", "VIRTUALUSDTM", "WIFUSDTM", "WLDUSDTM", "XBTUSDTM", "XLMUSDTM", "XMRUSDTM", "XRPUSDTM",
+              "ZBTUSDTM", "ZECUSDTM", "ZEREBROUSDTM", "ZKPUSDTM", "ZKUSDTM", "ZORAUSDTM",
+          ]
+          PRIOR_B = [
+              "ALGOUSDTM", "CLOUSDTM", "CRVUSDTM", "DOGEUSDTM", "DOTUSDTM", "ETCUSDTM", "HBARUSDTM", "HUSDTM",
+              "HYPEUSDTM", "KCSUSDTM", "KGENUSDTM", "LTCUSDTM", "NIGHTUSDTM", "PENGUUSDTM", "SNXUSDTM", "STRKUSDTM",
+              "TRUTHUSDTM", "TWTUSDTM", "VETUSDTM",
+          ]
+          PRIOR_CM = [
+              "CLUSDTM", "PAXGUSDTM",
+          ]
+          PRIOR_EQ = [
+              "CRCLUSDTM", "MUUSDTM", "SKHYNIXUSDTM", "SNDKUSDTM", "SOXLUSDTM", "SPCXUSDTM", "TSLAUSDTM",
+          ]
+          PRIOR_UN = [
+              "LONGXIAUSDTM", "PONSUSDTM",
+          ]
+          PRIOR = {}
+          for _code, _lst in (("CRYPTO-A", PRIOR_A), ("CRYPTO-B", PRIOR_B), ("EQUITY-LINKED", PRIOR_EQ),
+                              ("COMMODITY-LINKED", PRIOR_CM), ("UNCERTAIN", PRIOR_UN)):
+              for _s in _lst:
+                  PRIOR[_s] = _code
+          assert len(PRIOR) == 107 and len(set(PRIOR_A + PRIOR_B + PRIOR_EQ + PRIOR_CM + PRIOR_UN)) == 107
+
+          def classify(rec_list):
+              """Deterministic rule (approved earlier). Returns (class, branch). Never infers from tickers or errors."""
+              if len(rec_list) == 0:
+                  return "UNRESOLVED", "SYMBOL_NOT_IN_RESPONSE"
+              if len(rec_list) > 1:
+                  return "UNRESOLVED", "DUPLICATE_RECORDS(%d)" % len(rec_list)
+              r = rec_list[0]
+              if "marketType" not in r or r["marketType"] is None:
+                  return "UNRESOLVED", "MARKETTYPE_MISSING_OR_NULL"
+              mt = r["marketType"]
+              has_ac = "assetClass" in r
+              ac = r.get("assetClass")
+              if mt == "NASDAQ":
+                  return "NON-CRYPTO/EQUITY-LINKED", "marketType=NASDAQ"
+              if mt == "CRYPTO":
+                  if not has_ac:
+                      return "CRYPTO-B", "marketType=CRYPTO; assetClass field ABSENT (not inferred to mean anything)"
+                  if ac is None:
+                      return "UNRESOLVED", "assetClass present but null (not treated as absent)"
+                  if ac == "CRYPTO":
+                      return "CRYPTO-A", "marketType=CRYPTO; assetClass=CRYPTO"
+                  if ac in ("METAL", "COMMODITY"):
+                      return "NON-CRYPTO/COMMODITY-LINKED", "assetClass=%s" % ac
+                  return "UNRESOLVED", "UNKNOWN_ASSETCLASS_VALUE(%s)" % json.dumps(ac)
+              return "UNRESOLVED", "UNKNOWN_MARKETTYPE_VALUE(%s)" % json.dumps(mt)
+
+          PRIOR_TO_CLASS = {"CRYPTO-A": "CRYPTO-A", "CRYPTO-B": "CRYPTO-B", "EQUITY-LINKED": "NON-CRYPTO/EQUITY-LINKED",
+                            "COMMODITY-LINKED": "NON-CRYPTO/COMMODITY-LINKED", "UNCERTAIN": "UNRESOLVED"}
+
+          snap = dt.datetime.now(dt.timezone.utc)
+          print("=" * 100)
+          print("V4 SMC CONTRACT METADATA SNAPSHOT AUDIT (read-only)")
+          print("SNAPSHOT_UTC", snap.strftime("%Y-%m-%d %H:%M:%S"), "| endpoint", URL, "| requests made: 1 (no retry)")
+          print("=" * 100)
+
+          REQS = 0
+          status = None
+          body = None
+          err = None
+          try:
+              REQS += 1
+              resp = requests.get(URL, timeout=60)
+              status = resp.status_code
+              body = resp.content
+          except Exception as e:
+              err = repr(e)[:300]
+          print("HTTP_STATUS", status, "| transport_error", err)
+          if body is None:
+              print("RESULT: request failed; nothing was classified. Contracts are NOT silently classified.")
+              raise SystemExit(1)
+          print("RESPONSE_BYTES", len(body), "| RESPONSE_SHA256", hashlib.sha256(body).hexdigest())
+          try:
+              j = json.loads(body)
+          except Exception as e:
+              print("RESULT: response is not JSON (%s); nothing classified." % repr(e)[:200])
+              raise SystemExit(1)
+          code = j.get("code") if isinstance(j, dict) else None
+          print("API_CODE", code, "| API_MSG", (j.get("msg") if isinstance(j, dict) else None))
+          data = j.get("data") if isinstance(j, dict) else None
+          if status != 200 or str(code) != "200000" or not isinstance(data, list):
+              print("RESULT: unexpected status/code/shape; nothing classified. Contracts are NOT silently classified.")
+              raise SystemExit(1)
+          print("CONTRACTS_IN_RESPONSE", len(data))
+          keysets = collections.Counter(len(r.keys()) for r in data if isinstance(r, dict))
+          print("FIELDS_PER_RECORD (count of records by number of keys):", dict(sorted(keysets.items())))
+          first = next((r for r in data if isinstance(r, dict)), {})
+          print("FIELD_NAMES_OF_FIRST_RECORD:", sorted(first.keys()))
+
+          by_sym = collections.defaultdict(list)
+          for r in data:
+              if isinstance(r, dict) and "symbol" in r:
+                  by_sym[r["symbol"]].append(r)
+          all_dups = sorted(s for s, v in by_sym.items() if len(v) > 1)
+          print("DUPLICATE_SYMBOLS_IN_WHOLE_RESPONSE:", all_dups if all_dups else "none")
+          audited = sorted(PRIOR.keys())
+          missing_syms = [s for s in audited if s not in by_sym]
+          dup_audited = [s for s in audited if len(by_sym.get(s, [])) > 1]
+          print("AUDITED_SYMBOLS", len(audited), "| missing from response:", missing_syms if missing_syms else "none",
+                "| duplicated:", dup_audited if dup_audited else "none")
+
+          print("\n--- RAW METADATA (8 fields; %s = key absent from the record; JSON null = key present with null) ---" % MISSING)
+          for s in audited:
+              recs = by_sym.get(s, [])
+              if not recs:
+                  print(json.dumps({"symbol": s, "RESULT": "SYMBOL_NOT_IN_RESPONSE"}))
+                  continue
+              for r in recs:
+                  row = {f: (r[f] if f in r else MISSING) for f in FIELDS}
+                  fo = r.get("firstOpenDate")
+                  if isinstance(fo, (int, float)):
+                      row["firstOpenDate_UTC(derived)"] = dt.datetime.fromtimestamp(fo / 1000.0, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+                  print(json.dumps(row, ensure_ascii=False))
+
+          print("\n--- MANIFEST (deterministic rule; prior = prior summarized-read class, shown for comparison only) ---")
+          print("symbol | class | rule_branch | assetClass_status | prior | match")
+          manifest = {}
+          disc = []
+          for s in audited:
+              c, br = classify(by_sym.get(s, []))
+              manifest[s] = c
+              recs = by_sym.get(s, [])
+              acs = "n/a" if len(recs) != 1 else (("ABSENT" if "assetClass" not in recs[0] else json.dumps(recs[0]["assetClass"])))
+              prior = PRIOR[s]
+              match = (PRIOR_TO_CLASS[prior] == c)
+              # prior UNCERTAIN vs a class resolved now is reported as a discrepancy, never merged silently
+              if prior == "UNCERTAIN" and c != "UNRESOLVED":
+                  match = False
+              if not match:
+                  disc.append((s, prior, c, br))
+              print("%s | %s | %s | %s | %s | %s" % (s, c, br, acs, prior, "MATCH" if match else "DISCREPANCY"))
+
+          cnt = collections.Counter(manifest.values())
+          print("\n--- COUNTS (deterministic rule) ---")
+          for k in ("CRYPTO-A", "CRYPTO-B", "NON-CRYPTO/EQUITY-LINKED", "NON-CRYPTO/COMMODITY-LINKED", "UNRESOLVED"):
+              print("%-30s %d" % (k, cnt.get(k, 0)))
+          print("TOTAL", sum(cnt.values()))
+          print("PRIOR COUNTS: CRYPTO-A %d, CRYPTO-B %d, equity-linked %d, commodity-linked %d, uncertain %d" % (
+              len(PRIOR_A), len(PRIOR_B), len(PRIOR_EQ), len(PRIOR_CM), len(PRIOR_UN)))
+          unres = [(s, classify(by_sym.get(s, []))[1]) for s in audited if manifest[s] == "UNRESOLVED"]
+          print("UNRESOLVED_CONTRACTS:", unres if unres else "none")
+          print("DISCREPANCIES_VS_PRIOR:", len(disc))
+          for d in disc:
+              print("  ", d)
+          print("\n--- MANIFEST BY CLASS (copyable) ---")
+          for k in ("CRYPTO-A", "CRYPTO-B", "NON-CRYPTO/EQUITY-LINKED", "NON-CRYPTO/COMMODITY-LINKED", "UNRESOLVED"):
+              print(k, "(%d):" % cnt.get(k, 0), ", ".join(s for s in audited if manifest[s] == k))
+          print("\nREQUESTS_MADE", REQS)
+          print("PERSISTENCE: nothing written, committed, cached or uploaded (contents: read, no checkout, no artifact step). Results exist only in this Actions log.")
+          print("SCOPE: no candles/prices/trades/order-book requested; Cycle 1 NOT rerun; Cycle 2 NOT started; no symbol approved; no threshold or trading rule changed.")
+          print("LIMITS: metadata is a point-in-time snapshot; classification covers only the 107 audited symbols; a missing assetClass is reported as missing and never interpreted as non-crypto.")
+          PY
