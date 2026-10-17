@@ -29,7 +29,7 @@ jobs:
           SLEEP = float(os.environ.get("DIAG_SLEEP", "0.15"))
           SCAN_DAYS = int(os.environ.get("DIAG_SCAN_DAYS", "730"))
           PROBE_BACK = int(os.environ.get("DIAG_PROBE_BACK_DAYS", "1200"))
-          CHUNK = int(os.environ.get("DIAG_CHUNK_BARS", "400"))
+          CHUNK = int(os.environ.get("DIAG_CHUNK_BARS", "198"))   # observed hard cap: 200 rows/call (run 1); 198 bars = 199 rows < cap
           TFS = [5, 15, 30]
           ANCHORS = ["XBTUSDTM", "ETHUSDTM", "SOLUSDTM"]
           UNIVERSE = json.loads('["XBTUSDTM","ETHUSDTM","ZECUSDTM","INJUSDTM","SOLUSDTM","XRPUSDTM","TIAUSDTM","PEPEUSDTM","AAVEUSDTM","APTUSDTM","NEARUSDTM","ZKUSDTM","BCHUSDTM","DOTUSDTM","LDOUSDTM","FILUSDTM","SUIUSDTM","RENDERUSDTM","OPUSDTM","XMRUSDTM","DOGEUSDTM","ENAUSDTM","TAOUSDTM","CAKEUSDTM","JUPUSDTM","ADAUSDTM","QNTUSDTM","ARBUSDTM","1000BONKUSDTM","AVAXUSDTM","BNBUSDTM","VETUSDTM","STRKUSDTM","KASUSDTM","GALAUSDTM","XLMUSDTM","ONDOUSDTM","LINKUSDTM","WLDUSDTM","UNIUSDTM","HBARUSDTM","LTCUSDTM","SNXUSDTM","TWTUSDTM","FETUSDTM","SEIUSDTM","CRVUSDTM","RSRUSDTM","TRXUSDTM","ATOMUSDTM","ETCUSDTM","ALGOUSDTM","ICPUSDTM","WIFUSDTM","FLOKIUSDTM"]')
@@ -111,7 +111,7 @@ jobs:
                       try:
                           r = kl(sym, tf, t, e)
                           exp = (e - t)//step
-                          if len({int(x[0]) for x in r}) < min(exp, CHUNK) * 0.5 and r: trunc += 1
+                          if len(r) >= 200: trunc += 1   # would indicate cap hit despite sub-cap request
                           calldups += len(r) - len({int(x[0]) for x in r if len(x) >= 6})
                           for x in r:
                               if len(x) >= 6: allrows.setdefault(int(x[0]), x)
@@ -122,6 +122,11 @@ jobs:
                   scan["%s_%dm" % (sym, tf)] = res
           out["anchor_full_scan"] = scan
           # 5 earliest-probe + sampled windows for the universe (15m); coarse 30d steps, 1d refine
+          def kl_range(sym, tf, s_ms, e_ms):
+              step = tf*60000; rows = []; t = s_ms
+              while t < e_ms:
+                  e = min(t + CHUNK*step, e_ms); rows += kl(sym, tf, t, e); t = e + step
+              return rows
           def nonempty(sym, tf, t0):
               try: return len(kl(sym, tf, t0, t0 + DAY)) > 0
               except Exception: return None
@@ -149,7 +154,7 @@ jobs:
               ss = {}
               for back in (100, 300, 600):
                   e = last_closed(15) - back*DAY; s = e - 3*DAY
-                  try: ss["-%dd" % back] = integrity(kl(sym, 15, s, e), 15, s, e)
+                  try: ss["-%dd" % back] = integrity(kl_range(sym, 15, s, e), 15, s, e)
                   except Exception as ex: ss["-%dd" % back] = "ERR " + str(ex)[:60]
               samp[sym] = ss
           out["sampled_windows_15m"] = samp
@@ -159,13 +164,23 @@ jobs:
                  "anchor_call_errors": sum(v["call_errors"] for v in scan.values())}
           out["summary"] = tot
           s = json.dumps(out, sort_keys=True, default=str)
-          print("SUMMARY", json.dumps(tot)); print("TAKER_RATES", out["taker_rates_distinct"], "FUNDING_GRAN", out["funding_granularity_distinct"], "META_MISSING", out["meta_missing"])
-          print("RETRIEVAL_PROBE", json.dumps(lim)); print("SCAN"); 
-          for k, v in scan.items(): print(k, json.dumps(v, default=str))
-          print("EARLIEST", json.dumps(early)); print("SAMPLES_NONCLEAN")
+          from collections import Counter
+          print("SUMMARY", json.dumps(tot)); print("RUN_UTC", out["run_utc"], "CHUNK_BARS", CHUNK)
+          print("TAKER_RATES", out["taker_rates_distinct"], "FUNDING_GRAN", out["funding_granularity_distinct"], "META_MISSING", out["meta_missing"])
+          print("FUNDING_GRAN_BY_SYMBOL", json.dumps({g: [x for x, m in out["meta"].items() if str(m.get("fundingRateGranularity")) == g] for g in out["funding_granularity_distinct"]}))
+          print("MAKER_RATES", sorted({str(m.get("makerFeeRate")) for m in out["meta"].values()}), "STATUS", dict(Counter(str(m.get("status")) for m in out["meta"].values())))
+          print("TICKSIZE", json.dumps({x: m.get("tickSize") for x, m in out["meta"].items()}))
+          print("RETRIEVAL_PROBE", json.dumps(lim)); print("SCAN")
+          for k, v in scan.items():
+              v2 = dict(v); v2["gap_examples"] = v2["gap_examples"][:3]; print(k, json.dumps(v2, default=str))
+          print("EARLIEST_GROUPED", json.dumps({str(k): v for k, v in Counter((x.split("_")[-1], y) for x, y in early.items()).items()}))
+          print("EARLIEST_NON_MODAL", json.dumps({x: y for x, y in early.items() if y != Counter(early.values()).most_common(1)[0][0]}))
+          print("SAMPLES_WITH_ISSUES (rows_total missing gap_runs longest dups off_grid ohlc_bad)")
           for sym, ss in samp.items():
               for w, v in ss.items():
-                  if not isinstance(v, dict) or v["missing"] or v["dups"] or v["off_grid"] or v["ohlc_bad"] or v["rows"] == 0: print(sym, w, json.dumps(v, default=str))
+                  if not isinstance(v, dict): print(sym, w, v)
+                  elif v["missing"] or v["dups"] or v["off_grid"] or v["ohlc_bad"] or v["rows"] == 0:
+                      print(sym, w, v["present"], v["expected"], v["missing"], v["gap_runs"], v["longest_gap_bars"], v["dups"], v["off_grid"], v["ohlc_bad"])
+          print("SAMPLES_TOTAL", sum(1 for ss in samp.values() for v in ss.values()), "ZERO_VOL_TOTAL", sum(v["zero_vol"] for ss in samp.values() for v in ss.values() if isinstance(v, dict)))
           print("FULL_JSON_SHA256", hashlib.sha256(s.encode()).hexdigest())
-          print("FULL_JSON_BEGIN"); print(s); print("FULL_JSON_END")
           PY
