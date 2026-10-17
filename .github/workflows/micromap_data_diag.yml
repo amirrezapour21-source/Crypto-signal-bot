@@ -1,0 +1,171 @@
+name: MicroMAP Data Quality Diagnostic (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - name: Read-only diagnostic (nothing is saved or committed)
+        run: |
+          python - <<'PY'
+          # MicroMAP Stage 2 - READ-ONLY KuCoin Futures data-quality diagnostic.
+          # Public GET endpoints only. Nothing saved/committed. NO detection, NO performance test.
+          import os, sys, json, time, random, hashlib, datetime as dt
+          import requests
+          BASE = "https://api-futures.kucoin.com"
+          SLEEP = float(os.environ.get("DIAG_SLEEP", "0.15"))
+          SCAN_DAYS = int(os.environ.get("DIAG_SCAN_DAYS", "730"))
+          PROBE_BACK = int(os.environ.get("DIAG_PROBE_BACK_DAYS", "1200"))
+          CHUNK = int(os.environ.get("DIAG_CHUNK_BARS", "400"))
+          TFS = [5, 15, 30]
+          ANCHORS = ["XBTUSDTM", "ETHUSDTM", "SOLUSDTM"]
+          UNIVERSE = json.loads('["XBTUSDTM","ETHUSDTM","ZECUSDTM","INJUSDTM","SOLUSDTM","XRPUSDTM","TIAUSDTM","PEPEUSDTM","AAVEUSDTM","APTUSDTM","NEARUSDTM","ZKUSDTM","BCHUSDTM","DOTUSDTM","LDOUSDTM","FILUSDTM","SUIUSDTM","RENDERUSDTM","OPUSDTM","XMRUSDTM","DOGEUSDTM","ENAUSDTM","TAOUSDTM","CAKEUSDTM","JUPUSDTM","ADAUSDTM","QNTUSDTM","ARBUSDTM","1000BONKUSDTM","AVAXUSDTM","BNBUSDTM","VETUSDTM","STRKUSDTM","KASUSDTM","GALAUSDTM","XLMUSDTM","ONDOUSDTM","LINKUSDTM","WLDUSDTM","UNIUSDTM","HBARUSDTM","LTCUSDTM","SNXUSDTM","TWTUSDTM","FETUSDTM","SEIUSDTM","CRVUSDTM","RSRUSDTM","TRXUSDTM","ATOMUSDTM","ETCUSDTM","ALGOUSDTM","ICPUSDTM","WIFUSDTM","FLOKIUSDTM"]')
+          def get(path, params=None):
+              err = None
+              for a in range(5):
+                  try:
+                      r = requests.get(BASE + path, params=params, timeout=25)
+                      if r.status_code == 429 or r.status_code >= 500:
+                          err = "HTTP_%d" % r.status_code; time.sleep(SLEEP * 10 * (a + 1)); continue
+                      r.raise_for_status(); j = r.json()
+                      if str(j.get("code")) != "200000": raise RuntimeError("API_CODE=%s" % j.get("code"))
+                      return j.get("data")
+                  except Exception as e:
+                      err = repr(e)[:150]; time.sleep(SLEEP * 5 * (a + 1))
+              raise RuntimeError(err)
+          def kl(sym, tf, s_ms, e_ms):
+              time.sleep(SLEEP)
+              return get("/api/v1/kline/query", {"symbol": sym, "granularity": tf, "from": int(s_ms), "to": int(e_ms)}) or []
+          def d(ms): return dt.datetime.fromtimestamp(ms/1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          DAY = 86400000
+          now = int(time.time()*1000)
+          def last_closed(tf): return (now // (tf*60000)) * (tf*60000) - tf*60000
+          out = {"run_utc": d(now), "scan_days": SCAN_DAYS, "chunk_bars": CHUNK}
+          # 1 metadata
+          meta = {c["symbol"]: c for c in (get("/api/v1/contracts/active") or [])}
+          keys = ["takerFeeRate","makerFeeRate","tickSize","lotSize","multiplier","fundingFeeRate","predictedFundingFeeRate","fundingRateGranularity","status","firstOpenDate","maxLeverage","isInverse"]
+          out["meta_missing"] = [s for s in UNIVERSE if s not in meta]
+          out["meta"] = {s: {k: meta[s].get(k) for k in keys} for s in UNIVERSE if s in meta}
+          out["taker_rates_distinct"] = sorted({str(m.get("takerFeeRate")) for m in out["meta"].values()})
+          out["funding_granularity_distinct"] = sorted({str(m.get("fundingRateGranularity")) for m in out["meta"].values()})
+          # 2 retrieval limit probe (rows returned vs rows expected)
+          lim = {}
+          for tf in TFS:
+              lim[tf] = {}
+              for n in (100, 200, 400, 500, 1000, 1500, 2000):
+                  e = last_closed(tf); s = e - n*tf*60000
+                  try: r = kl("XBTUSDTM", tf, s, e); lim[tf][n] = len({int(x[0]) for x in r})
+                  except Exception as ex: lim[tf][n] = "ERR " + str(ex)[:60]
+          out["retrieval_probe_rows_by_bars_requested"] = lim
+          # 3 integrity of a row set
+          def integrity(rows, tf, s_ms, e_ms):
+              step = tf*60000
+              raw = [r for r in rows if len(r) >= 6]
+              ts = [int(r[0]) for r in raw]
+              dup = len(ts) - len(set(ts))
+              uniq = {}
+              for r in raw: uniq[int(r[0])] = r
+              keys_ = sorted(uniq)
+              mono = ts == sorted(ts) or ts == sorted(ts, reverse=True)
+              off = sum(1 for t in keys_ if t % step != 0)
+              ms_ok = all(1e12 < t < 4e12 for t in keys_) if keys_ else None
+              bad = zero = 0
+              for t in keys_:
+                  o, h, l, c, v = (float(uniq[t][i]) for i in (1,2,3,4,5))
+                  if min(o,h,l,c) <= 0 or h < max(o,c,l) or l > min(o,c,h): bad += 1
+                  if v == 0: zero += 1
+              first = (s_ms + step - 1)//step*step; last = e_ms//step*step
+              exp = max(0, (last-first)//step + 1)
+              present = {t for t in keys_ if first <= t <= last}
+              gaps = []; prev = None
+              for t in sorted(present):
+                  if prev is not None and t-prev > step: gaps.append((prev, t, (t-prev)//step - 1))
+                  prev = t
+              return {"rows": len(raw), "unique": len(keys_), "dups": dup, "monotonic": mono, "off_grid": off, "ms_units": ms_ok,
+                      "ohlc_bad": bad, "zero_vol": zero, "expected": exp, "present": len(present),
+                      "missing": exp-len(present), "gap_runs": len(gaps),
+                      "longest_gap_bars": max([g[2] for g in gaps], default=0),
+                      "gap_examples": [(d(a), d(b), n) for a, b, n in gaps[:5]]}
+          # 4 full scan anchors
+          scan = {}
+          for sym in ANCHORS:
+              for tf in TFS:
+                  e_all = last_closed(tf); s_all = e_all - SCAN_DAYS*DAY; step = tf*60000
+                  agg = {}; allrows = {}; errs = 0; trunc = 0; calldups = 0
+                  t = s_all
+                  while t < e_all:
+                      e = min(t + CHUNK*step, e_all)
+                      try:
+                          r = kl(sym, tf, t, e)
+                          exp = (e - t)//step
+                          if len({int(x[0]) for x in r}) < min(exp, CHUNK) * 0.5 and r: trunc += 1
+                          calldups += len(r) - len({int(x[0]) for x in r if len(x) >= 6})
+                          for x in r:
+                              if len(x) >= 6: allrows.setdefault(int(x[0]), x)
+                      except Exception: errs += 1
+                      t = e + step
+                  res = integrity(list(allrows.values()), tf, s_all, e_all)
+                  res["dups"] += calldups; res.update({"call_errors": errs, "suspect_truncated_chunks": trunc})
+                  scan["%s_%dm" % (sym, tf)] = res
+          out["anchor_full_scan"] = scan
+          # 5 earliest-probe + sampled windows for the universe (15m); coarse 30d steps, 1d refine
+          def nonempty(sym, tf, t0):
+              try: return len(kl(sym, tf, t0, t0 + DAY)) > 0
+              except Exception: return None
+          early = {}
+          for sym in UNIVERSE:
+              for tf in ([15] if sym not in ANCHORS else TFS):
+                  oldest = None; t = last_closed(tf) - DAY; k = 0; lastok = None
+                  while t > now - PROBE_BACK*DAY:
+                      ne = nonempty(sym, tf, t)
+                      if ne: lastok = t
+                      elif ne is False and lastok is not None: break
+                      t -= 30*DAY; k += 1
+                  if lastok is not None:
+                      t = lastok; found = lastok
+                      for _ in range(31):
+                          t -= DAY
+                          if nonempty(sym, tf, t): found = t
+                          else: break
+                      early["%s_%dm" % (sym, tf)] = d(found)
+                  else: early["%s_%dm" % (sym, tf)] = None
+          out["earliest_probe_day_resolution"] = early
+          samp = {}
+          random.seed(20261017)
+          for sym in UNIVERSE:
+              ss = {}
+              for back in (100, 300, 600):
+                  e = last_closed(15) - back*DAY; s = e - 3*DAY
+                  try: ss["-%dd" % back] = integrity(kl(sym, 15, s, e), 15, s, e)
+                  except Exception as ex: ss["-%dd" % back] = "ERR " + str(ex)[:60]
+              samp[sym] = ss
+          out["sampled_windows_15m"] = samp
+          # summary
+          tot = {"anchor_missing_bars": sum(v["missing"] for v in scan.values()), "anchor_dups": sum(v["dups"] for v in scan.values()),
+                 "anchor_off_grid": sum(v["off_grid"] for v in scan.values()), "anchor_ohlc_bad": sum(v["ohlc_bad"] for v in scan.values()),
+                 "anchor_call_errors": sum(v["call_errors"] for v in scan.values())}
+          out["summary"] = tot
+          s = json.dumps(out, sort_keys=True, default=str)
+          print("SUMMARY", json.dumps(tot)); print("TAKER_RATES", out["taker_rates_distinct"], "FUNDING_GRAN", out["funding_granularity_distinct"], "META_MISSING", out["meta_missing"])
+          print("RETRIEVAL_PROBE", json.dumps(lim)); print("SCAN"); 
+          for k, v in scan.items(): print(k, json.dumps(v, default=str))
+          print("EARLIEST", json.dumps(early)); print("SAMPLES_NONCLEAN")
+          for sym, ss in samp.items():
+              for w, v in ss.items():
+                  if not isinstance(v, dict) or v["missing"] or v["dups"] or v["off_grid"] or v["ohlc_bad"] or v["rows"] == 0: print(sym, w, json.dumps(v, default=str))
+          print("FULL_JSON_SHA256", hashlib.sha256(s.encode()).hexdigest())
+          print("FULL_JSON_BEGIN"); print(s); print("FULL_JSON_END")
+          PY
