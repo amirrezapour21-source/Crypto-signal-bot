@@ -1,0 +1,363 @@
+name: MicroMAP Stage 2b Data Snapshot (read-only; artifacts only, no repo commit)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      start_ms: ${{ steps.p.outputs.start_ms }}
+      end_ms: ${{ steps.p.outputs.end_ms }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - name: Contract metadata snapshot and fixed window
+        id: p
+        run: |
+          python - <<'PY'
+          import os, sys, json, time, gzip, io, hashlib, datetime as dt
+          import requests
+          BASE = "https://api-futures.kucoin.com"
+          SLEEP = float(os.environ.get("SNAP_SLEEP", "0.15"))
+          def get(path, params=None):
+              err = None
+              for a in range(6):
+                  try:
+                      r = requests.get(BASE + path, params=params, timeout=25)
+                      if r.status_code == 429 or r.status_code >= 500:
+                          err = "HTTP_%d" % r.status_code; time.sleep(SLEEP * 10 * (a + 1)); continue
+                      r.raise_for_status(); j = r.json(parse_float=str, parse_int=str)
+                      if str(j.get("code")) != "200000": raise RuntimeError("API_CODE=%s" % j.get("code"))
+                      return j.get("data"), int(time.time() * 1000)
+                  except Exception as e:
+                      err = repr(e)[:150]; time.sleep(SLEEP * 5 * (a + 1))
+              raise RuntimeError(err)
+          def d(ms): return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def sha_bytes(b): return hashlib.sha256(b).hexdigest()
+          def sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def analyze(tsv, tf):
+              # tsv: list of (ts:int, o, h, l, c, v) floats, any order; unique ts
+              step = tf * 60000
+              tsv = sorted(tsv)
+              off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          UNIVERSE = json.loads('["XBTUSDTM","ETHUSDTM","ZECUSDTM","INJUSDTM","SOLUSDTM","XRPUSDTM","TIAUSDTM","PEPEUSDTM","AAVEUSDTM","APTUSDTM","NEARUSDTM","ZKUSDTM","BCHUSDTM","DOTUSDTM","LDOUSDTM","FILUSDTM","SUIUSDTM","RENDERUSDTM","OPUSDTM","XMRUSDTM","DOGEUSDTM","ENAUSDTM","TAOUSDTM","CAKEUSDTM","JUPUSDTM","ADAUSDTM","QNTUSDTM","ARBUSDTM","1000BONKUSDTM","AVAXUSDTM","BNBUSDTM","VETUSDTM","STRKUSDTM","KASUSDTM","GALAUSDTM","XLMUSDTM","ONDOUSDTM","LINKUSDTM","WLDUSDTM","UNIUSDTM","HBARUSDTM","LTCUSDTM","SNXUSDTM","TWTUSDTM","FETUSDTM","SEIUSDTM","CRVUSDTM","RSRUSDTM","TRXUSDTM","ATOMUSDTM","ETCUSDTM","ALGOUSDTM","ICPUSDTM","WIFUSDTM","FLOKIUSDTM"]')
+          START_MS = int(os.environ.get("SNAP_START_MS") or int(dt.datetime(2024, 9, 1, tzinfo=dt.timezone.utc).timestamp() * 1000))
+          now = int(time.time() * 1000)
+          END_MS = int(os.environ.get("SNAP_END_MS") or (now // 86400000) * 86400000)
+          data, ts = get("/api/v1/contracts/active")
+          by = {c["symbol"]: c for c in (data or [])}
+          snap = {"retrieved_utc_ms": ts, "retrieved_utc": d(ts), "contracts_total": len(by), "universe": UNIVERSE,
+                  "missing": [s for s in UNIVERSE if s not in by], "run_id": os.environ.get("GITHUB_RUN_ID"), "sha": os.environ.get("GITHUB_SHA"),
+                  "start_ms": START_MS, "end_ms_exclusive": END_MS, "contracts": {s: by[s] for s in UNIVERSE if s in by}}
+          os.makedirs("snap_meta", exist_ok=True)
+          b = json.dumps(snap, sort_keys=True, indent=1).encode()
+          open("snap_meta/contracts_active_55.json", "wb").write(b)
+          print("PREP contracts_total", len(by), "missing", snap["missing"], "retrieved", d(ts))
+          print("PREP START", START_MS, d(START_MS), "END_EXCL", END_MS, d(END_MS))
+          print("PREP contracts_active_55.json sha256", sha_bytes(b))
+          if snap["missing"]: sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("start_ms=%d\nend_ms=%d\n" % (START_MS, END_MS))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mm-snap-meta
+          path: snap_meta/
+          retention-days: 90
+          if-no-files-found: error
+
+  shard:
+    needs: prep
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        include:
+          - {name: "15m-1", tf: "15", symbols: "XBTUSDTM,ETHUSDTM,ZECUSDTM,INJUSDTM,SOLUSDTM,XRPUSDTM,TIAUSDTM,PEPEUSDTM,AAVEUSDTM,APTUSDTM,NEARUSDTM"}
+          - {name: "15m-2", tf: "15", symbols: "ZKUSDTM,BCHUSDTM,DOTUSDTM,LDOUSDTM,FILUSDTM,SUIUSDTM,RENDERUSDTM,OPUSDTM,XMRUSDTM,DOGEUSDTM,ENAUSDTM"}
+          - {name: "15m-3", tf: "15", symbols: "TAOUSDTM,CAKEUSDTM,JUPUSDTM,ADAUSDTM,QNTUSDTM,ARBUSDTM,1000BONKUSDTM,AVAXUSDTM,BNBUSDTM,VETUSDTM,STRKUSDTM"}
+          - {name: "15m-4", tf: "15", symbols: "KASUSDTM,GALAUSDTM,XLMUSDTM,ONDOUSDTM,LINKUSDTM,WLDUSDTM,UNIUSDTM,HBARUSDTM,LTCUSDTM,SNXUSDTM,TWTUSDTM"}
+          - {name: "15m-5", tf: "15", symbols: "FETUSDTM,SEIUSDTM,CRVUSDTM,RSRUSDTM,TRXUSDTM,ATOMUSDTM,ETCUSDTM,ALGOUSDTM,ICPUSDTM,WIFUSDTM,FLOKIUSDTM"}
+          - {name: "30m-1", tf: "30", symbols: "XBTUSDTM,ETHUSDTM,ZECUSDTM,INJUSDTM,SOLUSDTM,XRPUSDTM,TIAUSDTM,PEPEUSDTM,AAVEUSDTM,APTUSDTM,NEARUSDTM,ZKUSDTM,BCHUSDTM,DOTUSDTM,LDOUSDTM,FILUSDTM,SUIUSDTM,RENDERUSDTM,OPUSDTM"}
+          - {name: "30m-2", tf: "30", symbols: "XMRUSDTM,DOGEUSDTM,ENAUSDTM,TAOUSDTM,CAKEUSDTM,JUPUSDTM,ADAUSDTM,QNTUSDTM,ARBUSDTM,1000BONKUSDTM,AVAXUSDTM,BNBUSDTM,VETUSDTM,STRKUSDTM,KASUSDTM,GALAUSDTM,XLMUSDTM,ONDOUSDTM,LINKUSDTM"}
+          - {name: "30m-3", tf: "30", symbols: "WLDUSDTM,UNIUSDTM,HBARUSDTM,LTCUSDTM,SNXUSDTM,TWTUSDTM,FETUSDTM,SEIUSDTM,CRVUSDTM,RSRUSDTM,TRXUSDTM,ATOMUSDTM,ETCUSDTM,ALGOUSDTM,ICPUSDTM,WIFUSDTM,FLOKIUSDTM"}
+          - {name: "5m-1", tf: "5", symbols: "XBTUSDTM,ETHUSDTM,ZECUSDTM,INJUSDTM,SOLUSDTM"}
+          - {name: "5m-2", tf: "5", symbols: "XRPUSDTM,TIAUSDTM,PEPEUSDTM,AAVEUSDTM,APTUSDTM"}
+          - {name: "5m-3", tf: "5", symbols: "NEARUSDTM,ZKUSDTM,BCHUSDTM,DOTUSDTM,LDOUSDTM"}
+          - {name: "5m-4", tf: "5", symbols: "FILUSDTM,SUIUSDTM,RENDERUSDTM,OPUSDTM,XMRUSDTM"}
+          - {name: "5m-5", tf: "5", symbols: "DOGEUSDTM,ENAUSDTM,TAOUSDTM,CAKEUSDTM,JUPUSDTM"}
+          - {name: "5m-6", tf: "5", symbols: "ADAUSDTM,QNTUSDTM,ARBUSDTM,1000BONKUSDTM,AVAXUSDTM"}
+          - {name: "5m-7", tf: "5", symbols: "BNBUSDTM,VETUSDTM,STRKUSDTM,KASUSDTM,GALAUSDTM"}
+          - {name: "5m-8", tf: "5", symbols: "XLMUSDTM,ONDOUSDTM,LINKUSDTM,WLDUSDTM,UNIUSDTM"}
+          - {name: "5m-9", tf: "5", symbols: "HBARUSDTM,LTCUSDTM,SNXUSDTM,TWTUSDTM,FETUSDTM"}
+          - {name: "5m-10", tf: "5", symbols: "SEIUSDTM,CRVUSDTM,RSRUSDTM,TRXUSDTM,ATOMUSDTM"}
+          - {name: "5m-11", tf: "5", symbols: "ETCUSDTM,ALGOUSDTM,ICPUSDTM,WIFUSDTM,FLOKIUSDTM"}
+    env:
+      START_MS: ${{ needs.prep.outputs.start_ms }}
+      END_MS: ${{ needs.prep.outputs.end_ms }}
+      SHARD_NAME: ${{ matrix.name }}
+      TF: ${{ matrix.tf }}
+      SYMBOLS: ${{ matrix.symbols }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - name: Fetch shard (read-only public GET)
+        run: |
+          python - <<'PY'
+          import os, sys, json, time, gzip, io, hashlib, datetime as dt
+          import requests
+          BASE = "https://api-futures.kucoin.com"
+          SLEEP = float(os.environ.get("SNAP_SLEEP", "0.15"))
+          def get(path, params=None):
+              err = None
+              for a in range(6):
+                  try:
+                      r = requests.get(BASE + path, params=params, timeout=25)
+                      if r.status_code == 429 or r.status_code >= 500:
+                          err = "HTTP_%d" % r.status_code; time.sleep(SLEEP * 10 * (a + 1)); continue
+                      r.raise_for_status(); j = r.json(parse_float=str, parse_int=str)
+                      if str(j.get("code")) != "200000": raise RuntimeError("API_CODE=%s" % j.get("code"))
+                      return j.get("data"), int(time.time() * 1000)
+                  except Exception as e:
+                      err = repr(e)[:150]; time.sleep(SLEEP * 5 * (a + 1))
+              raise RuntimeError(err)
+          def d(ms): return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def sha_bytes(b): return hashlib.sha256(b).hexdigest()
+          def sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def analyze(tsv, tf):
+              # tsv: list of (ts:int, o, h, l, c, v) floats, any order; unique ts
+              step = tf * 60000
+              tsv = sorted(tsv)
+              off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          TF = int(os.environ["TF"]); SYMS = os.environ["SYMBOLS"].split(","); NAME = os.environ["SHARD_NAME"]
+          START = int(os.environ["START_MS"]); END = int(os.environ["END_MS"])
+          OUT = os.environ.get("OUT_DIR", "snap"); CHUNK = 198
+          step = TF * 60000; START = (START + step - 1) // step * step; LAST = END - step
+          os.makedirs(OUT, exist_ok=True)
+          summ = []
+          for sym in SYMS:
+              rows = {}; dups = 0; oob = 0; calls = []; errs = []; caphits = 0; nonmono = 0; malformed = 0
+              t = START
+              while t <= LAST:
+                  e = min(t + CHUNK * step, LAST)
+                  time.sleep(SLEEP)
+                  try:
+                      data, rts = get("/api/v1/kline/query", {"symbol": sym, "granularity": TF, "from": t, "to": e})
+                      data = data or []
+                      calls.append((t, e, len(data), rts))
+                      if len(data) >= 200: caphits += 1
+                      tss = [int(r[0]) for r in data if len(r) >= 6]
+                      if tss != sorted(tss) and tss != sorted(tss, reverse=True): nonmono += 1
+                      for r in data:
+                          if len(r) < 6: malformed += 1; continue
+                          k = int(r[0])
+                          if k < t or k > e: oob += 1
+                          if k in rows: dups += 1
+                          else: rows[k] = r
+                  except Exception as ex:
+                      errs.append([t, e, str(ex)[:100]]); calls.append((t, e, -1, int(time.time() * 1000)))
+                  t = e + step
+              keys = sorted(rows); ncol = len(rows[keys[0]]) if keys else 0
+              header = "time,open,high,low,close,volume,turnover" if ncol == 7 else ",".join("f%d" % i for i in range(ncol))
+              csv = (header + "\n" + "".join(",".join(rows[k]) + "\n" for k in keys)).encode()
+              buf = io.BytesIO()
+              with gzip.GzipFile(filename="", mode="wb", fileobj=buf, compresslevel=9, mtime=0) as g: g.write(csv)
+              gz = buf.getvalue()
+              base = "%s_%dm" % (sym, TF)
+              open("%s/%s.csv.gz" % (OUT, base), "wb").write(gz)
+              cc = ("from_ms,to_ms,rows,retrieved_ms\n" + "".join("%d,%d,%d,%d\n" % c for c in calls)).encode()
+              open("%s/%s.calls.csv" % (OUT, base), "wb").write(cc)
+              an = analyze([(k, float(rows[k][1]), float(rows[k][2]), float(rows[k][3]), float(rows[k][4]), float(rows[k][5])) for k in keys], TF)
+              meta = {"symbol": sym, "tf_min": TF, "start_ms": START, "end_ms_exclusive": END, "last_allowed_open_ms": LAST, "chunk_bars": CHUNK, "cap_rows_per_call": 200,
+                      "n_calls": len(calls), "first_call_ms": calls[0][3] if calls else None, "last_call_ms": calls[-1][3] if calls else None,
+                      "cap_hits": caphits, "api_dups": dups, "out_of_range_rows": oob, "nonmonotonic_calls": nonmono, "malformed_rows": malformed,
+                      "errors": errs, "complete": (not errs and len(keys) > 0 and malformed == 0), "columns": header, "integrity": an,
+                      "sha256_csv_gz": sha_bytes(gz), "sha256_csv_raw": sha_bytes(csv), "sha256_calls": sha_bytes(cc), "bytes_gz": len(gz)}
+              open("%s/%s.meta.json" % (OUT, base), "w").write(json.dumps(meta, sort_keys=True, indent=1))
+              summ.append(meta)
+              print("SHARD", NAME, base, "rows", an["rows"], "first", d(an["first_ts"]) if an["first_ts"] else None, "missing_interior", an["interior_missing_bars"],
+                    "calls", len(calls), "errs", len(errs), "complete", meta["complete"], "gz", len(gz), flush=True)
+          print("SHARD_DONE", NAME, "files", len(summ), "incomplete", [m["symbol"] for m in summ if not m["complete"]])
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-snap-${{ matrix.name }}
+          path: snap/
+          retention-days: 90
+          if-no-files-found: error
+
+  manifest:
+    needs: [prep, shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install requests
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-*
+          path: dl
+
+      - name: Verify hashes after artifact round trip, recompute integrity, build manifest
+        run: |
+          python - <<'PY'
+          import os, sys, json, time, gzip, io, hashlib, datetime as dt
+          import requests
+          BASE = "https://api-futures.kucoin.com"
+          SLEEP = float(os.environ.get("SNAP_SLEEP", "0.15"))
+          def get(path, params=None):
+              err = None
+              for a in range(6):
+                  try:
+                      r = requests.get(BASE + path, params=params, timeout=25)
+                      if r.status_code == 429 or r.status_code >= 500:
+                          err = "HTTP_%d" % r.status_code; time.sleep(SLEEP * 10 * (a + 1)); continue
+                      r.raise_for_status(); j = r.json(parse_float=str, parse_int=str)
+                      if str(j.get("code")) != "200000": raise RuntimeError("API_CODE=%s" % j.get("code"))
+                      return j.get("data"), int(time.time() * 1000)
+                  except Exception as e:
+                      err = repr(e)[:150]; time.sleep(SLEEP * 5 * (a + 1))
+              raise RuntimeError(err)
+          def d(ms): return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def sha_bytes(b): return hashlib.sha256(b).hexdigest()
+          def sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def analyze(tsv, tf):
+              # tsv: list of (ts:int, o, h, l, c, v) floats, any order; unique ts
+              step = tf * 60000
+              tsv = sorted(tsv)
+              off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          import glob
+          UNIVERSE = json.loads('["XBTUSDTM","ETHUSDTM","ZECUSDTM","INJUSDTM","SOLUSDTM","XRPUSDTM","TIAUSDTM","PEPEUSDTM","AAVEUSDTM","APTUSDTM","NEARUSDTM","ZKUSDTM","BCHUSDTM","DOTUSDTM","LDOUSDTM","FILUSDTM","SUIUSDTM","RENDERUSDTM","OPUSDTM","XMRUSDTM","DOGEUSDTM","ENAUSDTM","TAOUSDTM","CAKEUSDTM","JUPUSDTM","ADAUSDTM","QNTUSDTM","ARBUSDTM","1000BONKUSDTM","AVAXUSDTM","BNBUSDTM","VETUSDTM","STRKUSDTM","KASUSDTM","GALAUSDTM","XLMUSDTM","ONDOUSDTM","LINKUSDTM","WLDUSDTM","UNIUSDTM","HBARUSDTM","LTCUSDTM","SNXUSDTM","TWTUSDTM","FETUSDTM","SEIUSDTM","CRVUSDTM","RSRUSDTM","TRXUSDTM","ATOMUSDTM","ETCUSDTM","ALGOUSDTM","ICPUSDTM","WIFUSDTM","FLOKIUSDTM"]'); TFS = [15, 30, 5]
+          DL = os.environ.get("DL_DIR", "dl"); OUTM = "snap_manifest"; os.makedirs(OUTM, exist_ok=True)
+          files = []; metas = {}; problems = []
+          for p in sorted(glob.glob(DL + "/*/*")):
+              rel = os.path.relpath(p, DL); files.append((rel, sha_file(p)))
+          for rel, h in files:
+              if rel.endswith(".meta.json"):
+                  m = json.load(open(os.path.join(DL, rel))); metas[(m["symbol"], m["tf_min"])] = (rel, m)
+          meta_json = [r for r in files if r[0].endswith("contracts_active_55.json")]
+          snapmeta = json.load(open(os.path.join(DL, meta_json[0][0]))) if meta_json else None
+          fh = dict(files); res = {}
+          for tf in TFS:
+              ok_files = 0; flagged = []; tot_rows = 0; tot_miss = 0; lines = []; bad = []
+              for sym in UNIVERSE:
+                  k = (sym, tf)
+                  if k not in metas: bad.append((sym, "MISSING_FILE")); continue
+                  rel, m = metas[k]; dirn = os.path.dirname(rel); base = "%s_%dm" % (sym, tf)
+                  why = []
+                  for suf, key in ((".csv.gz", "sha256_csv_gz"), (".calls.csv", "sha256_calls")):
+                      h = fh.get(dirn + "/" + base + suf)
+                      if h != m[key]: why.append("HASH_MISMATCH" + suf)
+                  if "HASH_MISMATCH.csv.gz" not in why:
+                      raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read())
+                      if sha_bytes(raw) != m["sha256_csv_raw"]: why.append("RAW_HASH_MISMATCH")
+                      tsv = []
+                      for ln in raw.decode().split("\n")[1:]:
+                          if ln:
+                              f = ln.split(","); tsv.append((int(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5])))
+                      an = analyze(tsv, tf)
+                      if json.loads(json.dumps(an)) != m["integrity"]: why.append("INTEGRITY_RECOMPUTE_DIFFERS")
+                  if not m["complete"]: why.append("INCOMPLETE_CALL_ERRORS")
+                  if m["integrity"]["off_grid"] or m["integrity"]["ohlc_bad"]: why.append("OFFGRID_OR_OHLC")
+                  if m["integrity"]["rows"] == 0: why.append("EMPTY")
+                  if why: bad.append((sym, ",".join(why)))
+                  else: ok_files += 1
+                  a = m["integrity"]; exp = ((a["last_ts"] - a["first_ts"]) // (tf * 60000) + 1) if a["rows"] else 0
+                  pct = 100.0 * a["interior_missing_bars"] / exp if exp else 0
+                  tot_rows += a["rows"]; tot_miss += a["interior_missing_bars"]
+                  if pct > 5: flagged.append((sym, round(pct, 2)))
+                  lines.append("%s %dm rows=%d first=%s last=%s miss=%d(%.2f%%) runs=%d calls=%d apidups=%d" % (sym, tf, a["rows"], d(a["first_ts"]) if a["rows"] else "-", d(a["last_ts"]) if a["rows"] else "-", a["interior_missing_bars"], pct, len(a["interior_missing_runs"]), m["n_calls"], m["api_dups"]))
+              verdict = "PASS" if (ok_files == len(UNIVERSE) and not bad) else "FAIL"
+              res[tf] = {"verdict": verdict, "files_ok": ok_files, "expected": len(UNIVERSE), "bad": bad, "rows": tot_rows, "interior_missing": tot_miss, "flag_gt5pct_diagnostic_only": flagged}
+              print("TF", tf, "VERDICT", verdict, "files_ok", ok_files, "/", len(UNIVERSE), "rows", tot_rows, "interior_missing", tot_miss)
+              print("TF", tf, "BAD", bad); print("TF", tf, "DIAG_FLAG_GT5PCT (diagnostic only, not excluded)", flagged)
+              for ln in lines: print(ln)
+          if snapmeta:
+              m_ok = (len(snapmeta["contracts"]) == len(UNIVERSE) and not snapmeta["missing"])
+              print("CONTRACT_SNAPSHOT symbols", len(snapmeta["contracts"]), "retrieved", snapmeta["retrieved_utc"], "ok", m_ok, "sha256", fh[meta_json[0][0]])
+          else: m_ok = False; print("CONTRACT_SNAPSHOT MISSING")
+          master = hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files)).encode()).hexdigest()
+          man = {"files": sorted(files), "master_sha256": master, "tf_results": {str(k): v for k, v in res.items()}, "contract_snapshot_ok": m_ok,
+                 "start_ms": snapmeta["start_ms"] if snapmeta else None, "end_ms_exclusive": snapmeta["end_ms_exclusive"] if snapmeta else None, "run_id": os.environ.get("GITHUB_RUN_ID")}
+          open(OUTM + "/manifest.json", "w").write(json.dumps(man, sort_keys=True, indent=1))
+          print("SNAPSHOT_VERDICT_15M_PRIMARY", res[15]["verdict"], "| 30M", res[30]["verdict"], "| 5M", res[5]["verdict"], "| CONTRACTS", "PASS" if m_ok else "FAIL")
+          print("SNAPSHOT_FILES", len(files), "MASTER_SHA256", master)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mm-snap-manifest
+          path: snap_manifest/
+          retention-days: 90
+          if-no-files-found: error
