@@ -1,0 +1,507 @@
+name: MicroMAP Stage 3 (15m primary) detection/counting run - read-only; artifacts only, no repo commit, no P&L
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  stage3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SNAPSHOT_RUN_ID: "39046246188"
+      CODE_SHA256: "3ae707caa684a6fbdd288131534aeb6a08dad2464323de789600ac2450f4d7d1"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-15m-*
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-meta
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-manifest
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write Stage 3 code and verify code hash
+        run: |
+          cat > stage3_micromap.py <<'PYEOF'
+          # MicroMAP Stage 3 detection / counting engine. NO P&L, NO R-multiples, NO win rates.
+          # Streaming, causal state machine: candle i is processed using candles 0..i only.
+          import json, base64, hashlib
+          PARAMS_SHA256_EXPECTED = "c5ae3f8434e81166e316dfa516a2e26ed31fa14958d03e30abae9b17542f0d6a"
+          PARAMS_B64 = "ewogInNwZWNfaWQiOiAiTWljcm9NQVAtMTVtLVMxLXYxLjEiLAogInN0YXR1cyI6ICJEUkFGVCAtIFN0YWdlIDEgdjEuMSAoYW1lbmRtZW50cyBEMS1ENCArIFN0YWdlIDEgT1VSUyBjb25maXJtZWQgYnkgZGVzaWduZXIgMjAyNi0xMC0xNykgLSBub3QgZnJvemVuIiwKICJzb3VyY2VfdGFnX2xlZ2VuZCI6IHsKICAiU1JDIjogInN0YXRlZCBieSBzb3VyY2UgcGFnZSB0ZXh0IiwKICAiT1VSUyI6ICJvdXIgcHJvcG9zZWQgaW50ZXJwcmV0YXRpb24gKG5vdCBzdGF0ZWQgYnkgc291cmNlKSIsCiAgIkRFU0lHTkVSIjogImZpeGVkIGJ5IGRlc2lnbmVyIG1hbmRhdGUiCiB9LAogInRpbWVmcmFtZV9wcmltYXJ5IjogewogICJ2YWx1ZSI6ICIxNW0iLAogICJ0YWciOiAiREVTSUdORVIiCiB9LAogInJvYnVzdG5lc3NfdmFyaWFudHMiOiBbCiAgewogICAiaWQiOiAiUjUiLAogICAidGltZWZyYW1lIjogIjVtIgogIH0sCiAgewogICAiaWQiOiAiUjMwIiwKICAgInRpbWVmcmFtZSI6ICIzMG0iCiAgfQogXSwKICJyb2J1c3RuZXNzX3J1bGUiOiB7CiAgInZhbHVlIjogIm9ubHkgdGhlIHRpbWVmcmFtZSBkaWZmZXJzOyBzdHJ1Y3R1cmFsIHJ1bGVzIGluIGNhbmRsZSB1bml0czsgdGltZSBzdG9wLCBmdW5kaW5nLCB3aW5kb3dzIGluIGNsb2NrIHVuaXRzIiwKICAidGFnIjogIkRFU0lHTkVSIgogfSwKICJkaXJlY3Rpb25zIjogewogICJ2YWx1ZSI6IFsKICAgImxvbmciLAogICAic2hvcnRfbWlycm9yZWQiCiAgXSwKICAidGFnIjogIk9VUlMiCiB9LAogImF0ciI6IHsKICAicGVyaW9kIjogMTQsCiAgInR5cGUiOiAiV2lsZGVyIiwKICAibWVhc3VyZWRfYmVmb3JlX2ZpcnN0X3NwaWtlX2NhbmRsZSI6IHRydWUsCiAgInRhZyI6ICJPVVJTIgogfSwKICJzcGlrZSI6IHsKICAibWluX2NhbmRsZXMiOiAzLAogICJtYXhfY2FuZGxlcyI6IDgsCiAgImNhbmRsZV9yYW5nZV9taW5fYXRyIjogMS4wLAogICJjbG9zZV9pbl90b3BfZnJhY3Rpb24iOiAwLjMsCiAgImJvZHlfbWluX2ZyYWN0aW9uX29mX3JhbmdlIjogMC41LAogICJzYW1lX2RpcmVjdGlvbiI6IHRydWUsCiAgIm9yaWdpbiI6ICJsb3cgb2YgZmlyc3Qgc3Bpa2UgY2FuZGxlIChsb25nKSIsCiAgInRhZyI6ICJPVVJTIiwKICAic3JjX25vdGUiOiAic291cmNlOiBzcGlrZSwgb3B0aW9uYWxseSB3aXRoIHByaWNlIGdhcDsgbm8gbnVtYmVycyIKIH0sCiAibWljcm9fY2hhbm5lbCI6IHsKICAiaGlnaF9ydWxlIjogImhpZ2ggPD0gcHJldmlvdXMgY2FuZGxlIGhpZ2giLAogICJyYW5nZV9tYXhfeF9tZWFuX3NwaWtlX3JhbmdlIjogMC43LAogICJtaW5fY2FuZGxlcyI6IDMsCiAgIm1heF9jYW5kbGVzIjogMTIsCiAgIm1heF9wdWxsYmFja19mcmFjdGlvbl9vZl9zcGlrZV9oZWlnaHQiOiAwLjUsCiAgInBfZ2FwX3JlcXVpcmVkIjogZmFsc2UsCiAgInRhZyI6ICJPVVJTIiwKICAic3JjX25vdGUiOiAic291cmNlOiBsb3dlciBoaWdocywgc21hbGxlciBjYW5kbGVzIgogfSwKICJlbnRyeTEiOiB7CiAgInR5cGUiOiAiYnV5X3N0b3AgYXQgaGlnaCBvZiBsYXN0IGNoYW5uZWwgY2FuZGxlLCBhcm1lZCBmcm9tIG4+PTMsIHJlLWFybWVkIGVhY2ggcXVhbGlmeWluZyBjYW5kbGUiLAogICJnYXBfZmlsbCI6ICJmaWxsIGF0IG9wZW4gaWYgb3BlbiA+IHRyaWdnZXIiLAogICJzbCI6ICJsb3dlc3QgbG93IG9mIGNoYW5uZWwgKG1pbnVzIDEgdGljaykiLAogICJ0YWciOiAiU1JDK09VUlMiCiB9LAogImVudHJ5Ml8zIjogewogICJ3YWl0X2NhbmRsZXMiOiAxLAogICJ0cmlnZ2VyIjogImhpZ2ggb2Ygd2FpdCBjYW5kbGUiLAogICJ0aW1lb3V0X2NhbmRsZXMiOiAzLAogICJzbDIiOiAibG93ZXN0IGxvdyBzaW5jZSB0aGUgc3RvcCAoaW5jbC4gc3RvcCBjYW5kbGUpIiwKICAic2wzIjogImxvdyBvZiB0aGUgd2FpdCBjYW5kbGUiLAogICJhbGxvd2VkX29ubHlfYWZ0ZXJfU0xfYmVmb3JlX1RQMSI6IHRydWUsCiAgInRhZyI6ICJTUkMrT1VSUyIKIH0sCiAiaW52YWxpZGF0aW9uIjogewogICJjb25zZWN1dGl2ZV9zdG9wcyI6IDMsCiAgImxldmVsIjogInNldHVwIiwKICAidGFnIjogIlNSQyIKIH0sCiAiY29uY3VycmVuY3kiOiB7CiAgIm9uZV9hY3RpdmVfc2V0dXBfcGVyX3N5bWJvbCI6IHRydWUsCiAgInRhZyI6ICJPVVJTIgogfSwKICJleGl0cyI6IHsKICAidHAxX1IiOiAyLjAsCiAgInRwMV9mcmFjdGlvbiI6IDAuNSwKICAidHAyX1IiOiAzLjAsCiAgImJyZWFrZXZlbl9tb3ZlIjogZmFsc2UsCiAgInRpbWVfc3RvcF9ob3VycyI6IDI0LAogICJ0YWciOiAiREVTSUdORVIiCiB9LAogInNhbWVfY2FuZGxlX3J1bGUiOiB7CiAgInZhbHVlIjogInN0b3AgZmlyc3QgKGNvbnNlcnZhdGl2ZSk7IGVudHJ5LWNhbmRsZSBzdG9wIGNvdW50ZWQgYXMgU1RPUFBFRF9PTl9GSUxMX0NBTkRMRSIsCiAgInRhZyI6ICJPVVJTIgogfSwKICJjb3N0cyI6IHsKICAidGFrZXJfZmVlX3Blcl9zaWRlX3BjdCI6IDAuMDYsCiAgInNsaXBfc3RvcF9maWxsX3BjdCI6IDAuMDUsCiAgInNsaXBfdHBfZmlsbF9wY3QiOiAwLjAyLAogICJmdW5kaW5nX3BjdF9wZXJfOGhfY3Jvc3NlZCI6IDAuMDMsCiAgImZ1bmRpbmdfYWx3YXlzX2NoYXJnZWRfYXNfY29zdCI6IHRydWUsCiAgInRhZyI6ICJPVVJTIiwKICAic3RhdHVzIjogIkFTU1VNUFRJT05TIC0gdGFrZXIgZmVlIHRvIGJlIGNoZWNrZWQgYWdhaW5zdCBjb250cmFjdCBtZXRhZGF0YSBpbiBTdGFnZSAyOyBub3QgdG8gYmUgdHVuZWQgb24gcmVzdWx0cyIsCiAgImZ1bmRpbmdfbW9kZWwiOiB7CiAgICJ0YWciOiAiREVTSUdORVIiLAogICAibGFiZWwiOiAiUFJPWFkgLSBmaXhlZCBtb2RlbGluZyBhc3N1bXB0aW9uLCBOT1QgdmVyaWZpZWQgaGlzdG9yaWNhbCBmdW5kaW5nIiwKICAgInBlcl9zZXR0bGVtZW50X3BjdCI6IHsKICAgICI4aCI6IDAuMDMsCiAgICAiNGgiOiAwLjAxNQogICB9LAogICAiYXBwbGllZCI6ICJhdCBlYWNoIGFwcGxpY2FibGUgc2V0dGxlbWVudCBjcm9zc2VkIHdoaWxlIHRoZSBwb3NpdGlvbiBpcyBvcGVuLCBhbHdheXMgY2hhcmdlZCBhcyBhIGNvc3QiLAogICAiaW50ZXJ2YWxfc291cmNlIjogImNvbnRyYWN0cy9hY3RpdmUgZnVuZGluZ1JhdGVHcmFudWxhcml0eSAoc25hcHNob3QpIiwKICAgInN5bWJvbHNfNGgiOiBbCiAgICAiVElBVVNEVE0iLAogICAgIlpLVVNEVE0iLAogICAgIlJFTkRFUlVTRFRNIiwKICAgICJFTkFVU0RUTSIsCiAgICAiVEFPVVNEVE0iLAogICAgIkNBS0VVU0RUTSIsCiAgICAiSlVQVVNEVE0iLAogICAgIjEwMDBCT05LVVNEVE0iLAogICAgIlNUUktVU0RUTSIsCiAgICAiS0FTVVNEVE0iLAogICAgIk9ORE9VU0RUTSIsCiAgICAiVFdUVVNEVE0iLAogICAgIldJRlVTRFRNIgogICBdCiAgfQogfSwKICJtaW5fc3RvcCI6IHsKICAid29yc3RfY2FzZV9yb3VuZF90cmlwX2Nvc3RfcGN0IjogMC4yMiwKICAiY29tcG9uZW50cyI6ICJlbnRyeSBmZWUgMC4wNiArIGV4aXQgZmVlIDAuMDYgKyBlbnRyeSBzdG9wIHNsaXBwYWdlIDAuMDUgKyBleGl0IHN0b3Agc2xpcHBhZ2UgMC4wNSIsCiAgIm1heF9jb3N0X1IiOiAwLjIsCiAgIm1pbl9zdG9wX2Rpc3RhbmNlX3BjdCI6IDEuMSwKICAicnVsZSI6ICJza2lwIGVudHJ5IGlmIHN0b3AgZGlzdGFuY2UgPCBtaW47IG5ldmVyIHdpZGVuIHN0b3A7IHNraXBwZWQgZW50cnkgaXMgbm90IGEgc3RvcCIsCiAgImZ1bmRpbmdfZXhjbHVkZWRfZnJvbV9taW5fc3RvcCI6IHRydWUsCiAgInRhZyI6ICJPVVJTIiwKICAibm90ZSI6ICJ1bmNoYW5nZWQgYnkgRDEgKGZ1bmRpbmcgZXhjbHVkZWQpIgogfSwKICJ3aW5kb3dzX3V0YyI6IHsKICAic3RyYXRhIjogWwogICBbCiAgICAiQXNpYSIsCiAgICAwLAogICAgNwogICBdLAogICBbCiAgICAiTG9uZG9uIiwKICAgIDcsCiAgICAxMwogICBdLAogICBbCiAgICAiTlkiLAogICAgMTMsCiAgICAyMQogICBdLAogICBbCiAgICAiTGF0ZSIsCiAgICAyMSwKICAgIDI0CiAgIF0KICBdLAogICJwcmltYXJ5X2ZpbHRlcl9ob3VycyI6IFsKICAgNywKICAgMjEKICBdLAogICJiYXNpcyI6ICJlbnRyeSB0cmlnZ2VyIGNhbmRsZSBvcGVuIHRpbWUiLAogICJ0YWciOiAiT1VSUyIsCiAgIm5vdGUiOiAiaHlwb3RoZXNpcyBvbmx5OyBGWC9nb2xkL1VTMzAgd2luZG93cyBub3QgYXNzdW1lZCB0byB0cmFuc2ZlcjsgYWxsIHN0cmF0YSByZXBvcnRlZCIKIH0sCiAic2FtcGxlX2dhdGVfcHJvdmlzaW9uYWwiOiB7CiAgImluc2FtcGxlX21pbl9maWxsZWRfZW50cnkxIjogMjAwLAogICJob2xkb3V0X21pbl9maWxsZWRfZW50cnkxIjogMTAwLAogICJlbHNlIjogInJlcG9ydCBcImluc3VmZmljaWVudCBzYW1wbGVcIjsgZG8gbm90IGxvb3NlbiBmaWx0ZXJzIG9yIGNoYW5nZSB0aGUgc3BsaXQiLAogICJ0YWciOiAiREVTSUdORVIiLAogICJjb25maXJtZWQiOiB0cnVlCiB9LAogInNwbGl0IjogewogICJpbnNhbXBsZV9mcmFjdGlvbiI6IDAuNiwKICAiaG9sZG91dF9mcmFjdGlvbiI6IDAuNCwKICAiY2hyb25vbG9naWNhbCI6IHRydWUsCiAgImVtYmFyZ29fZGF5cyI6IDcsCiAgImhvbGRvdXRfbG9va3MiOiAxLAogICJ0YWciOiAiREVTSUdORVIiLAogICJub3RlIjogInByZS1yZWdpc3RlcmVkOyBubyBjaGFuZ2UgYWZ0ZXIgaW5zcGVjdGluZyByZXN1bHRzIgogfSwKICJ1bml2ZXJzZV9jYW5kaWRhdGUiOiB7CiAgInZhbHVlIjogIjU1LXN5bWJvbCBINzMwIHJlZmVyZW5jZSBsaXN0IChWNCBSZXY0LzUgc2VjdGlvbiAyKTsgbm90IGFuIGFwcHJvdmFsIiwKICAidGFnIjogIk9VUlMiCiB9LAogImV4Y2x1ZGVkX2Zyb21fcHJpbWFyeSI6IFsKICAiU1AyTCIsCiAgIlBybyBCVEIiLAogICJUaW1lIEFuYWx5c2lzIGFzIGEgc3RhbmRhbG9uZSBzdHJhdGVneSIKIF0sCiAibGltaXRzIjogWwogICJObyBsaXZlIHRyYWRpbmcsIHN5bWJvbCBhcHByb3ZhbCwgc3RyYXRlZ3kgZnJlZXplLCBvciByZXBvc2l0b3J5IGNvbW1pdCBpcyBhdXRob3JpemVkLiIKIF0sCiAiZ2FwX3BvbGljeSI6IHsKICAidGFnIjogIkRFU0lHTkVSIiwKICAicnVsZSI6ICJkaXNjYXJkIHNldHVwcyBjcm9zc2luZyBhIG1pc3NpbmcgY2FuZGxlIiwKICAicmVwb3J0IjogImdhcC1kaXNjYXJkIHJhdGUgcGVyIHN5bWJvbCIsCiAgImZsYWdfZ3Q1cGN0X21pc3NpbmciOiAiZGlhZ25vc3RpYyBvbmx5OyBmbGFnZ2VkIHN5bWJvbHMgYXJlIE5PVCBhdXRvbWF0aWNhbGx5IGV4Y2x1ZGVkIiwKICAiYmlhc19kaXNjbG9zdXJlIjogInNlbGVjdGlvbiBiaWFzIHRvd2FyZCBsaXF1aWQgc3ltYm9scy9wZXJpb2RzIG11c3QgYmUgcmVwb3J0ZWQgZXhwbGljaXRseSIKIH0sCiAic25hcHNob3RfcG9saWN5IjogewogICJ0YWciOiAiREVTSUdORVIiLAogICJyZWFkX29ubHkiOiB0cnVlLAogICJub19yZXBvX2NvbW1pdCI6IHRydWUsCiAgInN0b3JhZ2UiOiAiR2l0SHViIEFjdGlvbnMgYXJ0aWZhY3RzIChub3QgcmVwb3NpdG9yeSBmaWxlcykiLAogICJ0Zl9wcmltYXJ5IjogIjE1bSBmb3IgYWxsIDU1IEg3MzAgcmVmZXJlbmNlIHN5bWJvbHMiLAogICJ0Zl9yb2J1c3RuZXNzIjogIjVtIGFuZCAzMG0gKHByZS1kZWNsYXJlZCkiLAogICJyZWNvcmQiOiBbCiAgICJyZXRyaWV2YWwgdGltZXN0YW1wcyIsCiAgICJleGFjdCBjb3ZlcmFnZSIsCiAgICJtaXNzaW5nIGludGVydmFscyIsCiAgICJwYWdpbmF0aW9uIGRldGFpbHMiLAogICAiU0hBLTI1NiBoYXNoZXMiCiAgXSwKICAic3RvcF9ydWxlIjogImlmIGEgY29tcGxldGUgaW1tdXRhYmxlIHNuYXBzaG90IGNhbm5vdCBiZSBwcmVzZXJ2ZWQgYW5kIHZlcmlmaWVkLCBzdG9wIGJlZm9yZSBkZXRlY3Rpb24gYW5kIHJlcG9ydCIKIH0sCiAiZnJlZXplX2FmdGVyX2luc3BlY3Rpb24iOiB7CiAgInRhZyI6ICJERVNJR05FUiIsCiAgInJ1bGUiOiAibm8gY2hhbmdlIHRvIHN0cmF0ZWd5IHJ1bGVzLCBlbnRyeS9zdG9wIGxvZ2ljLCB0aW1lZnJhbWUgaGllcmFyY2h5IG9yIHRocmVzaG9sZHMgYWZ0ZXIgaW5zcGVjdGluZyByZXN1bHRzIgogfSwKICJzdGFnZTNfc2NvcGUiOiAiZGV0ZWN0aW9uL2NvdW50aW5nL2NhdXNhbGl0eSBvbmx5OyBubyBQJkwsIG9wdGltaXphdGlvbiBvciBwZXJmb3JtYW5jZSBjbGFpbXMiCn0="
+
+          def load_params():
+              raw = base64.b64decode(PARAMS_B64)
+              got = hashlib.sha256(raw).hexdigest()
+              if got != PARAMS_SHA256_EXPECTED:
+                  raise SystemExit("ABORT: embedded parameter file hash %s != frozen %s" % (got, PARAMS_SHA256_EXPECTED))
+              return json.loads(raw)
+
+          # ---- Documented interpretations of spec wording (see ambiguity register). Defaults = proposed readings. ----
+          INTERP = {
+              "trigger_strict": True,          # A3: Entry triggers when high > trigger (exact complement of channel rule high <= prior high)
+              "spike_run_gt_max": "reject",    # A2 (v2): a maximal run of qualifying candles longer than max (8) is NOT a spike: rejected, counted, never re-detected as a sub-run
+              "skip_ends_setup": True,         # A4: a min-stop skip consumes the setup (no later re-arm)
+              "minstop_basis": "trigger",      # A4: min-stop evaluated on order (trigger) price at breakout
+              "gap_policy": "discard_setup",   # A5: discard setup when an expected candle is missing between spike start and setup end
+          }
+
+          class Cfg:
+              def __init__(self, P):
+                  self.atr_n = P["atr"]["period"]
+                  s = P["spike"]; self.sp_min = s["min_candles"]; self.sp_max = s["max_candles"]
+                  self.sp_atr = s["candle_range_min_atr"]; self.sp_close = 1.0 - s["close_in_top_fraction"]; self.sp_body = s["body_min_fraction_of_range"]
+                  c = P["micro_channel"]; self.ch_min = c["min_candles"]; self.ch_max = c["max_candles"]
+                  self.ch_range = c["range_max_x_mean_spike_range"]; self.ch_pull = c["max_pullback_fraction_of_spike_height"]
+                  e = P["entry2_3"]; self.wait_n = e["wait_candles"]; self.timeout_n = e["timeout_candles"]
+                  self.stops_max = P["invalidation"]["consecutive_stops"]
+                  x = P["exits"]; self.tp1_r = x["tp1_R"]; self.tp2_r = x["tp2_R"]; self.ts_hours = x["time_stop_hours"]
+                  self.min_stop_pct = P["min_stop"]["min_stop_distance_pct"]
+                  w = P["windows_utc"]; self.strata = [tuple(t) for t in w["strata"]]; self.filter_h = tuple(w["primary_filter_hours"])
+                  self.is_frac = P["split"]["insample_fraction"]; self.embargo_days = P["split"]["embargo_days"]
+                  self.gate_is = P["sample_gate_provisional"]["insample_min_filled_entry1"]; self.gate_ho = P["sample_gate_provisional"]["holdout_min_filled_entry1"]
+                  assert self.wait_n == 1 and self.sp_min <= self.sp_max and self.ch_min <= self.ch_max
+
+          def stratum_of(cfg, ts_ms):
+              h = (ts_ms // 3600000) % 24
+              for name, a, b in cfg.strata:
+                  if a <= h < b: return name
+              raise ValueError(h)
+
+          def in_primary_filter(cfg, ts_ms):
+              h = (ts_ms // 3600000) % 24
+              return cfg.filter_h[0] <= h < cfg.filter_h[1]
+
+          def view(d, o, h, l, c):
+              return (o, h, l, c) if d == 1 else (-o, -l, -h, -c)
+
+          class Tracker:
+              __slots__ = ("start", "n", "atr_ref", "sum_rng", "hi", "origin", "last_h", "atr_gap", "over")
+              def __init__(s, start, atr_ref, o, h, l, c, atr_gap):
+                  s.start = start; s.n = 1; s.atr_ref = atr_ref; s.sum_rng = h - l; s.hi = h; s.origin = l; s.last_h = h; s.atr_gap = atr_gap; s.over = False
+
+          def run_symbol(ts, O, H, L, C, step_ms, tick, cfg, interp=None, end_ms=None):
+              """Return list of event dicts. Event: {i: known candle index, ts: assignment ts, t: type, d: dir, ...}."""
+              I = dict(INTERP); I.update(interp or {})
+              n = len(ts); ev = []
+              def emit(i, t, d, ts_ref=None, **kw):
+                  e = {"i": i, "ts": ts[i] if ts_ref is None else ts_ref, "t": t, "d": d}; e.update(kw); ev.append(e)
+              atr = [None] * n; prev_c = None; trs = []
+              tr = {1: None, -1: None}
+              S = None
+              dl_ms = int(cfg.ts_hours * 3600000)
+              def spike_q(d, i, ref):
+                  o, h, l, c = view(d, O[i], H[i], L[i], C[i]); rng = h - l
+                  return c > o and rng > 0 and rng >= cfg.sp_atr * ref and (c - l) >= cfg.sp_close * rng and (c - o) >= cfg.sp_body * rng
+              def end_setup():
+                  nonlocal S
+                  S = None
+                  tr[1] = None; tr[-1] = None
+              def attempt_entry(i, d, no, trigger, sl):
+                  # trigger/sl are in view coordinates of direction d. Returns True if setup continues (position open).
+                  nonlocal S
+                  emit(i, "entry_trigger", d, no=no)
+                  entry_abs = abs(trigger)
+                  pct = (trigger - sl) / entry_abs * 100.0
+                  if sl >= trigger or pct < cfg.min_stop_pct:
+                      emit(i, "minstop_skip", d, no=no, stop_pct=round(pct, 6))
+                      end_setup(); return
+                  o, h, l, c = view(d, O[i], H[i], L[i], C[i])
+                  fp = max(trigger, o); R = fp - sl
+                  emit(i, "fill", d, no=no, gap_fill=(o > trigger), stratum=stratum_of(cfg, ts[i]), pf=in_primary_filter(cfg, ts[i]))
+                  S["phase"] = "position"; S["no"] = no
+                  S["pos"] = {"fill_i": i, "fill_ts": ts[i], "sl": sl, "tp1": fp + cfg.tp1_r * R, "tp2": fp + cfg.tp2_r * R, "tp1_hit": False, "deadline": ts[i] + dl_ms}
+                  position_candle(i, True)
+              def outcome(i, code, stop=False):
+                  p = S["pos"]; emit(i, "outcome", S["d"], ts_ref=p["fill_ts"], no=S["no"], code=code, tp1=p["tp1_hit"])
+              def position_candle(i, fill_candle):
+                  d = S["d"]; p = S["pos"]; o, h, l, c = view(d, O[i], H[i], L[i], C[i])
+                  if (not fill_candle) and ts[i] >= p["deadline"]:
+                      outcome(i, "TP1_THEN_TIMESTOP" if p["tp1_hit"] else "TIMESTOP_BEFORE_TP1"); end_setup(); return
+                  if l <= p["sl"]:
+                      if p["tp1_hit"]:
+                          outcome(i, "TP1_THEN_SL"); end_setup(); return
+                      outcome(i, "STOP_ON_FILL_CANDLE" if fill_candle else "SL_BEFORE_TP1")
+                      if S["no"] >= cfg.stops_max:
+                          emit(i, "three_stop_invalid", d); end_setup(); return
+                      S["phase"] = "rewait"; S["stop_i"] = i; S["low_since"] = l; S["pos"] = None; return
+                  if (not p["tp1_hit"]) and h >= p["tp1"]:
+                      p["tp1_hit"] = True; emit(i, "tp1_reached", d, ts_ref=p["fill_ts"], no=S["no"])
+                  if p["tp1_hit"] and h >= p["tp2"]:
+                      outcome(i, "TP1_THEN_TP2"); end_setup()
+              def channel_candle(i):
+                  d = S["d"]; o, h, l, c = view(d, O[i], H[i], L[i], C[i])
+                  armed = S["ch_n"] >= cfg.ch_min
+                  brk = (h > S["last_h"]) if I["trigger_strict"] else (h >= S["last_h"])
+                  if armed and brk:
+                      attempt_entry(i, d, 1, S["last_h"], S["ch_low"] - tick); return
+                  q_high = h <= S["last_h"]; q_rng = (h - l) <= cfg.ch_range * S["mean_rng"]; q_pull = l >= S["limit"]
+                  if q_high and q_rng and q_pull:
+                      S["ch_n"] += 1; S["ch_low"] = min(S["ch_low"], l); S["last_h"] = h
+                      if S["ch_n"] == cfg.ch_min: emit(i, "channel_armed", d, stratum=stratum_of(cfg, ts[i]))
+                      if S["ch_n"] > cfg.ch_max:
+                          emit(i, "channel_cancel", d, reason="too_long"); end_setup()
+                      return
+                  reason = "higher_high" if not q_high else ("too_wide" if not q_rng else "pullback")
+                  emit(i, "channel_cancel", d, reason=reason, armed=armed); end_setup()
+              def rewait_candle(i):
+                  d = S["d"]; o, h, l, c = view(d, O[i], H[i], L[i], C[i])
+                  S["trig2"] = h; S["wait_low"] = l; S["low_since"] = min(S["low_since"], l); S["phase"] = "rearmed"; S["remaining"] = cfg.timeout_n
+                  emit(i, "reentry_armed", d, no=S["no"] + 1)
+              def rearmed_candle(i):
+                  d = S["d"]; o, h, l, c = view(d, O[i], H[i], L[i], C[i]); no = S["no"] + 1
+                  brk = (h > S["trig2"]) if I["trigger_strict"] else (h >= S["trig2"])
+                  if brk:
+                      sl = S["low_since"] if no == 2 else S["wait_low"]
+                      attempt_entry(i, d, no, S["trig2"], sl); return
+                  S["low_since"] = min(S["low_since"], l); S["remaining"] -= 1
+                  if S["remaining"] == 0:
+                      emit(i, "reentry_timeout", d, no=no); end_setup()
+              for i in range(n):
+                  # ATR (Wilder) on present candles; TR uses previous present close
+                  tri = (H[i] - L[i]) if prev_c is None else max(H[i] - L[i], abs(H[i] - prev_c), abs(L[i] - prev_c))
+                  trs.append(tri)
+                  if i == cfg.atr_n - 1: atr[i] = sum(trs) / cfg.atr_n
+                  elif i >= cfg.atr_n: atr[i] = (atr[i - 1] * (cfg.atr_n - 1) + tri) / cfg.atr_n
+                  prev_c = C[i]
+                  # gap procedure
+                  if i > 0 and ts[i] - ts[i - 1] > step_ms:
+                      if S is not None:
+                          ph = S["phase"]
+                          if ph == "position":
+                              outcome(i, "GAP_DISCARD_IN_POSITION")
+                          emit(i, "gap_discard", S["d"], ts_ref=ts[i - 1], phase=ph)
+                          end_setup()
+                      else:
+                          for d in (1, -1):
+                              t = tr[d]
+                              if t is not None and t.n >= cfg.sp_min:
+                                  emit(i, "gap_discard", d, ts_ref=ts[i - 1], phase="spike")
+                          tr[1] = None; tr[-1] = None
+                  if S is not None:
+                      ph = S["phase"]
+                      if ph == "channel": channel_candle(i)
+                      elif ph == "position": position_candle(i, False)
+                      elif ph == "rewait": rewait_candle(i)
+                      elif ph == "rearmed": rearmed_candle(i)
+                      continue
+                  # no active setup: spike confirmation
+                  conf = None
+                  for d in (1, -1):
+                      t = tr[d]
+                      if t is not None and t.n >= cfg.sp_min and not spike_q(d, i, t.atr_ref):
+                          if t.over:
+                              emit(i, "spike_run_rejected", d, ts_ref=ts[t.start], n=t.n, reason="longer_than_max", atr_gap=t.atr_gap, stratum=stratum_of(cfg, ts[t.start]))
+                              tr[d] = None
+                          else:
+                              conf = d; break
+                  if conf is not None:
+                      t = tr[conf]; d = conf
+                      height = t.hi - t.origin
+                      S = {"d": d, "phase": "channel", "ch_n": 0, "ch_low": float("inf"), "last_h": t.last_h, "mean_rng": t.sum_rng / t.n,
+                           "limit": t.hi - cfg.ch_pull * height, "no": 0}
+                      emit(i, "spike_detected", d, ts_ref=ts[t.start], n=t.n, atr_gap=t.atr_gap, stratum=stratum_of(cfg, ts[t.start]))
+                      tr[1] = None; tr[-1] = None
+                      channel_candle(i)
+                      continue
+                  # update trackers
+                  for d in (1, -1):
+                      t = tr[d]
+                      if t is not None and spike_q(d, i, t.atr_ref):
+                          o, h, l, c = view(d, O[i], H[i], L[i], C[i])
+                          t.n += 1
+                          if t.n > cfg.sp_max: t.over = True
+                          else: t.sum_rng += h - l; t.hi = max(t.hi, h); t.last_h = h
+                          continue
+                      tr[d] = None
+                      a = atr[i - 1] if i >= 1 else None
+                      if a is not None and a > 0 and spike_q(d, i, a):
+                          o, h, l, c = view(d, O[i], H[i], L[i], C[i])
+                          gap = (i - 15 >= 0) and (ts[i - 1] - ts[i - 15] != (cfg.atr_n) * step_ms)
+                          tr[d] = Tracker(i, a, o, h, l, c, gap)
+              if S is not None:
+                  ph = S["phase"]
+                  if ph == "position": emit(n - 1, "outcome", S["d"], ts_ref=S["pos"]["fill_ts"], no=S["no"], code="CENSORED_END", tp1=S["pos"]["tp1_hit"], end_marker=True)
+                  emit(n - 1, "pending_end", S["d"], phase=ph, end_marker=True)
+              return ev
+
+          def period_bounds(cfg, start_ms, end_ms, step_ms):
+              b = int(start_ms + cfg.is_frac * (end_ms - start_ms)); b = b // step_ms * step_ms
+              emb_end = b + cfg.embargo_days * 86400000
+              return b, emb_end
+
+          def period_of(ts_ms, b, emb_end):
+              return "IS" if ts_ms < b else ("EMB" if ts_ms < emb_end else "HO")
+
+          # ======================= Stage 3 runner (verification -> detection -> causality tests -> counts) =======================
+          import os, sys, gzip, glob, time, random, collections, datetime as _dt
+          FROZEN_MASTER = "4c3350b8a6ae095446aa6021d5c34b198802281c78545ece68c5fa9aba9ad82b"
+          FROZEN_CONTRACTS = "39c3197a3ea104bf08ead742298bdc0d749362f0686ad08b4496283f0fc31878"
+          FROZEN_RUN = "39046246188"
+          SPEC_HASHES = {"params_v1_1": PARAMS_SHA256_EXPECTED,
+                         "spec_stage1_v1": "d3546c2d8d8dc86f01ad8fbc726bcf88b8e205c3e14a3faa206f70255f7c5b41",
+                         "spec_amendments_v1_1": "cda9ffe24971c5a7abcf5b87265eee227fe487e8eef64461ed7d0c073e2e9f27"}
+          FROZEN_SPLIT = {"span_start_ms": 1730599200000, "end_ms_exclusive": 1792195200000, "is_end_ms": 1767556800000, "embargo_end_ms": 1768161600000}  # 2024-11-03 02:00 | 2026-10-17 00:00 | IS<2026-01-04 20:00 | HO>=2026-01-11 20:00 (UTC)
+          TF = 15; STEP = TF * 60000
+          N_TRUNC = 6; N_POISON = 6
+
+          def _sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def _d(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def abort(msg):
+              print("ABORT_STAGE3:", msg); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+
+          def _analyze(tsv, tf):
+              step = tf * 60000; tsv = sorted(tsv); off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          def verify_and_load(DL, expect_master, expect_contracts, expect_run):
+              """Verify every required 15m artifact against the manifest. Abort on any problem. Returns (man, contracts, universe, metas)."""
+              mp = glob.glob(DL + "/*/manifest.json")
+              if len(mp) != 1: abort("manifest.json not found exactly once (%d)" % len(mp))
+              man = json.load(open(mp[0]))
+              files = [tuple(x) for x in man["files"]]; fh = dict(files)
+              master = hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files)).encode()).hexdigest()
+              if master != man["master_sha256"]: abort("manifest internal master hash mismatch %s" % master)
+              if master != expect_master: abort("manifest master %s != frozen %s" % (master, expect_master))
+              if str(man.get("run_id")) != expect_run: abort("manifest run_id %s != %s" % (man.get("run_id"), expect_run))
+              if man["tf_results"]["15"]["verdict"] != "PASS": abort("manifest 15m verdict not PASS")
+              print("V1 manifest ok: run_id", man["run_id"], "master", master, "manifest_files", len(files))
+              cj = [r for r, h in files if r.endswith("contracts_active_55.json")]
+              if len(cj) != 1: abort("contract snapshot not in manifest")
+              cp = os.path.join(DL, cj[0])
+              if not os.path.exists(cp): abort("contract snapshot file missing")
+              if _sha_file(cp) != fh[cj[0]] or fh[cj[0]] != expect_contracts: abort("contract snapshot hash mismatch")
+              contracts = json.load(open(cp)); universe = list(contracts["universe"])
+              if len(universe) != 55 or len(contracts["contracts"]) < 55 or contracts["missing"]: abort("contract snapshot universe/missing problem")
+              print("V2 contract snapshot ok sha", fh[cj[0]], "symbols", len(universe))
+              exp15 = {r for r, h in files if "/" in r and r.split("/")[0].startswith("mm-snap-15m-")}
+              if len(exp15) != 3 * len(universe): abort("manifest 15m file count %d != %d" % (len(exp15), 3 * len(universe)))
+              present = {os.path.relpath(p, DL) for p in glob.glob(DL + "/mm-snap-15m-*/*")}
+              if present - exp15: abort("unexpected extra files in 15m artifacts: %s" % sorted(present - exp15)[:5])
+              if exp15 - present: abort("missing 15m files: %s" % sorted(exp15 - present)[:5])
+              metas = {}; nbad = 0
+              for sym in universe:
+                  mrel = [r for r in exp15 if r.endswith("/%s_15m.meta.json" % sym)]
+                  if len(mrel) != 1: abort("meta missing for " + sym)
+                  dirn = os.path.dirname(mrel[0]); base = "%s_15m" % sym
+                  for suf in (".csv.gz", ".calls.csv", ".meta.json"):
+                      rel = dirn + "/" + base + suf
+                      if _sha_file(os.path.join(DL, rel)) != fh[rel]: abort("file hash != manifest: " + rel)
+                  m = json.load(open(os.path.join(DL, mrel[0])))
+                  if m["sha256_csv_gz"] != fh[dirn + "/" + base + ".csv.gz"] or m["sha256_calls"] != fh[dirn + "/" + base + ".calls.csv"]: abort("meta hash fields != manifest: " + sym)
+                  raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read())
+                  if hashlib.sha256(raw).hexdigest() != m["sha256_csv_raw"]: abort("raw csv hash mismatch " + sym)
+                  tsv = []
+                  for ln in raw.decode().split("\n")[1:]:
+                      if ln:
+                          f = ln.split(","); tsv.append((int(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5])))
+                  an = _analyze(tsv, TF)
+                  if json.loads(json.dumps(an)) != m["integrity"]: abort("integrity recompute differs " + sym)
+                  if not m["complete"] or m["integrity"]["off_grid"] or m["integrity"]["ohlc_bad"] or m["integrity"]["rows"] == 0: abort("meta integrity flags " + sym)
+                  if m["end_ms_exclusive"] != man["end_ms_exclusive"] or m["tf_min"] != TF or m["symbol"] != sym: abort("meta identity mismatch " + sym)
+                  if len({t[0] for t in tsv}) != len(tsv) or [t[0] for t in tsv] != sorted(t[0] for t in tsv): abort("timestamps not unique/sorted " + sym)
+                  metas[sym] = (m, dirn, base)
+              print("V3 all", len(universe), "symbols: 165 files hash==manifest, raw hash, integrity recompute, complete, no off-grid/ohlc-bad: PASS")
+              return man, contracts, universe, metas
+
+          def read_series(DL, dirn, base):
+              raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read()).decode().split("\n")[1:]
+              ts = []; O = []; H = []; L = []; C = []
+              for ln in raw:
+                  if ln:
+                      f = ln.split(","); ts.append(int(f[0])); O.append(float(f[1])); H.append(float(f[2])); L.append(float(f[3])); C.append(float(f[4]))
+              return ts, O, H, L, C
+
+          def sigev(ev, cut=None):
+              return [(e["i"], e["ts"], e["t"], e["d"], e.get("no"), e.get("code"), e.get("reason"), e.get("phase"), e.get("n"), e.get("stop_pct"))
+                      for e in ev if not e.get("end_marker") and (cut is None or e["i"] <= cut)]
+
+          def causality_tests(sym, ts, O, H, L, C, tick, cfg, full):
+              """6 truncation + 6 poison cases. Earlier detections (known_idx<=cut) must be identical."""
+              n = len(ts); rnd = random.Random(int(hashlib.sha256(sym.encode()).hexdigest()[:12], 16))
+              inflight = [e["i"] for e in full if e["t"] in ("channel_armed", "fill", "reentry_armed")]
+              cuts = [int(n * q) for q in (0.1, 0.3, 0.5, 0.7, 0.9)] + [(rnd.choice(inflight) + rnd.randint(0, 3)) if inflight else n // 2]
+              cuts = [min(max(c, 20), n - 2) for c in cuts]
+              res = {"trunc_pass": 0, "trunc_fail": 0, "poison_pass": 0, "poison_fail": 0, "cuts": cuts}
+              for c in cuts:
+                  exp = sigev(full, c)
+                  got = sigev(run_symbol(ts[:c + 1], O[:c + 1], H[:c + 1], L[:c + 1], C[:c + 1], STEP, tick, cfg))
+                  res["trunc_pass" if got == exp else "trunc_fail"] += 1
+              modes = ["garbage", "drop", "both", "garbage", "drop", "both"]
+              for c, mode in zip(cuts, modes):
+                  exp = sigev(full, c)
+                  ts2 = list(ts); O2 = list(O); H2 = list(H); L2 = list(L); C2 = list(C)
+                  for k in range(c + 1, n):
+                      if mode in ("garbage", "both"):
+                          o = rnd.uniform(0.001, 1e5); cc = rnd.uniform(0.001, 1e5); O2[k] = o; C2[k] = cc
+                          H2[k] = max(o, cc) * rnd.uniform(1, 4); L2[k] = min(o, cc) / rnd.uniform(1, 4)
+                  if mode in ("drop", "both"):
+                      keep = list(range(c + 1)) + [k for k in range(c + 1, n) if rnd.random() > 0.3]
+                      ts2 = [ts2[k] for k in keep]; O2 = [O2[k] for k in keep]; H2 = [H2[k] for k in keep]; L2 = [L2[k] for k in keep]; C2 = [C2[k] for k in keep]
+                  got = sigev(run_symbol(ts2, O2, H2, L2, C2, STEP, tick, cfg), c)
+                  res["poison_pass" if got == exp else "poison_fail"] += 1
+              return res
+
+          def aggregate(sym, events, b, emb_end, cfg, n_ts):
+              """counts[dir][period][stratum][metric]; period assigned at setup level by spike-start timestamp."""
+              cnt = collections.defaultdict(int); cur = None; cross = 0; setup_last = {}
+              for e in events:
+                  if e.get("end_marker"): continue
+                  t = e["t"]; d = "L" if e["d"] == 1 else "S"
+                  if t == "spike_detected": cur = period_of(e["ts"], b, emb_end); setup_last[id(e)] = (cur, e["ts"])
+                  per = period_of(e["ts"], b, emb_end) if (t == "gap_discard" and e.get("phase") == "spike") or cur is None else cur
+                  st = stratum_of(cfg, e["ts"])
+                  def add(m): cnt[(d, per, st, m)] += 1
+                  if t == "spike_detected":
+                      add("spike")
+                      if e["atr_gap"]: add("spike_atr_window_has_gap")
+                  elif t == "spike_run_rejected": add("spike_run_rejected_gt8")
+                  elif t == "channel_armed": add("channel_armed")
+                  elif t == "channel_cancel": add("channel_cancel_" + e["reason"] + ("_armed" if e.get("armed") else ""))
+                  elif t == "entry_trigger": add("trigger_E%d" % e["no"])
+                  elif t == "minstop_skip": add("minstop_skip_E%d" % e["no"])
+                  elif t == "fill":
+                      add("fill_E%d" % e["no"])
+                      if e["pf"]: add("fill_E1_primary_filter" if e["no"] == 1 else "fill_E%d_primary_filter_APPROXIMATE" % e["no"])
+                      if e["gap_fill"]: add("gapfill_E%d" % e["no"])
+                  elif t == "outcome": add("outcome_E%d_%s" % (e["no"], e["code"]))
+                  elif t == "tp1_reached": add("tp1_reached_E%d" % e["no"])
+                  elif t == "reentry_armed": add("reentry_armed_E%d" % e["no"])
+                  elif t == "reentry_timeout": add("reentry_timeout_E%d" % e["no"])
+                  elif t == "three_stop_invalid": add("three_stop_invalid")
+                  elif t == "gap_discard": add("gap_discard_" + e["phase"])
+              return cnt
+
+          def main():
+              DL = os.environ.get("DL_DIR", "dl"); OUT = os.environ.get("OUT_DIR", "stage3_out"); os.makedirs(OUT, exist_ok=True)
+              expect_master = os.environ.get("EXPECT_MASTER", FROZEN_MASTER); expect_contracts = os.environ.get("EXPECT_CONTRACTS", FROZEN_CONTRACTS)
+              expect_run = os.environ.get("EXPECT_RUN", FROZEN_RUN); mock = os.environ.get("STAGE3_MOCK") == "1"
+              if not mock and (expect_master != FROZEN_MASTER or expect_contracts != FROZEN_CONTRACTS or expect_run != FROZEN_RUN): abort("override of frozen identifiers is not allowed in a real run")
+              code_sha = _sha_file(os.path.abspath(__file__)) if "__file__" in globals() else "unknown"
+              print("STAGE3 START code_sha256", code_sha, "mock", mock)
+              P = load_params(); cfg = Cfg(P); print("PARAMS", PARAMS_SHA256_EXPECTED, "INTERP", json.dumps(INTERP, sort_keys=True))
+              man, contracts, universe, metas = verify_and_load(DL, expect_master, expect_contracts, expect_run)
+              end_ms = man["end_ms_exclusive"]; first_all = min(m["integrity"]["first_ts"] for m, _, _ in metas.values())
+              b, emb_end = period_bounds(cfg, first_all, end_ms, STEP)
+              if not mock:
+                  got = {"span_start_ms": first_all, "end_ms_exclusive": end_ms, "is_end_ms": b, "embargo_end_ms": emb_end}
+                  if got != FROZEN_SPLIT: abort("computed split %s != pre-frozen %s" % (got, FROZEN_SPLIT))
+                  print("SPLIT_MATCHES_PRE_FROZEN_CONSTANTS")
+              print("SPLIT span_start", _d(first_all), "span_end_excl", _d(end_ms), "IS<", _d(b), "EMBARGO", _d(b), "->", _d(emb_end), "HOLDOUT>=", _d(emb_end), "(60/40, 7d embargo; boundary on 15m grid)")
+              total = collections.defaultdict(int); per_sym = {}; evf = gzip.GzipFile(os.path.join(OUT, "events.jsonl.gz"), "wb", mtime=0); t0 = time.time()
+              caus_tot = {"trunc_pass": 0, "trunc_fail": 0, "poison_pass": 0, "poison_fail": 0}; lines = []; recon_bad = []
+              for sym in universe:
+                  m, dirn, base = metas[sym]; ts, O, H, L, C = read_series(DL, dirn, base); tick = float(contracts["contracts"][sym]["tickSize"])
+                  full = run_symbol(ts, O, H, L, C, STEP, tick, cfg, end_ms=end_ms)
+                  again = run_symbol(ts, O, H, L, C, STEP, tick, cfg, end_ms=end_ms)
+                  if sigev(full) != sigev(again): abort("non-deterministic detection " + sym)
+                  cz = causality_tests(sym, ts, O, H, L, C, tick, cfg, full)
+                  for k in caus_tot: caus_tot[k] += cz[k]
+                  cnt = aggregate(sym, full, b, emb_end, cfg, len(ts))
+                  for k, v in cnt.items(): total[k] += v
+                  # leakage check: any IS setup whose events reach into/after the embargo end
+                  cur = None; leak = 0
+                  for e in full:
+                      if e.get("end_marker"): continue
+                      if e["t"] == "spike_detected": cur = period_of(e["ts"], b, emb_end)
+                      elif cur == "IS" and ts[e["i"]] >= emb_end: leak += 1
+                  fills_no = collections.Counter(e["no"] for e in full if e["t"] == "fill"); outs_no = collections.Counter(e["no"] for e in full if e["t"] == "outcome" and not e.get("end_marker"))
+                  cens_no = collections.Counter(e["no"] for e in full if e["t"] == "outcome" and e.get("end_marker"))
+                  for no in (1, 2, 3):
+                      if fills_no[no] != outs_no[no] + cens_no[no]: recon_bad.append((sym, no, fills_no[no], outs_no[no], cens_no[no]))
+                  censored = [e for e in full if e.get("end_marker") and e["t"] == "pending_end"]
+                  per_sym[sym] = {"censored_at_data_end": [{"d": e["d"], "phase": e["phase"]} for e in censored], "rows": len(ts), "interior_missing_bars": m["integrity"]["interior_missing_bars"], "tick": tick, "causality": cz, "is_setups_reaching_holdout": leak,
+                                  "counts": {"|".join(k): v for k, v in sorted(cnt.items())}}
+                  for e in full:
+                      r = dict(e); r["sym"] = sym; evf.write((json.dumps(r, sort_keys=True) + "\n").encode())
+                  def S(metric, per=None, d=None):
+                      return sum(v for (dd, pp, ss, mm), v in cnt.items() if mm == metric and (per is None or pp == per) and (d is None or dd == d))
+                  gd = sum(v for (dd, pp, ss, mm), v in cnt.items() if mm.startswith("gap_discard_"))
+                  lines.append("%-14s rows=%6d miss=%5d | spikes=%4d armed=%4d | E1 trig=%4d skip=%4d fill=%4d (pf IS/EMB/HO=%d/%d/%d) | gapdiscard=%4d | caus T%d/%d P%d/%d" % (
+                      sym, len(ts), m["integrity"]["interior_missing_bars"], S("spike"), S("channel_armed"), S("trigger_E1"), S("minstop_skip_E1"), S("fill_E1"),
+                      S("fill_E1_primary_filter", "IS"), S("fill_E1_primary_filter", "EMB"), S("fill_E1_primary_filter", "HO"), gd,
+                      cz["trunc_pass"], cz["trunc_pass"] + cz["trunc_fail"], cz["poison_pass"], cz["poison_pass"] + cz["poison_fail"]))
+              evf.close()
+              print("PER_SYMBOL (15m; counts only, all hours unless 'pf')"); [print(l) for l in lines]
+              def T(metric, per=None, d=None, st=None):
+                  return sum(v for (dd, pp, ss, mm), v in total.items() if mm == metric and (per is None or pp == per) and (d is None or dd == d) and (st is None or ss == st))
+              metrics = sorted({k[3] for k in total})
+              print("TOTALS by period x direction (all strata)")
+              for mt in metrics:
+                  print("  %-42s" % mt, " ".join("%s:%s=%d" % (p, d, T(mt, p, d)) for p in ("IS", "EMB", "HO") for d in ("L", "S")))
+              print("STRATA E1 fills (all hours) / E1 trigger counts by UTC stratum, IS|HO")
+              for st in ("Asia", "London", "NY", "Late"):
+                  print("  %-7s fill_E1 IS=%d HO=%d | trigger_E1 IS=%d HO=%d | skip_E1 IS=%d HO=%d | spikes IS=%d HO=%d" % (st, T("fill_E1", "IS", None, st), T("fill_E1", "HO", None, st), T("trigger_E1", "IS", None, st), T("trigger_E1", "HO", None, st), T("minstop_skip_E1", "IS", None, st), T("minstop_skip_E1", "HO", None, st), T("spike", "IS", None, st), T("spike", "HO", None, st)))
+              g_is = T("fill_E1_primary_filter", "IS"); g_ho = T("fill_E1_primary_filter", "HO")
+              gate = "MET" if (g_is >= cfg.gate_is and g_ho >= cfg.gate_ho) else "INSUFFICIENT_SAMPLE"
+              print("GATE (pooled 55 symbols x both directions, filled Entry-1, primary filter 07-21 UTC on trigger candle open): IS=%d (need %d) HO=%d (need %d) -> %s" % (g_is, cfg.gate_is, g_ho, cfg.gate_ho, gate))
+              for d in ("L", "S"): print("GATE_by_direction", d, "IS", T("fill_E1_primary_filter", "IS", d), "HO", T("fill_E1_primary_filter", "HO", d))
+              print("CENSORED_AT_DATA_END (setups still open at last candle; excluded from counts):", sum(len(v["censored_at_data_end"]) for v in per_sym.values()))
+              leak = sum(v["is_setups_reaching_holdout"] for v in per_sym.values())
+              print("CAUSALITY totals", json.dumps(caus_tot), "| IS events reaching past embargo end:", leak)
+              print("OUTCOME_RECONCILIATION (fills == mutually exclusive outcomes + censored-at-end, per symbol and entry): %s %s" % ("PASS" if not recon_bad else "FAIL", recon_bad[:5]))
+              print("NOTE: Entry 2/3 primary-filter counts are APPROXIMATE (sequencing follows all-hours Entry 1) and are NOT used for the gate.")
+              verdict = "PASS" if caus_tot["trunc_fail"] == 0 and caus_tot["poison_fail"] == 0 and leak == 0 and not recon_bad else "FAIL"
+              print("CAUSALITY_VERDICT", verdict)
+              res = {"snapshot_run_id": expect_run, "snapshot_master_sha256": expect_master, "contracts_sha256": expect_contracts, "code_sha256": code_sha,
+                     "spec_hashes": SPEC_HASHES, "interp": INTERP, "timeframe": "15m",
+                     "split": {"span_start_ms": first_all, "end_ms_exclusive": end_ms, "is_end_ms": b, "embargo_end_ms": emb_end, "is_fraction": cfg.is_frac, "embargo_days": cfg.embargo_days},
+                     "gate": {"insample_filled_E1_pf": g_is, "holdout_filled_E1_pf": g_ho, "need_is": cfg.gate_is, "need_ho": cfg.gate_ho, "status": gate},
+                     "causality": caus_tot, "causality_verdict": verdict, "outcome_reconciliation_failures": recon_bad, "frozen_split_constants": FROZEN_SPLIT, "per_symbol": per_sym,
+                     "totals": {"|".join(k): v for k, v in sorted(total.items())}, "mock": mock}
+              js = json.dumps(res, sort_keys=True, indent=1); open(os.path.join(OUT, "stage3_counts.json"), "w").write(js)
+              print("RESULTS_SHA256 counts_json", hashlib.sha256(js.encode()).hexdigest(), "events_jsonl_gz", _sha_file(os.path.join(OUT, "events.jsonl.gz")), "elapsed_s", int(time.time() - t0))
+              print("STAGE3_DONE")
+              sys.exit(0 if verdict == "PASS" else 3)
+
+          if __name__ == "__main__": main()
+          PYEOF
+          echo "CODE_SHA256_COMPUTED=$(sha256sum stage3_micromap.py | cut -d' ' -f1)"
+          echo "CODE_SHA256_EXPECTED=$CODE_SHA256"
+          test "$(sha256sum stage3_micromap.py | cut -d' ' -f1)" = "$CODE_SHA256" || { echo "ABORT_STAGE3: code hash mismatch"; exit 2; }
+
+      - name: Run Stage 3 (verification -> detection -> causality tests -> counts)
+        shell: bash
+        run: |
+          DL_DIR=dl OUT_DIR=stage3_out python3 stage3_micromap.py 2>&1 | tee stage3_log.txt
+          mkdir -p stage3_out && cp stage3_log.txt stage3_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-15m-results
+          path: stage3_out/
+          retention-days: 90
+          if-no-files-found: ignore
