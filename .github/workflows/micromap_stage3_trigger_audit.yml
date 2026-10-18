@@ -1,0 +1,154 @@
+name: MicroMAP Stage 3 full Entry-1 trigger review (descriptive; read-only; artifacts only, no repo commit, no rule change)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUDIT_CODE_SHA256: "39d95681f7f5d5236e353904246972da7ed5507e5ae5ee5580210b000ddb0dca"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Locate the Stage 3 run (actual run ID) and its artifact
+        id: find
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID"
+          gh run list -R "$GITHUB_REPOSITORY" --workflow micromap_stage3.yml --limit 30 --json databaseId,number,headSha,conclusion,status,createdAt,url > runs.json
+          python3 - <<'PY'
+          import json, os, sys
+          runs = [r for r in json.load(open("runs.json")) if r["conclusion"] == "success"]
+          print("SUCCESSFUL_STAGE3_RUNS:", json.dumps(runs))
+          if len(runs) != 1:
+              print("ABORT_AUDIT: expected exactly one successful Stage 3 run, found", len(runs)); sys.exit(2)
+          r = runs[0]
+          print("STAGE3_RUN_ID", r["databaseId"], "| run number", r["number"], "| commit", r["headSha"], "| created", r["createdAt"], "| url", r["url"])
+          open(os.environ["GITHUB_OUTPUT"], "a").write("run_id=%s\n" % r["databaseId"])
+          PY
+          RID=$(grep -o 'run_id=[0-9]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID/artifacts" > arts.json
+          RID=$RID python3 - <<'PY'
+          import json, os
+          repo = os.environ["GITHUB_REPOSITORY"]; rid = os.environ["RID"]
+          for a in json.load(open("arts.json"))["artifacts"]:
+              print("STAGE3_ARTIFACT name=%s id=%s size_bytes=%s digest=%s created=%s expires=%s expired=%s" % (a["name"], a["id"], a["size_in_bytes"], a.get("digest"), a["created_at"], a["expires_at"], a["expired"]))
+              print("STAGE3_ARTIFACT_WEB_URL https://github.com/%s/actions/runs/%s/artifacts/%s" % (repo, rid, a["id"]))
+          PY
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mm-stage3-15m-results
+          path: s3res
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write audit code and verify its hash
+        shell: bash
+        run: |
+          cat > stage3_trigger_audit.py <<'PYEOF'
+          # MicroMAP Stage 3 - DESCRIPTIVE review of ALL Entry-1 triggers (skipped + filled) from the existing frozen Stage 3 events/counts only.
+          # Read-only. No engine change, no re-run of the strategy, no thresholds tested, no P&L. Missing fields are reported, never reconstructed.
+          import os, sys, json, gzip, hashlib, collections, statistics
+          FROZEN = {"events_sha": "d35599bc48976960caa54680eb9d2e39852aff55f94522ef36aeee5727fba1ee", "counts_sha": "5651c7e2d8e41decb3c646741f5224213d37ba7e72c7754458b2ca4e6a91e826",
+                    "is_end": 1767556800000, "emb_end": 1768161600000, "n_trig": 175, "n_skip": 162, "n_fill": 13}
+          MOCK = os.environ.get("AUDIT_MOCK") == "1"; cfg = dict(FROZEN)
+          if MOCK: cfg.update(events_sha=os.environ["EXPECT_EVENTS_SHA"], counts_sha=os.environ["EXPECT_COUNTS_SHA"], is_end=int(os.environ["IS_END"]), emb_end=int(os.environ["EMB_END"]), n_trig=None, n_skip=None, n_fill=None)
+          D = os.environ.get("RES_DIR", "s3res"); OUT = os.environ.get("OUT_DIR", "audit_out"); os.makedirs(OUT, exist_ok=True)
+          def sha(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def abort(m): print("ABORT_AUDIT:", m); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+          ev_p, ct_p = os.path.join(D, "events.jsonl.gz"), os.path.join(D, "stage3_counts.json")
+          for p in (ev_p, ct_p):
+              if not os.path.exists(p): abort("missing " + p)
+          if sha(ev_p) != cfg["events_sha"]: abort("events hash mismatch %s" % sha(ev_p))
+          if sha(ct_p) != cfg["counts_sha"]: abort("counts hash mismatch %s" % sha(ct_p))
+          print("V1 Stage 3 result files match the frozen hashes: events", cfg["events_sha"], "counts", cfg["counts_sha"])
+          def period(ts): return "IS" if ts < cfg["is_end"] else ("EMB" if ts < cfg["emb_end"] else "HO")
+          fields = collections.defaultdict(collections.Counter); evn = collections.Counter(); cur = {}; trig = {}; skip = {}; fill = {}
+          for ln in gzip.open(ev_p, "rt"):
+              e = json.loads(ln); s = e["sym"]; t = e["t"]; evn[t] += 1
+              for k in e: fields[t][k] += 1
+              if t == "spike_detected": cur[s] = period(e["ts"])
+              elif t == "entry_trigger" and e["no"] == 1: trig[(s, e["i"])] = (s, "L" if e["d"] == 1 else "S", cur[s], e["ts"])
+              elif t == "minstop_skip" and e["no"] == 1: skip[(s, e["i"])] = float(e["stop_pct"])
+              elif t == "fill" and e["no"] == 1: fill[(s, e["i"])] = e
+          print("FIELD INVENTORY of the frozen events (event type: count | fields present in every record)")
+          for t in ("spike_detected", "channel_armed", "entry_trigger", "minstop_skip", "fill", "outcome"):
+              n = evn[t]; allf = sorted(k for k, c in fields[t].items() if c == n); print("  %-14s %6d | %s" % (t, n, ",".join(allf)))
+          price_fields = ("stop_pct", "stop", "sl", "entry", "trigger", "atr", "price", "R")
+          print("Fields relevant to stop distance / ATR present per record:",
+                {t: sorted(k for k in fields[t] if k in price_fields) for t in ("entry_trigger", "minstop_skip", "fill", "spike_detected")})
+          if set(trig) != set(skip) | set(fill) or set(skip) & set(fill): abort("trigger set != skipped U filled (or overlap)")
+          cj = json.load(open(ct_p)); ref = collections.defaultdict(collections.Counter)
+          for k, v in cj["totals"].items():
+              d, per, st, m = k.split("|")
+              if m in ("trigger_E1", "minstop_skip_E1", "fill_E1"): ref[m][(d, per)] += v
+          mine = {"trigger_E1": collections.Counter((trig[k][1], trig[k][2]) for k in trig), "minstop_skip_E1": collections.Counter((trig[k][1], trig[k][2]) for k in skip), "fill_E1": collections.Counter((trig[k][1], trig[k][2]) for k in fill)}
+          for m in mine:
+              if mine[m] != ref[m]: abort("%s events-derived %s != counts json %s" % (m, dict(mine[m]), dict(ref[m])))
+          if cfg["n_trig"] is not None and (len(trig), len(skip), len(fill)) != (cfg["n_trig"], cfg["n_skip"], cfg["n_fill"]): abort("totals %s != frozen" % ((len(trig), len(skip), len(fill)),))
+          print("V2 RECONCILIATION: triggers %d = skipped %d + filled %d; each equals the Stage 3 counts json by direction x period (PASS)" % (len(trig), len(skip), len(fill)))
+          print("TRIGGERS / SKIPPED / FILLED by period x direction (counts)")
+          res = {"totals": {"triggers": len(trig), "skipped": len(skip), "filled": len(fill)}, "by_period_direction": {}}
+          for per in ("IS", "EMB", "HO"):
+              for d in ("L", "S"):
+                  a = mine["trigger_E1"][(d, per)]; b = mine["minstop_skip_E1"][(d, per)]; c = mine["fill_E1"][(d, per)]
+                  res["by_period_direction"]["%s|%s" % (per, d)] = {"triggers": a, "skipped": b, "filled": c}; print("  %-3s %s triggers=%d skipped=%d filled=%d" % (per, d, a, b, c))
+          def q(v):
+              v = sorted(v)
+              if not v: return None
+              if len(v) == 1: return {"n": 1, "min": v[0], "q1": v[0], "median": v[0], "q3": v[0], "max": v[0]}
+              a = statistics.quantiles(v, n=4, method="inclusive"); return {"n": len(v), "min": v[0], "q1": a[0], "median": a[1], "q3": a[2], "max": v[-1]}
+          f = lambda r: "n=%d min=%.4f q1=%.4f median=%.4f q3=%.4f max=%.4f" % (r["n"], r["min"], r["q1"], r["median"], r["q3"], r["max"]) if r else "n=0"
+          print("STOP DISTANCE stop_pct (percent of order price) - SKIPPED triggers (value stored in minstop_skip events)")
+          sv = {k: v for k, v in skip.items()}; res["skipped_stop_pct"] = {"ALL": q(list(sv.values()))}; print("  ALL ", f(res["skipped_stop_pct"]["ALL"]))
+          for per in ("IS", "EMB", "HO"):
+              for d in ("L", "S"):
+                  r = q([v for k, v in sv.items() if trig[k][2] == per and trig[k][1] == d]); res["skipped_stop_pct"]["%s|%s" % (per, d)] = r; print("  %-3s %s %s" % (per, d, f(r)))
+          print("STOP DISTANCE stop_pct - FILLED entries: NOT STORED in the frozen events (fill events carry no stop/price field).")
+          print("  Only mechanical bound available: every filled Entry-1 passed the frozen rule, i.e. stop_pct >= 1.10 percent (n=%d); exact values UNAVAILABLE." % len(fill))
+          res["filled_stop_pct"] = {"n": len(fill), "exact_values_available": 0, "rule_implied_lower_bound_pct": 1.10}
+          print("ATR-NORMALISED STOP DISTANCE: UNAVAILABLE. The frozen events/counts store no ATR value and no price/stop in price units (spike_detected carries only atr_gap flag).")
+          print("  Formula that would apply if authorised and sourced from the frozen snapshot candles (NOT computed here): (trigger - stop)/ATR14, ATR14 = Wilder ATR on the candle sequence before the first spike candle (the spike reference ATR used by the engine). Available sample: 0 of %d triggers; skipped %d, filled %d." % (len(trig), len(skip), len(fill)))
+          res["atr_normalised"] = {"available": False, "n_available": 0, "n_triggers": len(trig), "reason": "no ATR or price/stop-in-price fields in frozen events/counts"}
+          print("FILLED ENTRY-1 LIST (identification only: symbol, direction, period, trigger-candle time UTC, stratum, primary filter, gap fill)")
+          import datetime as dt
+          fl = []
+          for k in sorted(fill, key=lambda k: fill[k]["ts"]):
+              e = fill[k]; t = dt.datetime.fromtimestamp(e["ts"] / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+              fl.append({"sym": k[0], "dir": trig[k][1], "period": trig[k][2], "ts": e["ts"], "stratum": e["stratum"], "pf": e["pf"], "gap_fill": e["gap_fill"]})
+              print("  %-12s %s %-3s %s %-6s pf=%s gap_fill=%s" % (k[0], trig[k][1], trig[k][2], t, e["stratum"], e["pf"], e["gap_fill"]))
+          res["filled_list"] = fl; res["label"] = "DESCRIPTIVE ONLY - no engine change, no rerun, no threshold tested, not evidence of profitability"
+          js = json.dumps(res, sort_keys=True, indent=1); open(os.path.join(OUT, "trigger_audit.json"), "w").write(js)
+          print("AUDIT_RESULTS_SHA256", hashlib.sha256(js.encode()).hexdigest()); print("AUDIT_DONE (descriptive only; engine/parameters untouched)")
+          PYEOF
+          echo "AUDIT_CODE_SHA256_COMPUTED=$(sha256sum stage3_trigger_audit.py | cut -d' ' -f1)"
+          test "$(sha256sum stage3_trigger_audit.py | cut -d' ' -f1)" = "$AUDIT_CODE_SHA256" || { echo "ABORT_AUDIT: code hash mismatch"; exit 2; }
+
+      - name: Run descriptive trigger review
+        shell: bash
+        run: |
+          RES_DIR=s3res OUT_DIR=audit_out python3 stage3_trigger_audit.py 2>&1 | tee audit_log.txt
+          cp audit_log.txt audit_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-trigger-audit
+          path: audit_out/
+          retention-days: 90
+          if-no-files-found: ignore
