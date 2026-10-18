@@ -1,0 +1,148 @@
+name: MicroMAP Stage 3 descriptive stop-distance audit (read-only; artifacts only, no repo commit, no rule change)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUDIT_CODE_SHA256: "15f43c86207149be30f39e6d02c227353c7dd974b6d417afb89988e6aab99b96"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Locate the Stage 3 run (actual run ID) and its artifact
+        id: find
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID"
+          gh run list -R "$GITHUB_REPOSITORY" --workflow micromap_stage3.yml --limit 30 --json databaseId,number,headSha,conclusion,status,createdAt,url > runs.json
+          python3 - <<'PY'
+          import json, os, sys
+          runs = [r for r in json.load(open("runs.json")) if r["conclusion"] == "success"]
+          print("SUCCESSFUL_STAGE3_RUNS:", json.dumps(runs))
+          if len(runs) != 1:
+              print("ABORT_AUDIT: expected exactly one successful Stage 3 run, found", len(runs)); sys.exit(2)
+          r = runs[0]
+          print("STAGE3_RUN_ID", r["databaseId"], "| run number", r["number"], "| commit", r["headSha"], "| created", r["createdAt"], "| url", r["url"])
+          open(os.environ["GITHUB_OUTPUT"], "a").write("run_id=%s\n" % r["databaseId"])
+          PY
+          RID=$(grep -o 'run_id=[0-9]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID/artifacts" > arts.json
+          RID=$RID python3 - <<'PY'
+          import json, os
+          repo = os.environ["GITHUB_REPOSITORY"]; rid = os.environ["RID"]
+          for a in json.load(open("arts.json"))["artifacts"]:
+              print("STAGE3_ARTIFACT name=%s id=%s size_bytes=%s digest=%s created=%s expires=%s expired=%s" % (a["name"], a["id"], a["size_in_bytes"], a.get("digest"), a["created_at"], a["expires_at"], a["expired"]))
+              print("STAGE3_ARTIFACT_WEB_URL https://github.com/%s/actions/runs/%s/artifacts/%s" % (repo, rid, a["id"]))
+          PY
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mm-stage3-15m-results
+          path: s3res
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write audit code and verify its hash
+        shell: bash
+        run: |
+          cat > stage3_stop_audit.py <<'PYEOF'
+          # MicroMAP Stage 3 - DESCRIPTIVE stop-distance audit of Entry-1 minimum-stop skips. Read-only. No rules, thresholds or parameters are touched or proposed.
+          import os, sys, json, gzip, hashlib, collections, statistics
+          FROZEN = {"events_sha": "d35599bc48976960caa54680eb9d2e39852aff55f94522ef36aeee5727fba1ee",
+                    "counts_sha": "5651c7e2d8e41decb3c646741f5224213d37ba7e72c7754458b2ca4e6a91e826",
+                    "is_end": 1767556800000, "emb_end": 1768161600000, "n_skips": 162}
+          MOCK = os.environ.get("AUDIT_MOCK") == "1"
+          cfg = dict(FROZEN)
+          if MOCK:
+              cfg.update(events_sha=os.environ["EXPECT_EVENTS_SHA"], counts_sha=os.environ["EXPECT_COUNTS_SHA"], is_end=int(os.environ["IS_END"]), emb_end=int(os.environ["EMB_END"]), n_skips=None)
+          D = os.environ.get("RES_DIR", "s3res"); OUT = os.environ.get("OUT_DIR", "audit_out"); os.makedirs(OUT, exist_ok=True)
+          def sha(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def abort(m): print("ABORT_AUDIT:", m); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+          ev_p, ct_p = os.path.join(D, "events.jsonl.gz"), os.path.join(D, "stage3_counts.json")
+          for p in (ev_p, ct_p):
+              if not os.path.exists(p): abort("missing " + p)
+          if sha(ev_p) != cfg["events_sha"]: abort("events.jsonl.gz hash %s != frozen %s" % (sha(ev_p), cfg["events_sha"]))
+          if sha(ct_p) != cfg["counts_sha"]: abort("stage3_counts.json hash %s != frozen %s" % (sha(ct_p), cfg["counts_sha"]))
+          print("V1 Stage 3 result files match the frozen hashes: events", cfg["events_sha"], "counts", cfg["counts_sha"])
+          def period(ts): return "IS" if ts < cfg["is_end"] else ("EMB" if ts < cfg["emb_end"] else "HO")
+          rows = []; cur = {}
+          for ln in gzip.open(ev_p, "rt"):
+              e = json.loads(ln); s = e["sym"]
+              if e["t"] == "spike_detected": cur[s] = period(e["ts"])
+              elif e["t"] == "minstop_skip" and e["no"] == 1: rows.append((s, "L" if e["d"] == 1 else "S", cur[s], float(e["stop_pct"])))
+          cj = json.load(open(ct_p)); ref = collections.Counter()
+          for k, v in cj["totals"].items():
+              d, per, st, m = k.split("|")
+              if m == "minstop_skip_E1": ref[(d, per)] += v
+          mine = collections.Counter((d, p) for s, d, p, x in rows)
+          if mine != ref: abort("events-derived skip counts %s != counts json %s" % (dict(mine), dict(ref)))
+          if cfg["n_skips"] is not None and len(rows) != cfg["n_skips"]: abort("n skips %d != %d" % (len(rows), cfg["n_skips"]))
+          print("V2 Entry-1 min-stop skips from events:", len(rows), "== counts json by direction x period (reconciled)")
+          def q(v):
+              v = sorted(v)
+              if len(v) == 0: return None
+              if len(v) == 1: return {"n": 1, "min": v[0], "q1": v[0], "median": v[0], "q3": v[0], "max": v[0], "mean": v[0]}
+              a = statistics.quantiles(v, n=4, method="inclusive")
+              return {"n": len(v), "min": v[0], "q1": a[0], "median": a[1], "q3": a[2], "max": v[-1], "mean": sum(v) / len(v)}
+          f = lambda r: "n=%d min=%.4f q1=%.4f median=%.4f q3=%.4f max=%.4f mean=%.4f" % (r["n"], r["min"], r["q1"], r["median"], r["q3"], r["max"], r["mean"]) if r else "n=0"
+          allv = [x for *_, x in rows]; res = {"all": q(allv)}
+          print("STOP_PCT (stop distance as % of order price; all skipped by the 1.10% minimum-stop rule; units = percent)")
+          print("ALL ", f(res["all"]))
+          print("non-positive stop_pct (should be 0):", sum(1 for x in allv if x <= 0), "| at or above 1.10 (should be 0):", sum(1 for x in allv if x >= 1.10))
+          dec = statistics.quantiles(sorted(allv), n=10, method="inclusive"); res["deciles_10_to_90"] = dec
+          print("DECILES p10..p90:", " ".join("%.4f" % x for x in dec))
+          edges = [round(0.1 * i, 1) for i in range(0, 12)]; hist = collections.OrderedDict()
+          for a, b in zip(edges[:-1], edges[1:]): hist["%.1f-%.1f" % (a, b)] = sum(1 for x in allv if a <= x < b)
+          res["histogram_0.1pct_bins"] = hist; print("HISTOGRAM (bin width 0.1 percentage points, counts):", " ".join("%s:%d" % kv for kv in hist.items()))
+          print("BY PERIOD x DIRECTION")
+          res["by_period_direction"] = {}
+          for per in ("IS", "EMB", "HO"):
+              for d in ("L", "S", "ALL"):
+                  v = [x for s, dd, p, x in rows if p == per and (d == "ALL" or dd == d)]; r = q(v); res["by_period_direction"]["%s|%s" % (per, d)] = r; print(" ", per, d, f(r))
+          print("BY DIRECTION (all periods)")
+          for d in ("L", "S"):
+              r = q([x for s, dd, p, x in rows if dd == d]); res["by_direction_" + d] = r; print(" ", d, f(r))
+          print("COUNTS BY SYMBOL (symbol: n IS/EMB/HO | L/S | min median max)")
+          bs = collections.defaultdict(list)
+          for s, d, p, x in rows: bs[s].append((d, p, x))
+          res["by_symbol"] = {}
+          for s in sorted(bs, key=lambda k: (-len(bs[k]), k)):
+              L = bs[s]; v = [x[2] for x in L]; c = collections.Counter(x[1] for x in L); dd = collections.Counter(x[0] for x in L)
+              res["by_symbol"][s] = {"n": len(L), "IS": c["IS"], "EMB": c["EMB"], "HO": c["HO"], "L": dd["L"], "S": dd["S"], "min": min(v), "median": statistics.median(v), "max": max(v)}
+              print("  %-14s n=%d %d/%d/%d | %d/%d | %.4f %.4f %.4f" % (s, len(L), c["IS"], c["EMB"], c["HO"], dd["L"], dd["S"], min(v), statistics.median(v), max(v)))
+          print("symbols with at least one skip:", len(bs), "of 55; symbols with none:", 55 - len(bs))
+          res["label"] = "DESCRIPTIVE ONLY - not evidence of profitability or strategy validity; no thresholds proposed or tested; holdout used for reporting only"
+          js = json.dumps(res, sort_keys=True, indent=1); open(os.path.join(OUT, "stop_audit.json"), "w").write(js)
+          print("AUDIT_RESULTS_SHA256", hashlib.sha256(js.encode()).hexdigest()); print("AUDIT_DONE (descriptive only; no rule/threshold/parameter changed)")
+          PYEOF
+          echo "AUDIT_CODE_SHA256_COMPUTED=$(sha256sum stage3_stop_audit.py | cut -d' ' -f1)"
+          test "$(sha256sum stage3_stop_audit.py | cut -d' ' -f1)" = "$AUDIT_CODE_SHA256" || { echo "ABORT_AUDIT: code hash mismatch"; exit 2; }
+
+      - name: Run descriptive audit
+        shell: bash
+        run: |
+          RES_DIR=s3res OUT_DIR=audit_out python3 stage3_stop_audit.py 2>&1 | tee audit_log.txt
+          cp audit_log.txt audit_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-stop-audit
+          path: audit_out/
+          retention-days: 90
+          if-no-files-found: ignore
