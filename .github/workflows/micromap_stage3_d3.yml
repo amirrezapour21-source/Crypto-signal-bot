@@ -1,0 +1,390 @@
+name: MicroMAP Stage 3 D3 minimum-stop bottleneck decomposition (read-only; artifacts only, no repo commit, no rule change)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUDIT_CODE_SHA256: "4ddae03c1d79c3e9d20b0b74a0edd0da5e0139c05ff559d9d42d3976537e3060"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Locate the Stage 3 run (actual run ID) and its artifact
+        id: find
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID"
+          gh run list -R "$GITHUB_REPOSITORY" --workflow micromap_stage3.yml --limit 30 --json databaseId,number,headSha,conclusion,status,createdAt,url > runs.json
+          python3 - <<'PY'
+          import json, os, sys
+          runs = [r for r in json.load(open("runs.json")) if r["conclusion"] == "success"]
+          print("SUCCESSFUL_STAGE3_RUNS:", json.dumps(runs))
+          if len(runs) != 1:
+              print("ABORT_AUDIT: expected exactly one successful Stage 3 run, found", len(runs)); sys.exit(2)
+          r = runs[0]
+          print("STAGE3_RUN_ID", r["databaseId"], "| run number", r["number"], "| commit", r["headSha"], "| created", r["createdAt"], "| url", r["url"])
+          open(os.environ["GITHUB_OUTPUT"], "a").write("run_id=%s\n" % r["databaseId"])
+          PY
+          RID=$(grep -o 'run_id=[0-9]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID/artifacts" > arts.json
+          RID=$RID python3 - <<'PY'
+          import json, os
+          repo = os.environ["GITHUB_REPOSITORY"]; rid = os.environ["RID"]
+          for a in json.load(open("arts.json"))["artifacts"]:
+              print("STAGE3_ARTIFACT name=%s id=%s size_bytes=%s digest=%s created=%s expires=%s expired=%s" % (a["name"], a["id"], a["size_in_bytes"], a.get("digest"), a["created_at"], a["expires_at"], a["expired"]))
+              print("STAGE3_ARTIFACT_WEB_URL https://github.com/%s/actions/runs/%s/artifacts/%s" % (repo, rid, a["id"]))
+          PY
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mm-stage3-15m-results
+          path: s3res
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-15m-*
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-meta
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-manifest
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write audit code and verify its hash
+        shell: bash
+        run: |
+          cat > stage3_d3_decomposition.py <<'PYEOF'
+          # MicroMAP Stage 3 - READ-ONLY diagnostic D3: minimum-stop bottleneck decomposition of the 175 Entry-1 triggers (skips vs fills).
+          # Uses the frozen snapshot (hash-verified) and the frozen Stage 3 events/counts only. No engine import, no parameter change, no strategy re-run,
+          # no threshold test, no P&L. Descriptive only.
+          import os, sys, json, gzip, glob, hashlib, collections, statistics, datetime as _dt
+          FROZEN_MASTER = "4c3350b8a6ae095446aa6021d5c34b198802281c78545ece68c5fa9aba9ad82b"
+          FROZEN_CONTRACTS = "39c3197a3ea104bf08ead742298bdc0d749362f0686ad08b4496283f0fc31878"
+          FROZEN_RUN = "39046246188"
+          FROZEN = {"events_sha": "d35599bc48976960caa54680eb9d2e39852aff55f94522ef36aeee5727fba1ee", "counts_sha": "5651c7e2d8e41decb3c646741f5224213d37ba7e72c7754458b2ca4e6a91e826",
+                    "is_end": 1767556800000, "emb_end": 1768161600000, "n_trig": 175, "n_skip": 162, "n_fill": 13}
+          TF = 15; STEP = TF * 60000; TOL = 2e-6   # stored stop_pct is rounded to 6 decimals; tolerance in percentage points
+          MOCK = os.environ.get("AUDIT_MOCK") == "1"; cfg = dict(FROZEN); expect = (FROZEN_MASTER, FROZEN_CONTRACTS, FROZEN_RUN)
+          if MOCK:
+              cfg.update(events_sha=os.environ["EXPECT_EVENTS_SHA"], counts_sha=os.environ["EXPECT_COUNTS_SHA"], is_end=int(os.environ["IS_END"]), emb_end=int(os.environ["EMB_END"]), n_trig=None, n_skip=None, n_fill=None)
+              expect = (os.environ["EXPECT_MASTER"], os.environ["EXPECT_CONTRACTS"], os.environ["EXPECT_RUN"])
+          DL = os.environ.get("DL_DIR", "dl"); D = os.environ.get("RES_DIR", "s3res"); OUT = os.environ.get("OUT_DIR", "audit_out"); os.makedirs(OUT, exist_ok=True)
+          def _sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def _d(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def abort(msg):
+              print("ABORT_STAGE3:", msg); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+
+          def _analyze(tsv, tf):
+              step = tf * 60000; tsv = sorted(tsv); off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          def verify_and_load(DL, expect_master, expect_contracts, expect_run):
+              """Verify every required 15m artifact against the manifest. Abort on any problem. Returns (man, contracts, universe, metas)."""
+              mp = glob.glob(DL + "/*/manifest.json")
+              if len(mp) != 1: abort("manifest.json not found exactly once (%d)" % len(mp))
+              man = json.load(open(mp[0]))
+              files = [tuple(x) for x in man["files"]]; fh = dict(files)
+              master = hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files)).encode()).hexdigest()
+              if master != man["master_sha256"]: abort("manifest internal master hash mismatch %s" % master)
+              if master != expect_master: abort("manifest master %s != frozen %s" % (master, expect_master))
+              if str(man.get("run_id")) != expect_run: abort("manifest run_id %s != %s" % (man.get("run_id"), expect_run))
+              if man["tf_results"]["15"]["verdict"] != "PASS": abort("manifest 15m verdict not PASS")
+              print("V1 manifest ok: run_id", man["run_id"], "master", master, "manifest_files", len(files))
+              cj = [r for r, h in files if r.endswith("contracts_active_55.json")]
+              if len(cj) != 1: abort("contract snapshot not in manifest")
+              cp = os.path.join(DL, cj[0])
+              if not os.path.exists(cp): abort("contract snapshot file missing")
+              if _sha_file(cp) != fh[cj[0]] or fh[cj[0]] != expect_contracts: abort("contract snapshot hash mismatch")
+              contracts = json.load(open(cp)); universe = list(contracts["universe"])
+              if len(universe) != 55 or len(contracts["contracts"]) < 55 or contracts["missing"]: abort("contract snapshot universe/missing problem")
+              print("V2 contract snapshot ok sha", fh[cj[0]], "symbols", len(universe))
+              exp15 = {r for r, h in files if "/" in r and r.split("/")[0].startswith("mm-snap-15m-")}
+              if len(exp15) != 3 * len(universe): abort("manifest 15m file count %d != %d" % (len(exp15), 3 * len(universe)))
+              present = {os.path.relpath(p, DL) for p in glob.glob(DL + "/mm-snap-15m-*/*")}
+              if present - exp15: abort("unexpected extra files in 15m artifacts: %s" % sorted(present - exp15)[:5])
+              if exp15 - present: abort("missing 15m files: %s" % sorted(exp15 - present)[:5])
+              metas = {}; nbad = 0
+              for sym in universe:
+                  mrel = [r for r in exp15 if r.endswith("/%s_15m.meta.json" % sym)]
+                  if len(mrel) != 1: abort("meta missing for " + sym)
+                  dirn = os.path.dirname(mrel[0]); base = "%s_15m" % sym
+                  for suf in (".csv.gz", ".calls.csv", ".meta.json"):
+                      rel = dirn + "/" + base + suf
+                      if _sha_file(os.path.join(DL, rel)) != fh[rel]: abort("file hash != manifest: " + rel)
+                  m = json.load(open(os.path.join(DL, mrel[0])))
+                  if m["sha256_csv_gz"] != fh[dirn + "/" + base + ".csv.gz"] or m["sha256_calls"] != fh[dirn + "/" + base + ".calls.csv"]: abort("meta hash fields != manifest: " + sym)
+                  raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read())
+                  if hashlib.sha256(raw).hexdigest() != m["sha256_csv_raw"]: abort("raw csv hash mismatch " + sym)
+                  tsv = []
+                  for ln in raw.decode().split("\n")[1:]:
+                      if ln:
+                          f = ln.split(","); tsv.append((int(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5])))
+                  an = _analyze(tsv, TF)
+                  if json.loads(json.dumps(an)) != m["integrity"]: abort("integrity recompute differs " + sym)
+                  if not m["complete"] or m["integrity"]["off_grid"] or m["integrity"]["ohlc_bad"] or m["integrity"]["rows"] == 0: abort("meta integrity flags " + sym)
+                  if m["end_ms_exclusive"] != man["end_ms_exclusive"] or m["tf_min"] != TF or m["symbol"] != sym: abort("meta identity mismatch " + sym)
+                  if len({t[0] for t in tsv}) != len(tsv) or [t[0] for t in tsv] != sorted(t[0] for t in tsv): abort("timestamps not unique/sorted " + sym)
+                  metas[sym] = (m, dirn, base)
+              print("V3 all", len(universe), "symbols: 165 files hash==manifest, raw hash, integrity recompute, complete, no off-grid/ohlc-bad: PASS")
+              return man, contracts, universe, metas
+
+          def read_series(DL, dirn, base):
+              raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read()).decode().split("\n")[1:]
+              ts = []; O = []; H = []; L = []; C = []
+              for ln in raw:
+                  if ln:
+                      f = ln.split(","); ts.append(int(f[0])); O.append(float(f[1])); H.append(float(f[2])); L.append(float(f[3])); C.append(float(f[4]))
+              return ts, O, H, L, C
+
+
+
+          # ---------------- verification of inputs ----------------
+          ev_p, ct_p = os.path.join(D, "events.jsonl.gz"), os.path.join(D, "stage3_counts.json")
+          for p in (ev_p, ct_p):
+              if not os.path.exists(p): abort("missing " + p)
+          if _sha_file(ev_p) != cfg["events_sha"]: abort("events hash mismatch %s" % _sha_file(ev_p))
+          if _sha_file(ct_p) != cfg["counts_sha"]: abort("counts hash mismatch %s" % _sha_file(ct_p))
+          print("V1 Stage 3 result files match the frozen hashes: events", cfg["events_sha"], "counts", cfg["counts_sha"])
+          man, contracts, universe, metas = verify_and_load(DL, expect[0], expect[1], expect[2])
+          def period(ts): return "IS" if ts < cfg["is_end"] else ("EMB" if ts < cfg["emb_end"] else "HO")
+          # ---------------- read frozen events ----------------
+          cur = {}; trig = {}; skip = {}; fill = {}; allspk = []; nentry_other = 0
+          for ln in gzip.open(ev_p, "rt"):
+              e = json.loads(ln); s = e["sym"]; t = e["t"]
+              if t == "spike_detected": cur[s] = e; allspk.append((s, e["ts"], e["n"], e["d"], bool(e["atr_gap"])))
+              elif t == "entry_trigger" and e["no"] == 1: trig[(s, e["i"])] = {"sym": s, "d": e["d"], "ts": e["ts"], "i": e["i"], "spike": cur[s], "per": period(cur[s]["ts"])}
+              elif t == "minstop_skip" and e["no"] == 1: skip[(s, e["i"])] = float(e["stop_pct"])
+              elif t == "fill" and e["no"] == 1: fill[(s, e["i"])] = e
+          if set(trig) != set(skip) | set(fill) or set(skip) & set(fill): abort("trigger set != skipped U filled")
+          if cfg["n_trig"] is not None and (len(trig), len(skip), len(fill)) != (cfg["n_trig"], cfg["n_skip"], cfg["n_fill"]): abort("totals differ from frozen 175/162/13")
+          print("V2 triggers %d = skipped %d + filled %d (events); frozen totals match" % (len(trig), len(skip), len(fill)))
+          # ---------------- independent reconstruction ----------------
+          def wilder(H, L, C):
+              n = len(H); atr = [None] * n; trs = []; prev = None
+              for k in range(n):
+                  tr = (H[k] - L[k]) if prev is None else max(H[k] - L[k], abs(H[k] - prev), abs(L[k] - prev)); trs.append(tr)
+                  if k == 13: atr[k] = sum(trs) / 14
+                  elif k >= 14: atr[k] = (atr[k - 1] * 13 + tr) / 14
+                  prev = C[k]
+              return atr
+          rows = []; byse = collections.defaultdict(list)
+          for k, t in trig.items(): byse[t["sym"]].append(t)
+          rule_fail = []; mism = []; unavailable = []; diffs = []
+          for sym in sorted(byse):
+              m, dirn, base = metas[sym]; ts, O, H, L, C = read_series(DL, dirn, base); tick = float(contracts["contracts"][sym]["tickSize"])
+              idx = {x: j for j, x in enumerate(ts)}; atr = wilder(H, L, C)
+              for t in byse[sym]:
+                  i = t["i"]; d = t["d"]; sp = t["spike"]; key = (sym, i); status = "filled" if key in fill else "skipped"
+                  row = {"sym": sym, "dir": "L" if d == 1 else "S", "period": t["per"], "ts": t["ts"], "status": status, "trigger": None, "stop": None, "stop_pct": None, "atr_ref": None, "atr_atr_gap_flag": sp["atr_gap"], "stop_over_atr": None, "unavailable": None}
+                  if ts[i] != t["ts"]: abort("trigger ts mismatch %s %s" % (sym, i))
+                  s0_ = idx[sp["ts"]]
+                  if s0_ >= 15:
+                      gflag = (ts[s0_ - 1] - ts[s0_ - 15] != 14 * STEP)
+                      gaps = []
+                      for kk in range(s0_ - 14, s0_):
+                          if ts[kk] - ts[kk - 1] != STEP: gaps.append({"from": ts[kk - 1], "to": ts[kk], "missing_bars": (ts[kk] - ts[kk - 1]) // STEP - 1, "bars_before_reference": (s0_ - 1) - kk})
+                  else: gflag = False; gaps = []
+                  hist = [(kk, (ts[kk] - ts[kk - 1]) // STEP - 1) for kk in range(1, s0_) if ts[kk] - ts[kk - 1] != STEP]
+                  row.update(gflag_recomputed=gflag, gflag_stored=bool(sp["atr_gap"]), gaps_in_window=gaps, hist_gap_events=len(hist), hist_missing_bars=sum(m for _, m in hist), contiguous=(ts[i] - ts[s0_] == (i - s0_) * STEP), spike_ts=sp["ts"], trig_i=i)
+                  s0 = idx[sp["ts"]]; n = sp["n"]; cs = s0 + n
+                  row.update(n_spike=n, ch_len=i - cs, spike_stratum=sp.get("stratum"), hour=(t["ts"] // 3600000) % 24)
+                  if s0 < 14 or atr[s0 - 1] is None or cs >= i or i - cs < 3 or i - cs > 12: row["unavailable"] = "setup geometry/ATR history not reconstructible"; unavailable.append(key); rows.append(row); continue
+                  V = (lambda o, h, l, c: (o, h, l, c)) if d == 1 else (lambda o, h, l, c: (-o, -l, -h, -c))
+                  def vw(k): return V(O[k], H[k], L[k], C[k])
+                  aref = atr[s0 - 1]; ok = True; why = []
+                  sr = []; hi = -1e300; origin = vw(s0)[2]
+                  for k in range(s0, cs):
+                      o, h, l, c = vw(k); rng = h - l; sr.append(rng); hi = max(hi, h)
+                      if not (c > o and rng > 0 and rng >= 1.0 * aref and (c - l) >= 0.7 * rng and (c - o) >= 0.5 * rng): ok = False; why.append("spike_candle_rule@%d" % k)
+                  o, h, l, c = vw(cs); rng = h - l
+                  if (c > o and rng > 0 and rng >= 1.0 * aref and (c - l) >= 0.7 * rng and (c - o) >= 0.5 * rng): ok = False; why.append("run_not_ended")
+                  mean_r = sum(sr) / len(sr); limit = hi - 0.5 * (hi - origin); last_h = vw(cs - 1)[1]; ch_low = 1e300
+                  for k in range(cs, i):
+                      o, h, l, c = vw(k)
+                      if not (h <= last_h and (h - l) <= 0.7 * mean_r and l >= limit): ok = False; why.append("channel_rule@%d" % k)
+                      ch_low = min(ch_low, l); last_h = h
+                  if not (vw(i)[1] > last_h): ok = False; why.append("trigger_not_strict_breakout")
+                  trigger_v = last_h; sl_v = ch_low - tick; pct = (trigger_v - sl_v) / abs(trigger_v) * 100.0
+                  row.update(trigger=abs(trigger_v), stop=abs(sl_v), stop_pct=pct, atr_ref=aref, stop_over_atr=(trigger_v - sl_v) / aref)
+                  sh_ = hi - origin; row.update(spike_h_pct=sh_ / abs(trigger_v) * 100.0, spike_h_atr=sh_ / aref, stop_over_spike=(trigger_v - sl_v) / sh_)
+                  if not ok: rule_fail.append((key, why))
+                  if status == "skipped":
+                      row["stored_stop_pct"] = skip[key]; diffs.append(abs(pct - skip[key]))
+                      if abs(pct - skip[key]) > TOL: mism.append((key, pct, skip[key]))
+                  rows.append(row)
+          nsk_chk = sum(1 for r in rows if r["status"] == "skipped" and r["stop_pct"] is not None)
+          print("V3 RECONSTRUCTION: independent Wilder ATR14 (reference = candle before the first spike candle) and stop distance rebuilt for %d of %d triggers; unavailable: %d" % (sum(1 for r in rows if r["stop_pct"] is not None), len(rows), len(unavailable)))
+          print("V4 RULE RE-VERIFICATION (spike candles >=1.0xATR/top-30%%/body>=0.5; run ended by non-qualifying candle; channel high/width(0.7x)/50%% pullback/<=12; strict breakout): failures = %d of %d" % (len(rule_fail), len(rows)))
+          print("V5 STOP_PCT CROSS-CHECK vs stored values of the skipped triggers: compared %d, tolerance %.0e pct-points, mismatches = %d" % (nsk_chk, TOL, len(mism)))
+          if unavailable or rule_fail or mism or nsk_chk != len(skip):
+              print("DETAIL unavailable:", unavailable[:5], "| rule_fail:", rule_fail[:5], "| mismatches:", mism[:5]); abort("reconciliation failed - audit stopped (no distributions reported)")
+          v6 = [(r["sym"], r["ts"], r["stop_pct"]) for r in rows if (r["status"] == "filled" and r["stop_pct"] < 1.10) or (r["status"] == "skipped" and r["stop_pct"] >= 1.10)]
+          print("V6 RULE-IMPLIED CHECK: every filled reconstructed stop_pct >= 1.10 and every skipped < 1.10: violations = %d" % len(v6))
+          if v6: print("DETAIL", v6[:5]); abort("rule-implied stop-distance check failed - audit stopped")
+          mx = max(diffs)
+          print("   max |reconstructed - stored| = %.2e pct-points (PASS)" % mx)
+
+          # ================= D3 =================
+          FROZEN_STAGE3_CODE = "3ae707caa684a6fbdd288131534aeb6a08dad2464323de789600ac2450f4d7d1"
+          CT = json.load(open(os.path.join(D, "stage3_counts.json")))
+          if not MOCK:
+              if CT.get("snapshot_master_sha256") != FROZEN_MASTER or str(CT.get("snapshot_run_id")) != FROZEN_RUN or CT.get("contracts_sha256") != FROZEN_CONTRACTS or CT.get("code_sha256") != FROZEN_STAGE3_CODE or CT.get("mock") is not False or CT["gate"]["status"] != "INSUFFICIENT_SAMPLE":
+                  abort("counts json provenance/gate differs from the frozen values")
+          print("V1b counts json provenance: snapshot run %s; master/contracts/Stage 3 code hashes equal the frozen values; gate %s (IS %s / HO %s primary-filter fills vs %s / %s); mock=%s" % (CT.get("snapshot_run_id"), CT["gate"]["status"], CT["gate"]["insample_filled_E1_pf"], CT["gate"]["holdout_filled_E1_pf"], CT["gate"]["need_is"], CT["gate"]["need_ho"], CT.get("mock")))
+          cnt = collections.Counter()
+          for k_, v_ in CT["per_symbol"].items():
+              for key, val in v_["counts"].items():
+                  dd_, per_, st_, ev_ = key.split("|")
+                  if ev_ in ("trigger_E1", "minstop_skip_E1", "fill_E1"): cnt[(k_, dd_, per_, ev_)] += val
+          mine = collections.Counter()
+          for r in rows:
+              mine[(r["sym"], r["dir"], r["period"], "trigger_E1")] += 1; mine[(r["sym"], r["dir"], r["period"], "minstop_skip_E1" if r["status"] == "skipped" else "fill_E1")] += 1
+          if +cnt != +mine: abort("per symbol/direction/period counts differ from the frozen counts json")
+          print("V7 per symbol x direction x period triggers/skips/fills (events) equal the frozen counts json exactly (%d cells): PASS" % len(+cnt))
+          def pct(a_, b_): return 100.0 * a_ / b_ if b_ else 0.0
+          def q(v):
+              v = sorted(v)
+              if not v: return None
+              if len(v) == 1: return {"n": 1, "min": v[0], "q1": v[0], "median": v[0], "q3": v[0], "max": v[0]}
+              a_ = statistics.quantiles(v, n=4, method="inclusive"); return {"n": len(v), "min": v[0], "q1": a_[0], "median": a_[1], "q3": a_[2], "max": v[-1]}
+          fm = lambda r, d=4: ("n=%d min=%." + str(d) + "f q1=%." + str(d) + "f median=%." + str(d) + "f q3=%." + str(d) + "f max=%." + str(d) + "f") % (r["n"], r["min"], r["q1"], r["median"], r["q3"], r["max"]) if r else "n=0"
+          res = {"strata": {}, "dist": {}}
+          nt = len(rows); nsk = sum(1 for r in rows if r["status"] == "skipped"); nf = nt - nsk
+          print("D3. MINIMUM-STOP BOTTLENECK DECOMPOSITION (descriptive; frozen 1.10% stop rule reused, no alternative tested; small denominators n<10 are marked SMALL)")
+          print("D3-1 RECONCILIATION: triggers %d = skips %d + fills %d: %s" % (nt, nsk, nf, "PASS" if nt == nsk + nf and (MOCK or (nt, nsk, nf) == (175, 162, 13)) else "FAIL"))
+          if not (nt == nsk + nf and (MOCK or (nt, nsk, nf) == (175, 162, 13))): abort("totals do not reconcile")
+          for per in ("IS", "EMB", "HO"):
+              for dd in ("L", "S"):
+                  s_ = [r for r in rows if r["period"] == per and r["dir"] == dd]
+                  print("   %-3s %s triggers %3d = skips %3d + fills %2d" % (per, dd, len(s_), sum(1 for r in s_ if r["status"] == "skipped"), sum(1 for r in s_ if r["status"] == "filled")))
+          print("   skip share of all triggers: %d / %d = %.2f%%; frozen minimum-stop rule: stop distance < 1.10%% of trigger price is skipped (V6 re-verified on every trigger: 0 violations)" % (nsk, nt, pct(nsk, nt)))
+          print("D3-2 STOP DISTANCE DISTRIBUTIONS, skips vs fills (min / Q1 / median / Q3 / max)")
+          for fld, lab in (("stop_pct", "stop distance, %% of trigger price"), ("stop_over_atr", "stop distance / ATR14 (ATR at the candle before the first spike candle; frozen gap-bridging ATR)")):
+              print("  " + lab % () if "%%" in lab else "  " + lab)
+              for st in ("skipped", "filled"):
+                  for per in ("ALL", "IS", "EMB", "HO"):
+                      for dd in ("ALL", "L", "S"):
+                          v = [r[fld] for r in rows if r["status"] == st and (per == "ALL" or r["period"] == per) and (dd == "ALL" or r["dir"] == dd)]
+                          res["dist"]["%s|%s|%s|%s" % (fld, st, per, dd)] = q(v); print("    %-7s %-3s %-3s %s%s" % (st, per, dd, fm(q(v)), "  SMALL" if 0 < len(v) < 10 else ""))
+          print("  additional reconstructed structure measures (same frozen fields, descriptive): spike height = highest spike high - low of the first spike candle")
+          for fld, lab in (("spike_h_pct", "spike height, % of trigger price"), ("spike_h_atr", "spike height / ATR14"), ("stop_over_spike", "stop distance / spike height")):
+              print("  " + lab)
+              for st in ("skipped", "filled"):
+                  for dd in ("ALL", "L", "S"):
+                      v = [r[fld] for r in rows if r["status"] == st and (dd == "ALL" or r["dir"] == dd)]; res["dist"]["%s|%s|ALL|%s" % (fld, st, dd)] = q(v)
+                      print("    %-7s %-3s %s%s" % (st, dd, fm(q(v)), "  SMALL" if 0 < len(v) < 10 else ""))
+          def strat(label, keyfn, keys=None, note=""):
+              print("D3-3 STRATUM %s%s (triggers | skips | fills | skip share)" % (label, note))
+              ks = keys if keys is not None else sorted({keyfn(r) for r in rows}); out = {}
+              for kv in ks:
+                  s_ = [r for r in rows if keyfn(r) == kv]
+                  if not s_: continue
+                  a_ = len(s_); b_ = sum(1 for r in s_ if r["status"] == "skipped"); c_ = a_ - b_; out[str(kv)] = [a_, b_, c_]
+                  print("    %-14s %3d | %3d | %2d | %6.2f%%%s" % (kv, a_, b_, c_, pct(b_, a_), "  SMALL(n<10)" if a_ < 10 else ""))
+              res["strata"][label] = out
+          strat("direction", lambda r: r["dir"]); strat("period", lambda r: r["period"], ["IS", "EMB", "HO"])
+          strat("spike length (candles)", lambda r: r["n_spike"]); strat("channel length (candles before trigger)", lambda r: r["ch_len"])
+          strat("UTC trigger hour", lambda r: "%02d" % r["hour"], ["%02d" % h for h in range(24)], " - hours with no trigger omitted")
+          strat("spike session stratum (frozen, by spike start)", lambda r: r["spike_stratum"])
+          strat("ATR-gap flag (frozen)", lambda r: "gap" if r["gflag_stored"] else "no gap", ["gap", "no gap"])
+          # episodes
+          print("D3-4 SYMBOLS vs TIMESTAMPS vs EPISODES (exact-timestamp groups and UTC dates are descriptive units only; no window, no independence claim)")
+          bysym = collections.defaultdict(list); bts = collections.defaultdict(list); bdate = collections.defaultdict(list)
+          for r in rows: bysym[r["sym"]].append(r); bts[r["ts"]].append(r); bdate[_d(r["ts"])[:10]].append(r)
+          def grp(dct, label):
+              allsk = sum(1 for v in dct.values() if all(x["status"] == "skipped" for x in v)); anyf = sum(1 for v in dct.values() if any(x["status"] == "filled" for x in v)); allf = sum(1 for v in dct.values() if all(x["status"] == "filled" for x in v))
+              print("   by %-22s: %3d units; all-skipped %3d (%.2f%%); containing >=1 fill %2d; all-filled %2d" % (label, len(dct), allsk, pct(allsk, len(dct)), anyf, allf)); return (len(dct), allsk, anyf, allf)
+          res["episodes"] = {"symbol": grp(bysym, "symbol"), "timestamp": grp(bts, "exact UTC timestamp"), "utc_date": grp(bdate, "UTC date")}
+          print("   skips counted per trigger: %d of %d (%.2f%%); per exact timestamp (units with every trigger skipped): %d of %d (%.2f%%); per UTC date: %d of %d (%.2f%%)" % (nsk, nt, pct(nsk, nt), res["episodes"]["timestamp"][1], res["episodes"]["timestamp"][0], pct(res["episodes"]["timestamp"][1], res["episodes"]["timestamp"][0]), res["episodes"]["utc_date"][1], res["episodes"]["utc_date"][0], pct(res["episodes"]["utc_date"][1], res["episodes"]["utc_date"][0])))
+          J = "2025-01-20"; jr = [r for r in rows if _d(r["ts"])[:10] == J]; ot = [r for r in rows if _d(r["ts"])[:10] != J]
+          print("   2025-01-20 DOMINANCE CHECK (display only - nothing is excluded from any conclusion): triggers that date %d = skips %d + fills %d" % (len(jr), sum(1 for r in jr if r["status"] == "skipped"), sum(1 for r in jr if r["status"] == "filled")))
+          print("   all triggers : %3d = skips %3d + fills %2d | skip share %.2f%% | IS %3d = %3d + %2d | HO %2d = %2d + %d" % (nt, nsk, nf, pct(nsk, nt), sum(1 for r in rows if r["period"] == "IS"), sum(1 for r in rows if r["period"] == "IS" and r["status"] == "skipped"), sum(1 for r in rows if r["period"] == "IS" and r["status"] == "filled"), sum(1 for r in rows if r["period"] == "HO"), sum(1 for r in rows if r["period"] == "HO" and r["status"] == "skipped"), sum(1 for r in rows if r["period"] == "HO" and r["status"] == "filled")))
+          os_ = sum(1 for r in ot if r["status"] == "skipped"); of_ = len(ot) - os_
+          print("   without that date: %3d = skips %3d + fills %2d | skip share %.2f%% | IS %3d = %3d + %2d | HO %2d = %2d + %d" % (len(ot), os_, of_, pct(os_, len(ot)), sum(1 for r in ot if r["period"] == "IS"), sum(1 for r in ot if r["period"] == "IS" and r["status"] == "skipped"), sum(1 for r in ot if r["period"] == "IS" and r["status"] == "filled"), sum(1 for r in ot if r["period"] == "HO"), sum(1 for r in ot if r["period"] == "HO" and r["status"] == "skipped"), sum(1 for r in ot if r["period"] == "HO" and r["status"] == "filled")))
+          print("   fills on that date: %d of %d (%.2f%%); IS fills on that date: %d of %d" % (sum(1 for r in jr if r["status"] == "filled"), nf, pct(sum(1 for r in jr if r["status"] == "filled"), nf), sum(1 for r in jr if r["status"] == "filled" and r["period"] == "IS"), sum(1 for r in rows if r["status"] == "filled" and r["period"] == "IS")))
+          for st in ("skipped", "filled"):
+              for fld in ("stop_pct", "stop_over_atr"):
+                  print("   %-7s %-13s all: %s | without 2025-01-20: %s%s" % (st, fld, fm(q([r[fld] for r in rows if r["status"] == st])), fm(q([r[fld] for r in ot if r["status"] == st])), "  SMALL" if st == "filled" else ""))
+          print("   fills outside 2025-01-20 (symbol dir period time | stop % | stop/ATR):")
+          for r in sorted([r for r in ot if r["status"] == "filled"], key=lambda r: r["ts"]): print("     %-12s %s %-3s %s | %.4f | %.3f" % (r["sym"], r["dir"], r["period"], _d(r["ts"]), r["stop_pct"], r["stop_over_atr"]))
+          print("   2025-01-20 triggers: 11 on two consecutive 15m candles; fills on that date: %s" % ", ".join("%s@%s" % (r["sym"], _d(r["ts"])[11:]) for r in sorted(jr, key=lambda r: (r["ts"], r["sym"])) if r["status"] == "filled"))
+          res["jan20"] = {"triggers": len(jr), "skips": sum(1 for r in jr if r["status"] == "skipped"), "fills": sum(1 for r in jr if r["status"] == "filled")}
+          # flags
+          print("D3-5 DATA-QUALITY / MISSING-CANDLE FLAGS vs SKIPS (association only; frozen gap policy preserved; no causal inference)")
+          def two(label, fn):
+              a_ = [r for r in rows if fn(r)]; b_ = [r for r in rows if not fn(r)]
+              f1 = lambda s_: "%3d triggers = %3d skips + %2d fills (skip share %.2f%%)%s" % (len(s_), sum(1 for r in s_ if r["status"] == "skipped"), sum(1 for r in s_ if r["status"] == "filled"), pct(sum(1 for r in s_ if r["status"] == "skipped"), len(s_)), "  SMALL(n<10)" if len(s_) < 10 else "")
+              print("   %-62s flagged: %s" % (label, f1(a_))); print("   %-62s not flagged: %s" % ("", f1(b_))); return [len(a_), len(b_)]
+          res["flags"] = {"atr_gap": two("frozen ATR-window gap flag (14 intervals before the reference candle)", lambda r: r["gflag_stored"]), "hist_gap": two("any gap anywhere in the ATR history before the reference candle", lambda r: r["hist_gap_events"] > 0)}
+          mb = {s: (CT["per_symbol"][s]["interior_missing_bars"], CT["per_symbol"][s]["rows"]) for s in CT["per_symbol"]}
+          msh = {s: pct(a_, a_ + b_) for s, (a_, b_) in mb.items()}
+          hi_ = sorted([s for s in msh if msh[s] > 5.0], key=lambda s: -msh[s])
+          print("   symbol-level interior missing-candle share > 5%% (diagnostic flag only, as authorised earlier): %d symbols: %s" % (len(hi_), ", ".join("%s %.2f%%" % (s, msh[s]) for s in hi_) or "-"))
+          res["flags"]["symbol_missing_gt5"] = two("trigger on a symbol with interior missing-candle share > 5%", lambda r: r["sym"] in set(hi_))
+          print("   inside the setups themselves: missing candle between first spike candle and trigger = 0 of %d triggers (A2 equivalent re-verified: %s)" % (nt, all(r["contiguous"] for r in rows)))
+          if not all(r["contiguous"] for r in rows): abort("a trigger setup contains a missing candle - frozen gap policy inconsistent")
+          gd = collections.Counter()
+          for k_, v_ in CT["totals"].items():
+              ev_ = k_.split("|")[3]
+              if "gap_discard" in ev_ or ev_ == "spike_atr_window_has_gap": gd[ev_] += v_
+          print("   frozen gap policy context (counts of setups/spikes handled by the gap rules in the whole Stage 3 run, all entries; not part of the 175): %s" % ", ".join("%s=%d" % kv for kv in sorted(gd.items())))
+          res["gap_policy_counts"] = dict(gd)
+          print("LIMITATIONS: (1) descriptive association only; no causation, no significance, no P&L or expectancy; (2) the stop distance is determined by the channel low and the trigger high, so stop/ATR and the structure measures are reconstructions from the frozen candles and not stored fields (fills carry no stop field); (3) 13 fills, only 3 outside 2025-01-20, so every fill-side stratum is SMALL and no fill-side statement is a reliable estimate; (4) exact-timestamp groups and UTC dates are descriptive units, not independent-episode counts; no clustering window was introduced; (5) the ATR-window gap flag covers only 14 intervals and earlier gaps still influence Wilder ATR; (6) the hour, channel-length and spike-length strata are marginal tables, not a model, and cannot show which rule component binds; (7) no alternative stop threshold, ATR or entry rule was evaluated; the gate remains INSUFFICIENT SAMPLE (IS 11 / HO 2 vs 200 / 100).")
+          res["label"] = "DESCRIPTIVE ONLY - minimum-stop bottleneck decomposition of frozen Entry-1 triggers; no threshold test, no exclusion, no P&L"
+          res["rows"] = rows
+          js = json.dumps(res, sort_keys=True, indent=1, default=str); open(os.path.join(OUT, "d3_minstop_decomposition.json"), "w").write(js)
+          print("AUDIT_RESULTS_SHA256", hashlib.sha256(js.encode()).hexdigest()); print("AUDIT_DONE (descriptive only; engine/parameters untouched)")
+          PYEOF
+          echo "AUDIT_CODE_SHA256_COMPUTED=$(sha256sum stage3_d3_decomposition.py | cut -d' ' -f1)"
+          test "$(sha256sum stage3_d3_decomposition.py | cut -d' ' -f1)" = "$AUDIT_CODE_SHA256" || { echo "ABORT_AUDIT: code hash mismatch"; exit 2; }
+
+      - name: Run D3 decomposition
+        shell: bash
+        run: |
+          DL_DIR=dl RES_DIR=s3res OUT_DIR=audit_out python3 stage3_d3_decomposition.py 2>&1 | tee audit_log.txt
+          cp audit_log.txt audit_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-d3
+          path: audit_out/
+          retention-days: 90
+          if-no-files-found: ignore
