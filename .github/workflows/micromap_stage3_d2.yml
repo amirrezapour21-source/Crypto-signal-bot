@@ -1,0 +1,305 @@
+name: MicroMAP Stage 3 D2 sample-gate arithmetic feasibility (read-only; artifacts only, no repo commit, no rule change)
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["MicroMAP Stage 3 D1 per-symbol concentration (read-only; artifacts only, no repo commit, no rule change)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUDIT_CODE_SHA256: "0a473507203293c63b93aee845f62ebc0cf97aa2e1bb488694ef5b23ae4d14e5"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Locate the Stage 3 run (actual run ID) and its artifact
+        id: find
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID"
+          gh run list -R "$GITHUB_REPOSITORY" --workflow micromap_stage3.yml --limit 30 --json databaseId,number,headSha,conclusion,status,createdAt,url > runs.json
+          python3 - <<'PY'
+          import json, os, sys
+          runs = [r for r in json.load(open("runs.json")) if r["conclusion"] == "success"]
+          print("SUCCESSFUL_STAGE3_RUNS:", json.dumps(runs))
+          if len(runs) != 1:
+              print("ABORT_AUDIT: expected exactly one successful Stage 3 run, found", len(runs)); sys.exit(2)
+          r = runs[0]
+          print("STAGE3_RUN_ID", r["databaseId"], "| run number", r["number"], "| commit", r["headSha"], "| created", r["createdAt"], "| url", r["url"])
+          open(os.environ["GITHUB_OUTPUT"], "a").write("run_id=%s\n" % r["databaseId"])
+          PY
+          RID=$(grep -o 'run_id=[0-9]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID/artifacts" > arts.json
+          RID=$RID python3 - <<'PY'
+          import json, os
+          repo = os.environ["GITHUB_REPOSITORY"]; rid = os.environ["RID"]
+          for a in json.load(open("arts.json"))["artifacts"]:
+              print("STAGE3_ARTIFACT name=%s id=%s size_bytes=%s digest=%s created=%s expires=%s expired=%s" % (a["name"], a["id"], a["size_in_bytes"], a.get("digest"), a["created_at"], a["expires_at"], a["expired"]))
+              print("STAGE3_ARTIFACT_WEB_URL https://github.com/%s/actions/runs/%s/artifacts/%s" % (repo, rid, a["id"]))
+          PY
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mm-stage3-15m-results
+          path: s3res
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-15m-*
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-meta
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-manifest
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write audit code and verify its hash
+        shell: bash
+        run: |
+          cat > stage3_d2_feasibility.py <<'PYEOF'
+          # MicroMAP Stage 3 - READ-ONLY diagnostic D2: arithmetic feasibility estimate for the frozen sample gate.
+          # Uses the frozen snapshot (hash-verified) and the frozen Stage 3 events/counts only. No engine import, no parameter change, no strategy re-run,
+          # no threshold test, no P&L. Descriptive only.
+          import os, sys, json, gzip, glob, hashlib, collections, statistics, datetime as _dt
+          FROZEN_MASTER = "4c3350b8a6ae095446aa6021d5c34b198802281c78545ece68c5fa9aba9ad82b"
+          FROZEN_CONTRACTS = "39c3197a3ea104bf08ead742298bdc0d749362f0686ad08b4496283f0fc31878"
+          FROZEN_RUN = "39046246188"
+          FROZEN = {"events_sha": "d35599bc48976960caa54680eb9d2e39852aff55f94522ef36aeee5727fba1ee", "counts_sha": "5651c7e2d8e41decb3c646741f5224213d37ba7e72c7754458b2ca4e6a91e826",
+                    "is_end": 1767556800000, "emb_end": 1768161600000, "n_trig": 175, "n_skip": 162, "n_fill": 13}
+          TF = 15; STEP = TF * 60000; TOL = 2e-6   # stored stop_pct is rounded to 6 decimals; tolerance in percentage points
+          MOCK = os.environ.get("AUDIT_MOCK") == "1"; cfg = dict(FROZEN); expect = (FROZEN_MASTER, FROZEN_CONTRACTS, FROZEN_RUN)
+          if MOCK:
+              cfg.update(events_sha=os.environ["EXPECT_EVENTS_SHA"], counts_sha=os.environ["EXPECT_COUNTS_SHA"], is_end=int(os.environ["IS_END"]), emb_end=int(os.environ["EMB_END"]), n_trig=None, n_skip=None, n_fill=None)
+              expect = (os.environ["EXPECT_MASTER"], os.environ["EXPECT_CONTRACTS"], os.environ["EXPECT_RUN"])
+          DL = os.environ.get("DL_DIR", "dl"); D = os.environ.get("RES_DIR", "s3res"); OUT = os.environ.get("OUT_DIR", "audit_out"); os.makedirs(OUT, exist_ok=True)
+          def _sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def _d(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def abort(msg):
+              print("ABORT_STAGE3:", msg); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+
+          def _analyze(tsv, tf):
+              step = tf * 60000; tsv = sorted(tsv); off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          def verify_and_load(DL, expect_master, expect_contracts, expect_run):
+              """Verify every required 15m artifact against the manifest. Abort on any problem. Returns (man, contracts, universe, metas)."""
+              mp = glob.glob(DL + "/*/manifest.json")
+              if len(mp) != 1: abort("manifest.json not found exactly once (%d)" % len(mp))
+              man = json.load(open(mp[0]))
+              files = [tuple(x) for x in man["files"]]; fh = dict(files)
+              master = hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files)).encode()).hexdigest()
+              if master != man["master_sha256"]: abort("manifest internal master hash mismatch %s" % master)
+              if master != expect_master: abort("manifest master %s != frozen %s" % (master, expect_master))
+              if str(man.get("run_id")) != expect_run: abort("manifest run_id %s != %s" % (man.get("run_id"), expect_run))
+              if man["tf_results"]["15"]["verdict"] != "PASS": abort("manifest 15m verdict not PASS")
+              print("V1 manifest ok: run_id", man["run_id"], "master", master, "manifest_files", len(files))
+              cj = [r for r, h in files if r.endswith("contracts_active_55.json")]
+              if len(cj) != 1: abort("contract snapshot not in manifest")
+              cp = os.path.join(DL, cj[0])
+              if not os.path.exists(cp): abort("contract snapshot file missing")
+              if _sha_file(cp) != fh[cj[0]] or fh[cj[0]] != expect_contracts: abort("contract snapshot hash mismatch")
+              contracts = json.load(open(cp)); universe = list(contracts["universe"])
+              if len(universe) != 55 or len(contracts["contracts"]) < 55 or contracts["missing"]: abort("contract snapshot universe/missing problem")
+              print("V2 contract snapshot ok sha", fh[cj[0]], "symbols", len(universe))
+              exp15 = {r for r, h in files if "/" in r and r.split("/")[0].startswith("mm-snap-15m-")}
+              if len(exp15) != 3 * len(universe): abort("manifest 15m file count %d != %d" % (len(exp15), 3 * len(universe)))
+              present = {os.path.relpath(p, DL) for p in glob.glob(DL + "/mm-snap-15m-*/*")}
+              if present - exp15: abort("unexpected extra files in 15m artifacts: %s" % sorted(present - exp15)[:5])
+              if exp15 - present: abort("missing 15m files: %s" % sorted(exp15 - present)[:5])
+              metas = {}; nbad = 0
+              for sym in universe:
+                  mrel = [r for r in exp15 if r.endswith("/%s_15m.meta.json" % sym)]
+                  if len(mrel) != 1: abort("meta missing for " + sym)
+                  dirn = os.path.dirname(mrel[0]); base = "%s_15m" % sym
+                  for suf in (".csv.gz", ".calls.csv", ".meta.json"):
+                      rel = dirn + "/" + base + suf
+                      if _sha_file(os.path.join(DL, rel)) != fh[rel]: abort("file hash != manifest: " + rel)
+                  m = json.load(open(os.path.join(DL, mrel[0])))
+                  if m["sha256_csv_gz"] != fh[dirn + "/" + base + ".csv.gz"] or m["sha256_calls"] != fh[dirn + "/" + base + ".calls.csv"]: abort("meta hash fields != manifest: " + sym)
+                  raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read())
+                  if hashlib.sha256(raw).hexdigest() != m["sha256_csv_raw"]: abort("raw csv hash mismatch " + sym)
+                  tsv = []
+                  for ln in raw.decode().split("\n")[1:]:
+                      if ln:
+                          f = ln.split(","); tsv.append((int(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5])))
+                  an = _analyze(tsv, TF)
+                  if json.loads(json.dumps(an)) != m["integrity"]: abort("integrity recompute differs " + sym)
+                  if not m["complete"] or m["integrity"]["off_grid"] or m["integrity"]["ohlc_bad"] or m["integrity"]["rows"] == 0: abort("meta integrity flags " + sym)
+                  if m["end_ms_exclusive"] != man["end_ms_exclusive"] or m["tf_min"] != TF or m["symbol"] != sym: abort("meta identity mismatch " + sym)
+                  if len({t[0] for t in tsv}) != len(tsv) or [t[0] for t in tsv] != sorted(t[0] for t in tsv): abort("timestamps not unique/sorted " + sym)
+                  metas[sym] = (m, dirn, base)
+              print("V3 all", len(universe), "symbols: 165 files hash==manifest, raw hash, integrity recompute, complete, no off-grid/ohlc-bad: PASS")
+              return man, contracts, universe, metas
+
+          def read_series(DL, dirn, base):
+              raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read()).decode().split("\n")[1:]
+              ts = []; O = []; H = []; L = []; C = []
+              for ln in raw:
+                  if ln:
+                      f = ln.split(","); ts.append(int(f[0])); O.append(float(f[1])); H.append(float(f[2])); L.append(float(f[3])); C.append(float(f[4]))
+              return ts, O, H, L, C
+
+
+
+
+          FROZEN_STAGE3_CODE = "3ae707caa684a6fbdd288131534aeb6a08dad2464323de789600ac2450f4d7d1"
+          ev_p, ct_p = os.path.join(D, "events.jsonl.gz"), os.path.join(D, "stage3_counts.json")
+          for p in (ev_p, ct_p):
+              if not os.path.exists(p): abort("missing " + p)
+          if _sha_file(ev_p) != cfg["events_sha"]: abort("events hash mismatch %s" % _sha_file(ev_p))
+          if _sha_file(ct_p) != cfg["counts_sha"]: abort("counts hash mismatch %s" %  _sha_file(ct_p))
+          print("V1 Stage 3 result files match the frozen hashes: events", cfg["events_sha"], "counts", cfg["counts_sha"])
+          CT = json.load(open(ct_p))
+          if not MOCK:
+              if CT.get("snapshot_master_sha256") != FROZEN_MASTER or str(CT.get("snapshot_run_id")) != FROZEN_RUN or CT.get("contracts_sha256") != FROZEN_CONTRACTS or CT.get("code_sha256") != FROZEN_STAGE3_CODE or CT.get("mock") is not False:
+                  abort("counts json provenance (snapshot/contracts/code hash, run id, mock flag) differs from the frozen values")
+              if CT["gate"]["status"] != "INSUFFICIENT_SAMPLE": abort("unexpected gate status in frozen counts")
+          print("V1b counts json provenance: snapshot run %s, master/contracts/Stage 3 code hashes equal the frozen values; gate status %s; mock=%s" % (CT.get("snapshot_run_id"), CT["gate"]["status"], CT.get("mock")))
+          def period(ts): return "IS" if ts < cfg["is_end"] else ("EMB" if ts < cfg["emb_end"] else "HO")
+          cur = {}; trig = {}; skip = {}; fill = {}
+          for ln in gzip.open(ev_p, "rt"):
+              e = json.loads(ln); s = e["sym"]; t = e["t"]
+              if t == "spike_detected": cur[s] = e
+              elif t == "entry_trigger" and e["no"] == 1: trig[(s, e["i"])] = {"sym": s, "d": e["d"], "ts": e["ts"], "i": e["i"], "per": period(cur[s]["ts"])}
+              elif t == "minstop_skip" and e["no"] == 1: skip[(s, e["i"])] = float(e["stop_pct"])
+              elif t == "fill" and e["no"] == 1: fill[(s, e["i"])] = e
+          if set(trig) != set(skip) | set(fill) or set(skip) & set(fill): abort("trigger set != skipped U filled")
+          if cfg["n_trig"] is not None and (len(trig), len(skip), len(fill)) != (cfg["n_trig"], cfg["n_skip"], cfg["n_fill"]): abort("totals differ from frozen 175/162/13")
+          print("V2 triggers %d = skipped %d + filled %d (events); frozen totals match" % (len(trig), len(skip), len(fill)))
+          # reconcile with the counts json (independent source): per symbol x direction x period
+          cnt = collections.Counter()
+          for k_, v_ in CT["per_symbol"].items():
+              for key, val in v_["counts"].items():
+                  dd_, per_, st_, ev_ = key.split("|")
+                  if ev_ in ("trigger_E1", "minstop_skip_E1", "fill_E1"): cnt[(k_, dd_, per_, ev_)] += val
+          mine = collections.Counter()
+          for (s, i_), t in trig.items():
+              dd_ = "L" if t["d"] == 1 else "S"; mine[(s, dd_, t["per"], "trigger_E1")] += 1
+              mine[(s, dd_, t["per"], "minstop_skip_E1" if (s, i_) in skip else "fill_E1")] += 1
+          if +cnt != +mine: abort("per-symbol/direction/period counts from events differ from the frozen counts json: %s" % str(list(((cnt - mine) + (mine - cnt)).items())[:5]))
+          print("V3 per symbol x direction x period, triggers/skips/fills from the events equal the frozen counts json exactly (%d cells): PASS" % len(+cnt))
+
+          man, contracts, universe, metas = verify_and_load(DL, expect[0], expect[1], expect[2])
+          from fractions import Fraction
+          import math
+          sp_ = CT["split"]; fz = CT["frozen_split_constants"]
+          WIN = {"span_start": sp_["span_start_ms"], "is_end": sp_["is_end_ms"], "emb_end": sp_["embargo_end_ms"], "end": sp_["end_ms_exclusive"]}
+          if not MOCK and (sp_["is_end_ms"] != cfg["is_end"] or sp_["embargo_end_ms"] != cfg["emb_end"] or sp_["span_start_ms"] != fz["span_start_ms"] or sp_["end_ms_exclusive"] != fz["end_ms_exclusive"] or sp_["is_end_ms"] != fz["is_end_ms"] or sp_["embargo_end_ms"] != fz["embargo_end_ms"]):
+              abort("split windows in the frozen counts differ from the frozen constants")
+          print("D2. ARITHMETIC FEASIBILITY ESTIMATE for the frozen sample gate (no strategy run, no new candles; transparent arithmetic on frozen Stage 3 counts only)")
+          print("D2-A Windows (UTC) from the hash-verified counts json, equal to the frozen constants: span start %s | IS end %s | embargo end %s | data end (exclusive) %s" % (_d(WIN["span_start"]), _d(WIN["is_end"]), _d(WIN["emb_end"]), _d(WIN["end"])))
+          DAY = 86400000.0
+          dur = {"IS": (WIN["is_end"] - WIN["span_start"]) / DAY, "EMB": (WIN["emb_end"] - WIN["is_end"]) / DAY, "HO": (WIN["end"] - WIN["emb_end"]) / DAY}
+          print("   observed durations: IS %.4f days | embargo %.4f days | HO %.4f days (setups are assigned to a period by spike-start time)" % (dur["IS"], dur["EMB"], dur["HO"]))
+          # snapshot coverage and symbol-days (descriptive denominators)
+          firsts = {}; lasts = {}; pres = {"IS": 0, "EMB": 0, "HO": 0}
+          for sym in sorted(metas):
+              m, dirn, base = metas[sym]; ts, O, H, L, C = read_series(DL, dirn, base); firsts[sym] = ts[0]; lasts[sym] = ts[-1]
+              for x in ts:
+                  if WIN["span_start"] <= x < WIN["is_end"]: pres["IS"] += 1
+                  elif WIN["is_end"] <= x < WIN["emb_end"]: pres["EMB"] += 1
+                  elif WIN["emb_end"] <= x < WIN["end"]: pres["HO"] += 1
+          late = sorted([s for s in firsts if firsts[s] > WIN["span_start"]], key=lambda s: firsts[s])
+          print("D2-B Snapshot coverage check (verified snapshot): earliest first candle %s, latest last candle %s; symbols whose first candle is later than the span start: %d%s" % (_d(min(firsts.values())), _d(max(lasts.values())), len(late), (" (" + ", ".join("%s %s" % (s, _d(firsts[s])) for s in late[:10]) + (" ..." if len(late) > 10 else "") + ")") if late else ""))
+          cover_ok = min(firsts.values()) <= WIN["span_start"] + STEP and max(lasts.values()) >= WIN["end"] - STEP
+          print("   frozen windows are covered by the snapshot data span (first candle <= span start + 1 candle; last candle >= data end - 1 candle): %s" % cover_ok)
+          if not cover_ok: print("   COVERAGE FLAG: the snapshot data span is shorter than the nominal frozen window at one end; durations below use the nominal frozen windows from the counts json as authorised, and symbol-days (from present candles) are shown as the data-based alternative denominator")
+          sd = {k: v * TF / 1440.0 for k, v in pres.items()}
+          print("   present 15m candles inside each window summed over all 55 symbols -> symbol-days (candles x 15 / 1440): IS %d candles = %.1f symbol-days | embargo %d = %.1f | HO %d = %.1f" % (pres["IS"], sd["IS"], pres["EMB"], sd["EMB"], pres["HO"], sd["HO"]))
+          # denominators from events, reconciled to the counts json gate
+          den = {}
+          for per in ("IS", "EMB", "HO"):
+              T = [(k, t) for k, t in trig.items() if t["per"] == per]
+              den[per] = {"triggers": len(T), "skips": sum(1 for k, t in T if k in skip), "fills": sum(1 for k, t in T if k in fill), "fills_pf": sum(1 for k, t in T if k in fill and fill[k]["pf"])}
+          gate_ok = (den["IS"]["fills_pf"] == CT["gate"]["insample_filled_E1_pf"] and den["HO"]["fills_pf"] == CT["gate"]["holdout_filled_E1_pf"])
+          print("D2-C Denominators from the frozen events (Entry-1), reconciled to the frozen counts json (V3 above) and to its gate block (primary-filter fills IS %d, HO %d): %s" % (CT["gate"]["insample_filled_E1_pf"], CT["gate"]["holdout_filled_E1_pf"], "PASS" if gate_ok else "FAIL"))
+          if not gate_ok: abort("gate block of the counts json differs from events")
+          for per in ("IS", "EMB", "HO"): print("   %-3s triggers %d = skips %d + fills %d (fills with primary filter %d)" % (per, den[per]["triggers"], den[per]["skips"], den[per]["fills"], den[per]["fills_pf"]))
+          NEED = {"IS": CT["gate"]["need_is"], "HO": CT["gate"]["need_ho"]}
+          if not MOCK and (den["IS"]["fills"], den["IS"]["triggers"], den["HO"]["fills"], den["HO"]["triggers"]) != (11, 118, 2, 56): abort("IS/HO denominators differ from the designer-stated 11/118 and 2/56")
+          res = {"windows": WIN, "durations_days": dur, "symbol_days": sd, "denominators": den, "estimate": {}}
+          for per in ("IS", "HO"):
+              f_, t_, need = den[per]["fills"], den[per]["triggers"], NEED[per]
+              print("D2-%s %s gate: need %d filled observations; observed %d fills from %d triggers in %.4f days" % ("D" if per == "IS" else "E", per, need, f_, t_, dur[per]))
+              est = {"fills": f_, "triggers": t_, "need": need}
+              if f_ == 0 or t_ == 0 or f_ >= need:
+                  print("   estimate UNAVAILABLE (zero fills/triggers or gate already met)"); est["status"] = "unavailable"; res["estimate"][per] = est; continue
+              rate = Fraction(f_, t_); add_f = need - f_
+              add_t = math.ceil(Fraction(add_f * t_, f_)); tot_t = math.ceil(Fraction(need * t_, f_))
+              days_exact = Fraction(add_f) * Fraction(str(round(dur[per], 6))) / f_
+              print("   observed Entry-1 fill rate = %d/%d = %.6f (%.4f%%)" % (f_, t_, float(rate), 100 * float(rate)))
+              print("   additional fills needed = %d - %d = %d" % (need, f_, add_f))
+              print("   implied additional triggers = ceil(%d x %d / %d) = ceil(%.4f) = %d  (= %.2f x the observed %d triggers)" % (add_f, t_, f_, add_f * t_ / f_, add_t, add_t / t_, t_))
+              print("   implied total triggers at the gate = ceil(%d x %d / %d) = %d" % (need, t_, f_, tot_t))
+              tr_day = t_ / dur[per]; fl_day = f_ / dur[per]
+              dd_need = add_t / tr_day
+              print("   OBSERVED-DURATION EXTRAPOLATION (same universe and conditions, illustrative only): %d triggers / %.4f days = %.4f triggers/day; fills/day %.5f; additional days = %d / %.4f = %.0f days = %.1f years" % (t_, dur[per], tr_day, fl_day, add_t, tr_day, dd_need, dd_need / 365.25))
+              sdr = t_ / sd[per]; sd_need = add_t / sdr
+              print("   per symbol-day: %d triggers / %.1f symbol-days = %.6f triggers per symbol-day -> additional symbol-days at the same rate = %.0f (= 55 symbols for %.0f days; arithmetic equivalence only, not a claim that more symbols or time supply independent evidence)" % (t_, sd[per], sdr, sd_need, sd_need / 55.0))
+              est.update(status="computed", rate=float(rate), add_fills=add_f, add_triggers=add_t, total_triggers=tot_t, multiple_of_observed=add_t / t_, triggers_per_day=tr_day, additional_days=dd_need, additional_years=dd_need / 365.25, symbol_days_rate=sdr, additional_symbol_days=sd_need)
+              res["estimate"][per] = est
+          if not MOCK and not (res["estimate"]["IS"].get("add_fills") == 189 and res["estimate"]["HO"].get("add_fills") == 98): abort("additional fills needed differ from the designer-stated 189 and 98")
+          fd = {}
+          for per in ("IS", "HO"):
+              ts_ = sorted({t["ts"] for k, t in trig.items() if t["per"] == per and k in fill}); fd[per] = ts_
+              print("D2-F same-time context for %s fills (descriptive): %d fills occupy %d distinct trigger timestamps (%s) and %d distinct UTC dates; the arithmetic above counts every fill as one observation although same-time fills are correlated, so the effective number of independent fills is smaller (no adjustment made)" % (per, den[per]["fills"], len(ts_), ", ".join(_d(x) for x in ts_), len({_d(x)[:10] for x in ts_})))
+          print("D2-G IS and HO are kept separate; rates are NOT pooled; the embargo period (1 trigger, 0 fills) is not part of either gate.")
+          print("LIMITATIONS: observed samples are extremely small (IS 11 fills, HO 2 fills) and are not reliable forecasts; the rate estimates carry very large uncertainty, which is not modelled here; the IS fill rate rests on a single market-wide episode (10 of 11 fills on 2025-01-20); the extrapolation assumes a constant trigger and fill rate, an unchanged 55-symbol universe and unchanged rules, none of which is guaranteed; adding symbols or extending time does not guarantee sufficient independent evidence; no profitability, expectancy or significance statement is made; the frozen sample gate remains INSUFFICIENT SAMPLE.")
+          res["label"] = "ARITHMETIC ONLY - sample-gate feasibility from frozen Entry-1 counts; not a forecast; gate status unchanged"
+          js = json.dumps(res, sort_keys=True, indent=1); open(os.path.join(OUT, "d2_gate_feasibility.json"), "w").write(js)
+          print("AUDIT_RESULTS_SHA256", hashlib.sha256(js.encode()).hexdigest()); print("AUDIT_DONE (arithmetic only; engine/parameters untouched)")
+          PYEOF
+          echo "AUDIT_CODE_SHA256_COMPUTED=$(sha256sum stage3_d2_feasibility.py | cut -d' ' -f1)"
+          test "$(sha256sum stage3_d2_feasibility.py | cut -d' ' -f1)" = "$AUDIT_CODE_SHA256" || { echo "ABORT_AUDIT: code hash mismatch"; exit 2; }
+
+      - name: Run D2 gate feasibility
+        shell: bash
+        run: |
+          DL_DIR=dl RES_DIR=s3res OUT_DIR=audit_out python3 stage3_d2_feasibility.py 2>&1 | tee audit_log.txt
+          cp audit_log.txt audit_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-d2
+          path: audit_out/
+          retention-days: 90
+          if-no-files-found: ignore
