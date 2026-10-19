@@ -2548,10 +2548,10 @@
     "tp1": 2.3732033820304568,
     "tp2": 2.2604961574382947,
     "signal_time": "2026-10-19T13:09:49.588964+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "SL_HIT",
+    "entered": true,
+    "entry_time": "2026-10-19T15:00:00+00:00",
+    "closed_time": "2026-10-19T16:00:00+00:00",
+    "result": "LOSS"
   }
 ]
