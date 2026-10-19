@@ -1,0 +1,504 @@
+name: MicroMAP Stage 3 D5 forward-monitoring integrity audit and checkpoint evidence (read-only; artifacts only, no repo commit, no rule change)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUDIT_CODE_SHA256: "24c24944ad9ab763b47cee2ab3e8f895fb822a688be9927ea0e337ec232fba92"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Locate the Stage 3 run (actual run ID) and its artifact
+        id: find
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID"
+          gh run list -R "$GITHUB_REPOSITORY" --workflow micromap_stage3.yml --limit 30 --json databaseId,number,headSha,conclusion,status,createdAt,url > runs.json
+          python3 - <<'PY'
+          import json, os, sys
+          runs = [r for r in json.load(open("runs.json")) if r["conclusion"] == "success"]
+          print("SUCCESSFUL_STAGE3_RUNS:", json.dumps(runs))
+          if len(runs) != 1:
+              print("ABORT_AUDIT: expected exactly one successful Stage 3 run, found", len(runs)); sys.exit(2)
+          r = runs[0]
+          print("STAGE3_RUN_ID", r["databaseId"], "| run number", r["number"], "| commit", r["headSha"], "| created", r["createdAt"], "| url", r["url"])
+          open(os.environ["GITHUB_OUTPUT"], "a").write("run_id=%s\n" % r["databaseId"])
+          PY
+          RID=$(grep -o 'run_id=[0-9]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID/artifacts" > arts.json
+          RID=$RID python3 - <<'PY'
+          import json, os
+          repo = os.environ["GITHUB_REPOSITORY"]; rid = os.environ["RID"]
+          for a in json.load(open("arts.json"))["artifacts"]:
+              print("STAGE3_ARTIFACT name=%s id=%s size_bytes=%s digest=%s created=%s expires=%s expired=%s" % (a["name"], a["id"], a["size_in_bytes"], a.get("digest"), a["created_at"], a["expires_at"], a["expired"]))
+              print("STAGE3_ARTIFACT_WEB_URL https://github.com/%s/actions/runs/%s/artifacts/%s" % (repo, rid, a["id"]))
+          PY
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mm-stage3-15m-results
+          path: s3res
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-15m-*
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-meta
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mm-snap-manifest
+          path: dl
+          run-id: 39046246188
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: repo
+          persist-credentials: false
+
+      - name: Collect read-only GitHub metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          S3RUN: ${{ steps.find.outputs.run_id }}
+        run: |
+          mkdir -p meta
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[]' | jq -s '{artifacts: .}' > meta/arts_all.json || echo '{}' > meta/arts_all.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/39046246188" --jq '{id,created_at,event,conclusion,head_sha,path,name}' > meta/snapshot_run.json || echo '{}' > meta/snapshot_run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$S3RUN" --jq '{id,created_at,event,conclusion,head_sha,path,name}' > meta/stage3_run.json || echo '{}' > meta/stage3_run.json
+          gh run list -R "$GITHUB_REPOSITORY" --limit 200 --json databaseId,name,workflowName,createdAt,conclusion,event,headSha > meta/runs_all.json || echo '[]' > meta/runs_all.json
+          ls -l meta
+
+      - name: Write audit code and verify its hash
+        shell: bash
+        run: |
+          cat > stage3_d5_forward_integrity.py <<'PYEOF'
+          # MicroMAP Stage 3 - READ-ONLY diagnostic D5: forward-monitoring integrity audit and checkpoint-plan evidence.
+          # Uses the frozen snapshot (hash-verified), the frozen Stage 3 events/counts, repo workflow files (read-only checkout) and GitHub run/artifact metadata (read-only API).
+          # No engine import, no strategy re-run, no parameter change, no threshold test, no P&L, no data fetch from KuCoin, no state change. Descriptive and verification only.
+          import os, sys, json, gzip, glob, hashlib, collections, statistics, datetime as _dt
+          FROZEN_MASTER = "4c3350b8a6ae095446aa6021d5c34b198802281c78545ece68c5fa9aba9ad82b"
+          FROZEN_CONTRACTS = "39c3197a3ea104bf08ead742298bdc0d749362f0686ad08b4496283f0fc31878"
+          FROZEN_RUN = "39046246188"
+          FROZEN = {"events_sha": "d35599bc48976960caa54680eb9d2e39852aff55f94522ef36aeee5727fba1ee", "counts_sha": "5651c7e2d8e41decb3c646741f5224213d37ba7e72c7754458b2ca4e6a91e826",
+                    "is_end": 1767556800000, "emb_end": 1768161600000, "n_trig": 175, "n_skip": 162, "n_fill": 13}
+          TF = 15; STEP = TF * 60000; TOL = 2e-6   # stored stop_pct is rounded to 6 decimals; tolerance in percentage points
+          MOCK = os.environ.get("AUDIT_MOCK") == "1"; cfg = dict(FROZEN); expect = (FROZEN_MASTER, FROZEN_CONTRACTS, FROZEN_RUN)
+          if MOCK:
+              cfg.update(events_sha=os.environ["EXPECT_EVENTS_SHA"], counts_sha=os.environ["EXPECT_COUNTS_SHA"], is_end=int(os.environ["IS_END"]), emb_end=int(os.environ["EMB_END"]), n_trig=None, n_skip=None, n_fill=None)
+              expect = (os.environ["EXPECT_MASTER"], os.environ["EXPECT_CONTRACTS"], os.environ["EXPECT_RUN"])
+          DL = os.environ.get("DL_DIR", "dl"); D = os.environ.get("RES_DIR", "s3res"); OUT = os.environ.get("OUT_DIR", "audit_out"); os.makedirs(OUT, exist_ok=True)
+          def _sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def _d(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def abort(msg):
+              print("ABORT_STAGE3:", msg); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+
+          def _analyze(tsv, tf):
+              step = tf * 60000; tsv = sorted(tsv); off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          def verify_and_load(DL, expect_master, expect_contracts, expect_run):
+              """Verify every required 15m artifact against the manifest. Abort on any problem. Returns (man, contracts, universe, metas)."""
+              mp = glob.glob(DL + "/*/manifest.json")
+              if len(mp) != 1: abort("manifest.json not found exactly once (%d)" % len(mp))
+              man = json.load(open(mp[0]))
+              files = [tuple(x) for x in man["files"]]; fh = dict(files)
+              master = hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files)).encode()).hexdigest()
+              if master != man["master_sha256"]: abort("manifest internal master hash mismatch %s" % master)
+              if master != expect_master: abort("manifest master %s != frozen %s" % (master, expect_master))
+              if str(man.get("run_id")) != expect_run: abort("manifest run_id %s != %s" % (man.get("run_id"), expect_run))
+              if man["tf_results"]["15"]["verdict"] != "PASS": abort("manifest 15m verdict not PASS")
+              print("V1 manifest ok: run_id", man["run_id"], "master", master, "manifest_files", len(files))
+              cj = [r for r, h in files if r.endswith("contracts_active_55.json")]
+              if len(cj) != 1: abort("contract snapshot not in manifest")
+              cp = os.path.join(DL, cj[0])
+              if not os.path.exists(cp): abort("contract snapshot file missing")
+              if _sha_file(cp) != fh[cj[0]] or fh[cj[0]] != expect_contracts: abort("contract snapshot hash mismatch")
+              contracts = json.load(open(cp)); universe = list(contracts["universe"])
+              if len(universe) != 55 or len(contracts["contracts"]) < 55 or contracts["missing"]: abort("contract snapshot universe/missing problem")
+              print("V2 contract snapshot ok sha", fh[cj[0]], "symbols", len(universe))
+              exp15 = {r for r, h in files if "/" in r and r.split("/")[0].startswith("mm-snap-15m-")}
+              if len(exp15) != 3 * len(universe): abort("manifest 15m file count %d != %d" % (len(exp15), 3 * len(universe)))
+              present = {os.path.relpath(p, DL) for p in glob.glob(DL + "/mm-snap-15m-*/*")}
+              if present - exp15: abort("unexpected extra files in 15m artifacts: %s" % sorted(present - exp15)[:5])
+              if exp15 - present: abort("missing 15m files: %s" % sorted(exp15 - present)[:5])
+              metas = {}; nbad = 0
+              for sym in universe:
+                  mrel = [r for r in exp15 if r.endswith("/%s_15m.meta.json" % sym)]
+                  if len(mrel) != 1: abort("meta missing for " + sym)
+                  dirn = os.path.dirname(mrel[0]); base = "%s_15m" % sym
+                  for suf in (".csv.gz", ".calls.csv", ".meta.json"):
+                      rel = dirn + "/" + base + suf
+                      if _sha_file(os.path.join(DL, rel)) != fh[rel]: abort("file hash != manifest: " + rel)
+                  m = json.load(open(os.path.join(DL, mrel[0])))
+                  if m["sha256_csv_gz"] != fh[dirn + "/" + base + ".csv.gz"] or m["sha256_calls"] != fh[dirn + "/" + base + ".calls.csv"]: abort("meta hash fields != manifest: " + sym)
+                  raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read())
+                  if hashlib.sha256(raw).hexdigest() != m["sha256_csv_raw"]: abort("raw csv hash mismatch " + sym)
+                  tsv = []
+                  for ln in raw.decode().split("\n")[1:]:
+                      if ln:
+                          f = ln.split(","); tsv.append((int(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5])))
+                  an = _analyze(tsv, TF)
+                  if json.loads(json.dumps(an)) != m["integrity"]: abort("integrity recompute differs " + sym)
+                  if not m["complete"] or m["integrity"]["off_grid"] or m["integrity"]["ohlc_bad"] or m["integrity"]["rows"] == 0: abort("meta integrity flags " + sym)
+                  if m["end_ms_exclusive"] != man["end_ms_exclusive"] or m["tf_min"] != TF or m["symbol"] != sym: abort("meta identity mismatch " + sym)
+                  if len({t[0] for t in tsv}) != len(tsv) or [t[0] for t in tsv] != sorted(t[0] for t in tsv): abort("timestamps not unique/sorted " + sym)
+                  metas[sym] = (m, dirn, base)
+              print("V3 all", len(universe), "symbols: 165 files hash==manifest, raw hash, integrity recompute, complete, no off-grid/ohlc-bad: PASS")
+              return man, contracts, universe, metas
+
+          def read_series(DL, dirn, base):
+              raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read()).decode().split("\n")[1:]
+              ts = []; O = []; H = []; L = []; C = []
+              for ln in raw:
+                  if ln:
+                      f = ln.split(","); ts.append(int(f[0])); O.append(float(f[1])); H.append(float(f[2])); L.append(float(f[3])); C.append(float(f[4]))
+              return ts, O, H, L, C
+
+
+
+          import re, subprocess, copy, time
+          NOW = _dt.datetime.now(_dt.timezone.utc)
+          WD = os.environ.get("WF_DIR", "repo/.github/workflows"); REPO = os.environ.get("REPO_DIR", "repo"); META = os.environ.get("META_DIR", "meta")
+          THIS_RUN = os.environ.get("THIS_AUDIT_RUN_ID", "unknown"); S3_RUN = os.environ.get("STAGE3_RUN_ID", "unknown"); THIS_SHA = os.environ.get("GITHUB_SHA", "unknown")
+          def _iso(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+          def _jload(name):
+              p = os.path.join(META, name)
+              if not os.path.exists(p): return None
+              try: return json.load(open(p))
+              except Exception as ex: return {"_error": str(ex)}
+          print("D5 START | audit run id %s | repo head %s | now %s UTC" % (THIS_RUN, THIS_SHA, NOW.strftime("%Y-%m-%d %H:%M:%S")))
+          # ---------------- D5-1 provenance (abort on any failure) ----------------
+          ev_p, ct_p = os.path.join(D, "events.jsonl.gz"), os.path.join(D, "stage3_counts.json")
+          for p in (ev_p, ct_p):
+              if not os.path.exists(p): abort("missing " + p)
+          if _sha_file(ev_p) != cfg["events_sha"]: abort("events hash mismatch %s" % _sha_file(ev_p))
+          if _sha_file(ct_p) != cfg["counts_sha"]: abort("counts hash mismatch %s" % _sha_file(ct_p))
+          print("D5-1a Stage 3 result files match the frozen hashes: events", cfg["events_sha"], "counts", cfg["counts_sha"])
+          man, contracts, universe, metas = verify_and_load(DL, expect[0], expect[1], expect[2])
+          P0 = int(man["end_ms_exclusive"])
+          if not MOCK and P0 != 1792195200000: abort("snapshot end_ms_exclusive %s != frozen 1792195200000" % P0)
+          cj = json.load(open(ct_p))
+          def provenance_failures(cj, expect, man, cfg, mock):
+              f = []
+              if cj.get("mock") and not mock: f.append("counts.mock flag is true in a real run")
+              if cj.get("snapshot_master_sha256") != expect[0]: f.append("counts.snapshot_master_sha256 != frozen")
+              if cj.get("contracts_sha256") != expect[1]: f.append("counts.contracts_sha256 != frozen")
+              if str(cj.get("snapshot_run_id")) != expect[2]: f.append("counts.snapshot_run_id != frozen")
+              if cj.get("timeframe") != "15m": f.append("counts.timeframe != 15m")
+              if cj.get("causality_verdict") != "PASS": f.append("counts.causality_verdict != PASS")
+              if cj.get("outcome_reconciliation_failures") != []: f.append("counts.outcome_reconciliation_failures not empty")
+              sp = cj.get("frozen_split_constants", {}); sp2 = cj.get("split", {})
+              if sp2.get("end_ms_exclusive") != int(man["end_ms_exclusive"]) or sp2.get("is_end_ms") != cfg["is_end"] or sp2.get("embargo_end_ms") != cfg["emb_end"]: f.append("counts.split != frozen split_constants_mismatch")
+              if not mock:
+                  for k in ("end_ms_exclusive", "is_end_ms", "embargo_end_ms", "span_start_ms"):
+                      if sp.get(k) != sp2.get(k): f.append("counts.split != counts.frozen_split_constants (%s) split_constants_mismatch" % k)
+                  if sp.get("span_start_ms") != 1730599200000: f.append("span_start != frozen split_constants_mismatch")
+                  if cj.get("code_sha256") != "3ae707caa684a6fbdd288131534aeb6a08dad2464323de789600ac2450f4d7d1": f.append("counts.code_sha256 != frozen 3ae707ca...")
+              g = cj.get("gate", {})
+              if g.get("need_is") != 200 or g.get("need_ho") != 100: f.append("gate requirements != 200/100")
+              return f
+          pf_ = provenance_failures(cj, expect, man, cfg, MOCK)
+          if pf_: abort("provenance/configuration checks failed: %s" % pf_)
+          print("D5-1b counts-file provenance PASS: snapshot run %s master %s contracts %s | Stage 3 code_sha256 %s | spec_hashes %s | split constants span_start %s end_excl %s is_end %s embargo_end %s | gate need %s/%s | interp %s" % (
+              cj["snapshot_run_id"], cj["snapshot_master_sha256"], cj["contracts_sha256"], cj["code_sha256"], json.dumps(cj["spec_hashes"], sort_keys=True), cj["split"]["span_start_ms"], cj["split"]["end_ms_exclusive"], cj["split"]["is_end_ms"], cj["split"]["embargo_end_ms"], cj["gate"]["need_is"], cj["gate"]["need_ho"], json.dumps(cj["interp"], sort_keys=True)))
+          print("D5-1c PROSPECTIVE START P0 = frozen snapshot end_ms_exclusive = %d = %s UTC (spike-start timestamp >= P0 => prospective; < P0 => frozen historical)" % (P0, _iso(P0)))
+          # ---------------- D5-2 snapshot coverage ----------------
+          firsts = []; lasts = collections.Counter(); rows_ = []; short = []; imiss = 0; over = []
+          for sym in universe:
+              m = metas[sym][0]["integrity"]; firsts.append(m["first_ts"]); lasts[m["last_ts"]] += 1; rows_.append(m["rows"]); imiss += m["interior_missing_bars"]
+              if m["last_ts"] >= P0: over.append(sym)
+              if m["last_ts"] != P0 - STEP: short.append((sym, (P0 - STEP - m["last_ts"]) // STEP))
+          print("D5-2 SNAPSHOT COVERAGE (15m, %d symbols): first candle min %s max %s | rows min %d median %d max %d total %d | interior missing bars total %d | last candle values: %s | symbols whose last candle != P0-15m: %d %s | symbols with a candle at/after P0: %d" % (
+              len(universe), _iso(min(firsts)), _iso(max(firsts)), min(rows_), statistics.median(rows_), max(rows_), sum(rows_), imiss, ", ".join("%s x%d" % (_iso(k), v) for k, v in sorted(lasts.items())), len(short), short[:8], len(over)))
+          if over: abort("snapshot contains candles at/after P0: %s" % over[:5])
+          # ---------------- D5-3 event ledger checks (reused by the self-test) ----------------
+          BASE = ["i", "ts", "t", "d", "sym"]
+          REQ = {"spike_detected": BASE + ["n", "atr_gap", "stratum"], "spike_run_rejected": BASE + ["n", "atr_gap", "reason", "stratum"], "channel_armed": BASE + ["stratum"], "channel_cancel": BASE + ["reason"],
+                 "entry_trigger": BASE + ["no"], "minstop_skip": BASE + ["no", "stop_pct"], "fill": BASE + ["no", "gap_fill", "stratum", "pf"], "outcome": BASE + ["no", "code", "tp1"], "tp1_reached": BASE + ["no"],
+                 "reentry_armed": BASE + ["no"], "reentry_timeout": BASE + ["no"], "three_stop_invalid": BASE, "gap_discard": BASE + ["phase"], "pending_end": BASE + ["phase", "end_marker"]}
+          VOCAB = {"channel_cancel.reason": {"too_long", "higher_high", "too_wide", "pullback"}, "spike_run_rejected.reason": {"longer_than_max"}, "gap_discard.phase": {"spike", "channel", "position", "rewait", "rearmed"},
+                   "pending_end.phase": {"channel", "position", "rewait", "rearmed"}, "stratum": {"Asia", "London", "NY", "Late"},
+                   "outcome.code": {"SL_BEFORE_TP1", "STOP_ON_FILL_CANDLE", "TP1_THEN_TP2", "TP1_THEN_SL", "TIMESTOP_BEFORE_TP1", "TP1_THEN_TIMESTOP", "GAP_DISCARD_IN_POSITION", "CENSORED_END"}}
+          def period_of_(ts, c): return "IS" if ts < c["is_end"] else ("EMB" if ts < c["emb_end"] else "HO")
+          def ledger_check(events, cj, tsv, universe, P0, c):
+              """Returns (failure_codes: list of (code, detail), summary dict). Pure function; never writes anything."""
+              F = []; uni = set(universe)
+              seen = collections.Counter(); cur = {}; last_i = {}; trig = {}; skip = {}; fill = {}; trig_all = collections.Counter(); spikes = collections.Counter()
+              obs_vocab = collections.defaultdict(collections.Counter); evtypes = collections.Counter()
+              for e in events:
+                  t = e.get("t"); evtypes[t] += 1
+                  if t not in REQ: F.append(("unknown_event_type", str(t))); continue
+                  miss = [k for k in REQ[t] if k not in e or e[k] is None]
+                  if miss: F.append(("missing_field", "%s %s" % (t, miss))); continue
+                  s = e["sym"]; ts = e["ts"]
+                  if s not in uni: F.append(("unknown_symbol", s)); continue
+                  if not isinstance(ts, int) or isinstance(ts, bool) or ts % STEP != 0 or not isinstance(e["i"], int) or e["d"] not in (1, -1): F.append(("bad_field_type_or_grid", "%s %s" % (t, s)))
+                  if isinstance(ts, int) and ts >= P0: F.append(("event_at_or_after_P0", "%s %s %s" % (t, s, ts)))
+                  if "no" in e and (not isinstance(e["no"], int) or not 1 <= e["no"] <= 3): F.append(("no_out_of_range", "%s %s" % (t, e["no"])))
+                  k = json.dumps(e, sort_keys=True); seen[k] += 1
+                  if seen[k] == 2: F.append(("duplicate_event", "%s %s i=%s ts=%s" % (t, s, e["i"], ts)))
+                  if s in last_i and e["i"] < last_i[s]: F.append(("event_order", "%s %s" % (t, s)))
+                  last_i[s] = max(last_i.get(s, -1), e["i"])
+                  if t in ("entry_trigger", "minstop_skip", "fill"):
+                      if e["i"] >= len(tsv[s]) or tsv[s][e["i"]] != ts: F.append(("ts_not_candle_ts", "%s %s i=%s" % (t, s, e["i"])))
+                  for fld, vk in (("reason", t + ".reason"), ("phase", t + ".phase"), ("code", t + ".code"), ("stratum", "stratum")):
+                      if fld in e and e[fld] is not None:
+                          obs_vocab[vk][e[fld]] += 1
+                          if vk in VOCAB and e[fld] not in VOCAB[vk]: F.append(("unknown_code", "%s=%s" % (vk, e[fld])))
+                  if t == "spike_detected":
+                      spikes[(s, ts, e["d"])] += 1
+                      if spikes[(s, ts, e["d"])] == 2: F.append(("duplicate_spike", "%s %s" % (s, ts)))
+                      cur[s] = e
+                  if t in ("entry_trigger", "minstop_skip", "fill"):
+                      key = (s, e["i"], e["no"]); tgt = {"entry_trigger": trig, "minstop_skip": skip, "fill": fill}[t]
+                      if key in tgt: F.append(("duplicate_entry_key", "%s %s" % (t, key)))
+                      sp = cur.get(s)
+                      if sp is None: F.append(("entry_without_spike", "%s %s" % (t, key))); continue
+                      tgt[key] = {"e": e, "spike": sp, "per": period_of_(sp["ts"], c)}
+              for key in trig:
+                  if (key in skip) == (key in fill): F.append(("trigger_not_skip_xor_fill", str(key)))
+              for key in list(skip) + list(fill):
+                  if key not in trig: F.append(("skip_or_fill_without_trigger", str(key)))
+                  else:
+                      ee = (skip.get(key) or fill.get(key))["e"]
+                      if ee["ts"] != trig[key]["e"]["ts"] or ee["d"] != trig[key]["e"]["d"]: F.append(("trigger_pair_mismatch", str(key)))
+              # counts reconciliation vs the frozen counts file (period x direction)
+              mine = collections.Counter()
+              for m_, dic in (("trigger_E", trig), ("minstop_skip_E", skip), ("fill_E", fill)):
+                  for (s, i, no), v in dic.items(): mine[("L" if v["e"]["d"] == 1 else "S", v["per"], m_ + str(no))] += 1
+              for (s, i, no), v in fill.items():
+                  if v["e"]["pf"]: mine[("L" if v["e"]["d"] == 1 else "S", v["per"], "fill_E%d_pf" % no)] += 1
+              theirs = collections.Counter()
+              for k_, v in cj["totals"].items():
+                  d_, per_, st_, met = k_.split("|")
+                  mm = re.match(r"^(trigger_E\d|minstop_skip_E\d|fill_E\d)$", met)
+                  if mm: theirs[(d_, per_, met)] += v
+                  elif met == "fill_E1_primary_filter": theirs[(d_, per_, "fill_E1_pf")] += v
+                  elif re.match(r"^fill_E\d_primary_filter_APPROXIMATE$", met): theirs[(d_, per_, met.replace("_primary_filter_APPROXIMATE", "_pf"))] += v
+              for k_ in sorted(set(mine) | set(theirs)):
+                  if mine[k_] != theirs[k_]: F.append(("counts_mismatch", "%s ledger=%d counts_file=%d" % (k_, mine[k_], theirs[k_])))
+              g_is = sum(v for (d_, p_, m_), v in mine.items() if m_ == "fill_E1_pf" and p_ == "IS"); g_ho = sum(v for (d_, p_, m_), v in mine.items() if m_ == "fill_E1_pf" and p_ == "HO")
+              if (g_is, g_ho) != (cj["gate"]["insample_filled_E1_pf"], cj["gate"]["holdout_filled_E1_pf"]): F.append(("gate_mismatch", "ledger IS/HO %d/%d counts_file %s/%s" % (g_is, g_ho, cj["gate"]["insample_filled_E1_pf"], cj["gate"]["holdout_filled_E1_pf"])))
+              nsp = sum(1 for e in events if e.get("t") == "spike_detected")
+              nsp_c = sum(v for k_, v in cj["totals"].items() if k_.split("|")[3] == "spike")
+              if nsp != nsp_c: F.append(("counts_mismatch", "spike_detected ledger=%d counts_file=%d" % (nsp, nsp_c)))
+              return F, {"trig": trig, "skip": skip, "fill": fill, "mine": mine, "g_is": g_is, "g_ho": g_ho, "evtypes": evtypes, "vocab": obs_vocab, "cur_last": cur}
+          tsv = {}; allc = {}
+          for sym in universe:
+              m, dirn, base = metas[sym]; ts_, O_, H_, L_, C_ = read_series(DL, dirn, base); tsv[sym] = ts_
+          events = [json.loads(ln) for ln in gzip.open(ev_p, "rt")]
+          F, L = ledger_check(events, cj, tsv, universe, P0, cfg)
+          print("D5-3 EVENT LEDGER CHECKS on %d frozen events: failure count = %d %s" % (len(events), len(F), F[:5]))
+          if F: abort("ledger integrity failures on the frozen events: %s" % F[:5])
+          trig, skip, fill = L["trig"], L["skip"], L["fill"]
+          e1t = {k: v for k, v in trig.items() if k[2] == 1}; e1s = {k: v for k, v in skip.items() if k[2] == 1}; e1f = {k: v for k, v in fill.items() if k[2] == 1}
+          if cfg["n_trig"] is not None and (len(e1t), len(e1s), len(e1f)) != (cfg["n_trig"], cfg["n_skip"], cfg["n_fill"]): abort("Entry-1 totals differ from frozen 175/162/13")
+          print("D5-3a Entry-1: triggers %d = minimum-stop skips %d + fills %d; unique (symbol, candle index, entry no) keys; every skip/fill pairs with exactly one trigger of equal timestamp and direction; counts file agrees per direction x period" % (len(e1t), len(e1s), len(e1f)))
+          print("D5-3b event types (count):", ", ".join("%s=%d" % kv for kv in sorted(L["evtypes"].items())))
+          print("D5-3c observed code vocabulary (all within the frozen engine vocabulary): " + " | ".join("%s: %s" % (k, ", ".join("%s x%d" % kv for kv in sorted(v.items()))) for k, v in sorted(L["vocab"].items())))
+          gf = [(r["spike"]["atr_gap"], k) for k, r in e1t.items()]; nflag = sum(1 for a, k in gf if a); nflag_fill = sum(1 for a, k in gf if a and k in e1f)
+          if not MOCK and (nflag, nflag_fill) != (11, 0): abort("ATR-gap-flagged triggers/fills %d/%d differ from the gap audit (11/0)" % (nflag, nflag_fill))
+          print("D5-3d gap status of Entry-1 triggers (spike_detected.atr_gap joined by setup): flagged %d, of which filled %d%s" % (nflag, nflag_fill, "" if MOCK else " (matches gap audit run 39134196677: 11 / 0)"))
+          # ---------------- D5-4 field availability matrix ----------------
+          print("D5-4 REQUIRED OBSERVATION FIELDS: where each is available in the existing frozen outputs")
+          pf_stats = collections.Counter((r["e"]["pf"], r["e"]["gap_fill"]) for r in e1f.values())
+          MAT = [("trigger", "stored: entry_trigger event (no, i, ts, d, sym)"), ("skip + reason code", "stored: minstop_skip event (stop_pct); the event type is the reason code; no free-text reason field"),
+                 ("fill", "stored: fill event (no, i, ts, d, sym, gap_fill, stratum, pf)"), ("timestamp", "stored: ts on every event, equal to the trigger candle open (verified against snapshot candles)"),
+                 ("symbol / direction", "stored: sym, d on every event"), ("split IS/EMB/HO", "NOT stored on entry events: derived by spike-start timestamp of the setup (spike_detected.ts) against the frozen constants; counts file stores it only as aggregates"),
+                 ("gap status", "stored only on spike_detected / spike_run_rejected (atr_gap); gap_discard events (phase) mark discarded setups; joined to triggers by setup"),
+                 ("stop_pct of fills", "NOT stored (only skips carry stop_pct); needs candle reconstruction as in D4"),
+                 ("ATR at trigger", "NOT stored; reconstructible from candles (recon audit)")]
+          for a, b in MAT: print("   %-20s %s" % (a, b))
+          print("   Entry-1 fills by (primary-filter pf, gap_fill): %s | fills with pf=True: %d of %d (gate counts pf fills only)" % (dict(pf_stats), sum(1 for r in e1f.values() if r["e"]["pf"]), len(e1f)))
+          # ---------------- D5-5 period x direction table ----------------
+          print("D5-5 FROZEN HISTORICAL SAMPLE, Entry-1 (period by spike-start timestamp): direction x period (triggers | skips | fills | fills with pf)")
+          for per in ("IS", "EMB", "HO"):
+              for d_ in ("L", "S"):
+                  tr_ = sum(1 for r in e1t.values() if r["per"] == per and (r["e"]["d"] == 1) == (d_ == "L")); sk_ = sum(1 for k, r in e1s.items() if r["per"] == per and (r["e"]["d"] == 1) == (d_ == "L"))
+                  fl_ = sum(1 for k, r in e1f.items() if r["per"] == per and (r["e"]["d"] == 1) == (d_ == "L")); fp_ = sum(1 for k, r in e1f.items() if r["per"] == per and (r["e"]["d"] == 1) == (d_ == "L") and r["e"]["pf"])
+                  print("   %-3s %s  %3d | %3d | %2d | %2d" % (per, d_, tr_, sk_, fl_, fp_))
+          e23 = collections.Counter((k[2], r["per"]) for k, r in fill.items() if k[2] > 1)
+          print("   Entry-2/3 fills (not part of the gate; context only): %s" % (dict(e23) if e23 else "none"))
+          # ---------------- D5-6 sample gate ----------------
+          gis, gho = L["g_is"], L["g_ho"]
+          print("D5-6 SAMPLE GATE (filled Entry-1 with primary filter; pooled 55 symbols x both directions; frozen requirement IS 200, HO 100; triggers and skips are NOT fills and are not counted)")
+          print("   IS : %d of 200 filled (%.1f%%), remaining %d" % (gis, 100.0 * gis / 200, max(0, 200 - gis)))
+          print("   HO : %d of 100 filled (%.1f%%), remaining %d" % (gho, 100.0 * gho / 100, max(0, 100 - gho)))
+          print("   PROSPECTIVE (spike start >= P0): 0 observations ingested - the frozen snapshot ends at P0; prospective observations are reported separately and never added to IS, EMB or HO")
+          gate_state = "INSUFFICIENT SAMPLE" if (gis < 200 or gho < 100) else "GATE COUNTS REACHED (no claim made)"
+          print("   STATUS: %s (no extrapolation, no completion date, no rate)" % gate_state)
+          # ---------------- D5-7 boundary-straddling setups ----------------
+          pend = [e for e in events if e["t"] == "pending_end"]; pc = collections.Counter(e["phase"] for e in pend)
+          lastsp = L["cur_last"]
+          print("D5-7 SETUPS STILL OPEN AT THE SNAPSHOT END (censored by the frozen runner, excluded from counts): %d | by phase: %s | these setups started before P0, so they stay in the frozen historical sample; any later trigger from them is a boundary-straddling case to be reported separately and counted in neither the frozen sample nor the prospective sample" % (len(pend), dict(pc)))
+          # ---------------- D5-8 artifacts and runs (GitHub API metadata) ----------------
+          arts = _jload("arts_all.json"); runs = _jload("runs_all.json"); snaprun = _jload("snapshot_run.json"); s3run = _jload("stage3_run.json")
+          print("D5-8 EVIDENCE INVENTORY (GitHub API metadata, read-only)")
+          if snaprun and "created_at" in snaprun:
+              cr = _dt.datetime.strptime(snaprun["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
+              ok_ = cr.timestamp() * 1000 >= P0
+              print("   snapshot run %s: created %s UTC, event %s, conclusion %s, head %s | created at/after P0 (all snapshot candles were closed when fetched): %s" % (snaprun.get("id"), snaprun["created_at"], snaprun.get("event"), snaprun.get("conclusion"), snaprun.get("head_sha"), ok_))
+              if not ok_ and not MOCK: abort("snapshot run created before P0")
+          else: print("   snapshot run metadata: LIMITATION (not available in this run)")
+          if s3run and "created_at" in s3run: print("   Stage 3 run %s: created %s UTC, event %s, conclusion %s, head %s, path %s" % (s3run.get("id"), s3run["created_at"], s3run.get("event"), s3run.get("conclusion"), s3run.get("head_sha"), s3run.get("path")))
+          if arts and "artifacts" in arts:
+              A = [a for a in arts["artifacts"] if str(a.get("name", "")).startswith("mm-")]
+              print("   artifacts named mm-* in the repository: %d" % len(A))
+              chain = []
+              for a in sorted(A, key=lambda a: a["created_at"]):
+                  rid = (a.get("workflow_run") or {}).get("id"); exp = a.get("expires_at"); dl = None
+                  if exp: dl = (_dt.datetime.strptime(exp[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc) - NOW).total_seconds() / 86400
+                  print("   ART %-26s id=%s run=%s size=%s digest=%s created=%s expires=%s expired=%s days_left=%s" % (a["name"], a["id"], rid, a["size_in_bytes"], a.get("digest"), a["created_at"], exp, a.get("expired"), "%.1f" % dl if dl is not None else "n/a"))
+                  if str(rid) in (FROZEN_RUN, S3_RUN) and dl is not None: chain.append((dl, a["name"], a["id"]))
+              if chain: print("   EVIDENCE-CHAIN artifacts (frozen snapshot run %s + Stage 3 run %s): earliest expiry in %.1f days (%s id %s); all of them: %d" % (FROZEN_RUN, S3_RUN, min(chain)[0], min(chain)[1], min(chain)[2], len(chain)))
+              else: print("   EVIDENCE-CHAIN artifacts: not found in the listing (expired or listing truncated)")
+          else: print("   artifact listing: LIMITATION (not available in this run)")
+          if runs and isinstance(runs, list):
+              mr = [r for r in runs if "MicroMAP" in str(r.get("name", "")) or "MicroMAP" in str(r.get("workflowName", ""))]
+              print("   MicroMAP workflow runs visible (%d of %d listed): " % (len(mr), len(runs)) + "; ".join("%s %s %s %s" % (r.get("databaseId"), r.get("createdAt"), r.get("conclusion"), str(r.get("name"))[:48]) for r in sorted(mr, key=lambda r: r.get("createdAt", ""))))
+          else: print("   run listing: LIMITATION (not available in this run)")
+          # ---------------- D5-9 workflow and protected-file inventory (read-only checkout) ----------------
+          DELIVERED = {"micromap_stage3.yml": "6c111fa37d4d92832f0066139ad309a251ceaacb073c3ade421f7051f18d8ac4", "micromap_stage3_audit.yml": "48a0cb46cc1ba8fbbbc1b745491ed399560fb07f760219365331ee2c9b831a5f",
+                       "micromap_stage3_trigger_audit.yml": "da32843967a70b0e280a00907b102bf753ab5636fee78907965c3c951f37aecb", "micromap_stage3_recon_audit.yml": "efba1d988329885f7f71a8a76767cb59f79c0b3b6f148a4c7580709c60bbe2ed",
+                       "micromap_stage3_gap_audit.yml": "9d6f6f54a60f6902df8597968ef42b5687631b55dd5de40e22c6c369cf641fe5", "micromap_stage3_d1.yml": "f5d14dd50fa99e3270fba6a2289ec7ddd172569b30caac76b7d0f3471f590326",
+                       "micromap_stage3_d2.yml": "e1c8260ef422d1d0476fe607cd2aef212dc44db50d79e783616d0fc4da5d9c54", "micromap_stage3_d3.yml": "7ec5881cf2187a718924a5177062c1a0922e6e3602a13a739e75b375e55dfd00",
+                       "micromap_stage3_d4.yml": "5356b5efdc5d9cf4cf2955acdbf4442bd91ac74c0737a243bf1d75b9f03306e4"}
+          print("D5-9 WORKFLOW INVENTORY (repository checkout, read-only; head %s)" % THIS_SHA)
+          wfs = sorted(glob.glob(os.path.join(WD, "*.yml")) + glob.glob(os.path.join(WD, "*.yaml"))); wf_rows = []
+          for p in wfs:
+              txt = open(p, encoding="utf-8", errors="replace").read(); nm = os.path.basename(p); sha = _sha_file(p)
+              trg = sorted(set(re.findall(r"^\s*(schedule|workflow_dispatch|workflow_run|push|pull_request|repository_dispatch)\s*:", txt, re.M))); cron = re.findall(r"cron:\s*['\"]?([^'\"\n]+)", txt)
+              wr = bool(re.search(r"git\s+(push|commit)|contents:\s*write|gh\s+workflow\s+run|-X\s+(POST|PUT|PATCH|DELETE)", txt)); mm = bool(re.search(r"mm-snap|mm-stage3|micromap", txt, re.I))
+              ret = re.findall(r"retention-days:\s*(\d+)", txt); pins = sorted(set(re.findall(r"run-id:\s*(\d+)", txt)))
+              dl_ = DELIVERED.get(nm); norm = txt.replace("\r\n", "\n").rstrip("\n"); nm_ok = (dl_ is not None) and (hashlib.sha256(norm.encode()).hexdigest() == dl_ or hashlib.sha256((norm + "\n").encode()).hexdigest() == dl_)
+              mf = nm.lower().startswith("micromap"); mstat = "n/a (no delivered hash)" if dl_ is None else ("exact" if sha == dl_ else ("normalized-newline" if nm_ok else "DIFFERS"))
+              wf_rows.append({"file": nm, "sha256": sha, "triggers": trg, "cron": cron, "writes": wr, "mentions": mm, "micromap_file": mf, "retention": ret, "pins": pins, "delivered_sha": dl_, "delivered_match": mstat})
+              print("   %-36s sha=%s triggers=%s cron=%s write-capable=%s mentions-micromap=%s retention-days=%s pinned-run-ids=%s delivered-hash-match=%s" % (nm, sha[:16], ",".join(trg) or "-", cron or "-", wr, mm, ",".join(ret) or "-", ",".join(pins) or "-", mstat))
+          mmw = [r for r in wf_rows if r["micromap_file"]]; others = [r for r in wf_rows if not r["micromap_file"]]
+          print("   SUMMARY: workflow files %d | MicroMAP workflow files %d | of those with a schedule/workflow_run/push/pull_request/repository_dispatch trigger: %d | with write capability (git push/commit, contents: write, gh workflow run, POST/PUT/PATCH/DELETE): %d | delivered-hash differences: %d | other workflow files with a schedule: %d (%s) | other workflow files that mention MicroMAP artifacts or names: %d (%s)" % (
+              len(wf_rows), len(mmw), sum(1 for r in mmw if set(r["triggers"]) & {"schedule", "workflow_run", "push", "pull_request", "repository_dispatch"}), sum(1 for r in mmw if r["writes"]), sum(1 for r in mmw if r["delivered_match"] == "DIFFERS"),
+              sum(1 for r in others if "schedule" in r["triggers"]), ",".join(r["file"] for r in others if "schedule" in r["triggers"]), sum(1 for r in others if r["mentions"]), ",".join(r["file"] for r in others if r["mentions"])))
+          s3t = open(os.path.join(WD, "micromap_stage3.yml"), encoding="utf-8", errors="replace").read() if os.path.exists(os.path.join(WD, "micromap_stage3.yml")) else ""
+          if s3t:
+              print("   Stage 3 workflow facts: hard-coded snapshot run-id pin present: %s | FROZEN_SPLIT end_ms_exclusive 1792195200000 hard-coded: %s | upload retention-days: %s | trigger workflow_dispatch only: %s" % (
+                  "run-id: 39046246188" in s3t, "1792195200000" in s3t, ",".join(re.findall(r"retention-days:\s*(\d+)", s3t)), bool(re.search(r"^\s*workflow_dispatch\s*:", s3t, re.M)) and not re.search(r"^\s*(schedule|workflow_run|push)\s*:", s3t, re.M)))
+              vo = set(re.findall(r'(?:outcome\(i, |code=)"([A-Z][A-Z0-9_]+)"', s3t)); print("   outcome-code literals found in the Stage 3 code embedded in the workflow: %s | all within VOCAB: %s" % (sorted(vo), vo <= VOCAB["outcome.code"]))
+          def _git(*a):
+              try: return subprocess.run(["git", "-C", REPO] + list(a), capture_output=True, text=True, timeout=60).stdout.strip()
+              except Exception as ex: return "unavailable: %s" % ex
+          print("   git: HEAD %s | last commits touching MicroMAP workflows:" % _git("rev-parse", "HEAD"))
+          for ln in _git("log", "-n", "15", "--format=%h %cI %s", "--", ".github/workflows/micromap_*.yml").split("\n"): print("      " + ln)
+          prot = []
+          for pat in ("crypto_signal_bot_v4.py", "v4_smc_cycle1.py", "candidate11_paper_state.json"):
+              p = os.path.join(REPO, pat)
+              if os.path.exists(p): prot.append((pat, _sha_file(p), _git("log", "-1", "--format=%h %cI", "--", pat)))
+              else: prot.append((pat, None, None))
+          print("   PROTECTED FILES baseline (sha256 at repository head; no earlier reference hash exists in the evidence chain, so this is a baseline, not a comparison):")
+          for a, b, c_ in prot: print("      %-30s %s %s" % (a, b if b else "NOT PRESENT AT HEAD", c_ or ""))
+          print("   tracked files at head: %s" % (len(_git("ls-files").split("\n")) if _git("ls-files") else "n/a"))
+          # ---------------- D5-10 failure-handling self-test (in memory; nothing is written or repaired) ----------------
+          print("D5-10 INTEGRITY-FAILURE SELF-TEST: the checks above are re-run on deliberately corrupted in-memory copies; each corruption must be detected, the real data must stay clean (no file is modified)")
+          def has(Fl, code): return any(c_ == code for c_, _ in Fl)
+          tests = []
+          ev0 = events
+          def T_(name, expect_codes, evs=None, cj_=None):
+              Fl, _ = ledger_check(evs if evs is not None else ev0, cj_ if cj_ is not None else cj, tsv, universe, P0, cfg)
+              ok = all(has(Fl, c_) for c_ in expect_codes); tests.append((name, expect_codes, ok)); print("   %-44s expect %-60s detected: %s" % (name, ",".join(expect_codes), "YES" if ok else "NO"))
+          i_t = next(i for i, e in enumerate(ev0) if e["t"] == "entry_trigger" and e["no"] == 1); i_s = next(i for i, e in enumerate(ev0) if e["t"] == "minstop_skip" and e["no"] == 1); i_f = next(i for i, e in enumerate(ev0) if e["t"] == "fill" and e["no"] == 1)
+          T_("duplicate Entry-1 trigger", ["duplicate_event", "duplicate_entry_key"], ev0 + [copy.deepcopy(ev0[i_t])])
+          e2 = copy.deepcopy(ev0); del e2[i_s]["stop_pct"]; T_("missing required field (stop_pct)", ["missing_field"], e2)
+          e3 = [e for j, e in enumerate(ev0) if j != i_s]; T_("deleted skip event (trigger left unpaired)", ["trigger_not_skip_xor_fill", "counts_mismatch"], e3)
+          c4 = copy.deepcopy(cj); k4 = next(k for k in c4["totals"] if k.endswith("|fill_E1")); c4["totals"][k4] += 1; T_("counts file altered (+1 fill)", ["counts_mismatch"], None, c4)
+          e5 = copy.deepcopy(ev0); e5.append({"i": 0, "ts": tsv[universe[0]][0], "t": "new_event_type", "d": 1, "sym": universe[0]}); T_("unknown event type (schema change)", ["unknown_event_type"], e5)
+          e6 = copy.deepcopy(ev0); e6[i_f]["ts"] = P0; T_("event timestamp at P0 (boundary breach)", ["event_at_or_after_P0"], e6)
+          e7 = copy.deepcopy(ev0); jj = next((j for j, e in enumerate(e7) if e["t"] == "channel_cancel"), None)
+          if jj is not None: e7[jj]["reason"] = "unlisted_reason"; T_("unknown reason code", ["unknown_code"], e7)
+          e8 = copy.deepcopy(ev0); e8[i_f]["ts"] = e8[i_f]["ts"] + STEP; T_("fill timestamp != candle timestamp", ["ts_not_candle_ts"], e8)
+          c9 = copy.deepcopy(cj); c9["split"]["is_end_ms"] += STEP; pf9 = provenance_failures(c9, expect, man, cfg, MOCK); ok9 = any("split_constants_mismatch" in x for x in pf9); tests.append(("split constants drift", ["split_constants_mismatch"], ok9)); print("   %-44s expect %-60s detected: %s" % ("split constants drift", "split_constants_mismatch", "YES" if ok9 else "NO"))
+          c10 = copy.deepcopy(cj); c10["snapshot_master_sha256"] = "0" * 64; pf10 = provenance_failures(c10, expect, man, cfg, MOCK); ok10 = any("snapshot_master_sha256" in x for x in pf10); tests.append(("snapshot hash drift", ["snapshot_master"], ok10)); print("   %-44s expect %-60s detected: %s" % ("snapshot hash drift", "snapshot_master_sha256", "YES" if ok10 else "NO"))
+          raw_ev = open(ev_p, "rb").read(); mut = bytearray(raw_ev); mut[len(mut) // 2] ^= 1; ok11 = hashlib.sha256(bytes(mut)).hexdigest() != cfg["events_sha"]; tests.append(("events file one-bit change", ["hash_mismatch"], ok11)); print("   %-44s expect %-60s detected: %s" % ("events file one-bit change", "hash_mismatch", "YES" if ok11 else "NO"))
+          Fclean, _ = ledger_check(ev0, cj, tsv, universe, P0, cfg)
+          print("   real data re-checked after all self-tests: failures = %d" % len(Fclean))
+          selftest_ok = all(t[2] for t in tests) and not Fclean
+          print("D5-10 SELF-TEST RESULT: %s (%d corruption classes, all detected: %s)" % ("PASS" if selftest_ok else "FAIL", len(tests), all(t[2] for t in tests)))
+          if not selftest_ok: abort("self-test failed - the integrity checks did not detect a planted corruption")
+          # ---------------- D5-11 baseline ledger and checkpoint-0 record (artifacts of this read-only audit; not registered) ----------------
+          recs = []
+          for key in sorted(e1t, key=lambda k: (e1t[k]["e"]["ts"], k[0])):
+              r = e1t[key]; e = r["e"]; st = "fill" if key in e1f else "minstop_skip"; fe = e1f.get(key, {}).get("e"); se = e1s.get(key, {}).get("e")
+              rec = {"class": "HISTORICAL_FROZEN", "entry_no": 1, "sym": key[0], "direction": "L" if e["d"] == 1 else "S", "trigger_ts": e["ts"], "trigger_utc": _iso(e["ts"]), "candle_index": key[1], "spike_start_ts": r["spike"]["ts"], "split": r["per"],
+                     "status": "filled" if fe else "skipped", "reason_code": st, "atr_gap": bool(r["spike"]["atr_gap"]), "pf": (fe["pf"] if fe else None), "gap_fill": (fe["gap_fill"] if fe else None), "stratum": (fe["stratum"] if fe else None), "stop_pct": (se["stop_pct"] if se else None)}
+              rec["record_id"] = hashlib.sha256(("%s|%s|%d|1" % (rec["sym"], rec["direction"], rec["trigger_ts"])).encode()).hexdigest()[:16]; recs.append(rec)
+          if len({r["record_id"] for r in recs}) != len(recs): abort("record_id collision in the baseline ledger")
+          lp = os.path.join(OUT, "entry1_ledger_baseline.jsonl"); lt = "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs); open(lp, "w").write(lt); lsha = hashlib.sha256(lt.encode()).hexdigest()
+          print("D5-11a BASELINE ENTRY-1 LEDGER: %d records (all required fields present or explicitly null), unique record ids, file sha256 %s" % (len(recs), lsha))
+          cp0 = {"schema": "micromap-checkpoint-v1", "checkpoint_index": 0, "kind": "BASELINE_HISTORICAL_FROZEN_NOT_REGISTERED", "prev_checkpoint_sha256": None, "prospective_start_ms": P0, "prospective_start_utc": _iso(P0),
+                 "provenance": {"snapshot_run_id": expect[2], "snapshot_master_sha256": expect[0], "contracts_sha256": expect[1], "stage3_run_id": S3_RUN, "stage3_events_sha256": cfg["events_sha"], "stage3_counts_sha256": cfg["counts_sha"], "stage3_code_sha256": cj["code_sha256"],
+                                "audit_run_id": THIS_RUN, "audit_repo_head": THIS_SHA, "ledger_sha256": lsha},
+                 "entry1_counts": {"%s|%s" % (p, d_): {"triggers": sum(1 for r in recs if r["split"] == p and r["direction"] == d_), "skips": sum(1 for r in recs if r["split"] == p and r["direction"] == d_ and r["status"] == "skipped"), "fills": sum(1 for r in recs if r["split"] == p and r["direction"] == d_ and r["status"] == "filled")} for p in ("IS", "EMB", "HO") for d_ in ("L", "S")},
+                 "gate": {"is_filled_pf": gis, "is_required": 200, "ho_filled_pf": gho, "ho_required": 100, "status": gate_state}, "prospective": {"observations": 0, "note": "none ingested; reported separately from IS/EMB/HO"}, "failures": []}
+          cs_ = json.dumps(cp0, sort_keys=True, indent=1); cp0["content_sha256"] = hashlib.sha256(cs_.encode()).hexdigest()
+          open(os.path.join(OUT, "checkpoint_0_baseline.json"), "w").write(json.dumps(cp0, sort_keys=True, indent=1))
+          print("D5-11b CHECKPOINT-0 BASELINE RECORD (canonical content sha256 %s; kind says NOT REGISTERED: it becomes the genesis of a hash chain only if the designer authorises it)" % cp0["content_sha256"])
+          print("LIMITATIONS: (1) no MicroMAP monitoring or prospective-collection workflow exists; all MicroMAP workflows are manual; (2) split, gap status, ATR and fill stop_pct are not stored on Entry-1 events and must be derived or reconstructed; (3) no KuCoin request was made, so prospective data availability and the current 15m history depth were not re-tested; (4) artifact expiry is read from GitHub metadata and is not extended by this audit; (5) the protected-file hashes are a baseline without an earlier reference; (6) descriptive verification only - no P&L, expectancy, significance, threshold test or extrapolation.")
+          res = {"label": "READ-ONLY D5 - forward-monitoring integrity audit; no rule, state or workflow change", "P0": P0, "gate": cp0["gate"], "selftest": [(a, b, c_) for a, b, c_ in tests], "ledger_sha256": lsha, "checkpoint0_sha256": cp0["content_sha256"], "workflows": wf_rows}
+          js = json.dumps(res, sort_keys=True, indent=1, default=str); open(os.path.join(OUT, "d5_audit.json"), "w").write(js)
+          print("AUDIT_RESULTS_SHA256", hashlib.sha256(js.encode()).hexdigest()); print("AUDIT_DONE (read-only; engine, parameters, workflows and state untouched)")
+          PYEOF
+          echo "AUDIT_CODE_SHA256_COMPUTED=$(sha256sum stage3_d5_forward_integrity.py | cut -d' ' -f1)"
+          test "$(sha256sum stage3_d5_forward_integrity.py | cut -d' ' -f1)" = "$AUDIT_CODE_SHA256" || { echo "ABORT_AUDIT: code hash mismatch"; exit 2; }
+
+      - name: Run D5 forward-monitoring integrity audit
+        shell: bash
+        env:
+          STAGE3_RUN_ID: ${{ steps.find.outputs.run_id }}
+        run: |
+          export THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID
+          DL_DIR=dl RES_DIR=s3res OUT_DIR=audit_out WF_DIR=repo/.github/workflows REPO_DIR=repo META_DIR=meta python3 -I stage3_d5_forward_integrity.py 2>&1 | tee audit_log.txt
+          cp audit_log.txt audit_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-d5
+          path: audit_out/
+          retention-days: 90
+          if-no-files-found: ignore
