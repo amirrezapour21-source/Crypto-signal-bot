@@ -1,0 +1,411 @@
+name: MicroMAP Stage 3 D6 evidence preservation and prospective-governance audit (read-only; artifacts only, no repo commit, no rule change)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AUDIT_CODE_SHA256: "c68df54ea49302155077e9cf461d6d0f011ebee7ccb75670eabf66025c8de75a"
+      STAGE3_RUN_ID: "39092938353"
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: repo
+          persist-credentials: false
+
+      - name: Install PyYAML (parser only)
+        run: pip install pyyaml
+
+      - name: Read-only metadata and ZIP retrieval of every mm-* artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          echo "THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID"
+          mkdir -p meta zips dl s3res
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[]' | jq -s '{artifacts: .}' > meta/arts_all.json
+          python3 - <<'PY'
+          import json
+          a = json.load(open("meta/arts_all.json"))["artifacts"]
+          with open("ids.txt", "w") as f:
+              for x in a:
+                  if x["name"].startswith("mm-"): f.write("%s\t%s\n" % (x["id"], x["name"]))
+          print("mm-* artifacts listed:", sum(1 for x in a if x["name"].startswith("mm-")))
+          PY
+          : > meta/dl_results.tsv
+          while IFS=$'\t' read -r id name; do
+            code=$(curl -sS -L -o "zips/$id.zip" -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip"); ex=$?
+            bytes=$(stat -c %s "zips/$id.zip" 2>/dev/null || echo 0)
+            sha=$(sha256sum "zips/$id.zip" 2>/dev/null | cut -d' ' -f1)
+            printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$code" "$bytes" "$sha" "$ex" >> meta/dl_results.tsv
+            echo "RETRIEVE id=$id name=$name http=$code bytes=$bytes curl_exit=$ex"
+          done < ids.txt
+          df -h . | tail -1
+
+      - name: Extract only ZIPs whose digest matched
+        shell: bash
+        run: |
+          cat > extract_chain.py <<'PYEOF'
+          import json, os, subprocess, hashlib
+          runs = set(os.environ.get("CHAIN_RUNS", "39046246188,39092938353").split(","))
+          arts = json.load(open("meta/arts_all.json"))["artifacts"]; res = {}
+          for ln in open("meta/dl_results.tsv").read().strip().split("\n"):
+              f = ln.split("\t"); res[f[0]] = f
+          n = 0
+          for a in arts:
+              if not a["name"].startswith("mm-") or str(a["workflow_run"]["id"]) not in runs: continue
+              r = res.get(str(a["id"]))
+              if not r or r[1] != "200" or r[3] != (a.get("digest") or "").replace("sha256:", ""): print("NOT EXTRACTED (not a verified retrieval):", a["name"], a["id"]); continue
+              dest = "s3res" if a["name"] == "mm-stage3-15m-results" else os.path.join("dl", a["name"]); os.makedirs(dest, exist_ok=True)
+              subprocess.run(["unzip", "-oq", "zips/%s.zip" % a["id"], "-d", dest], check=True); n += 1
+          print("extracted verified ZIPs:", n)
+          PYEOF
+          CHAIN_RUNS=39046246188,39092938353 python3 extract_chain.py
+
+      - name: Write audit code and verify its hash
+        shell: bash
+        run: |
+          cat > stage3_d6_evidence_governance.py <<'PYEOF'
+          # MicroMAP Stage 3 - READ-ONLY diagnostic D6: frozen-evidence preservation inventory, retrieval check and prospective-governance evidence.
+          # Uses GitHub run/artifact metadata (read-only API), read-only ZIP retrieval, the frozen snapshot and Stage 3 files (hash-verified) and the repository checkout (read-only).
+          # No engine import, no strategy re-run, no parameter change, no threshold test, no P&L, no KuCoin request, no state change. Descriptive and verification only.
+          import os, sys, json, gzip, glob, hashlib, collections, statistics, datetime as _dt
+          FROZEN_MASTER = "4c3350b8a6ae095446aa6021d5c34b198802281c78545ece68c5fa9aba9ad82b"
+          FROZEN_CONTRACTS = "39c3197a3ea104bf08ead742298bdc0d749362f0686ad08b4496283f0fc31878"
+          FROZEN_RUN = "39046246188"
+          FROZEN = {"events_sha": "d35599bc48976960caa54680eb9d2e39852aff55f94522ef36aeee5727fba1ee", "counts_sha": "5651c7e2d8e41decb3c646741f5224213d37ba7e72c7754458b2ca4e6a91e826",
+                    "is_end": 1767556800000, "emb_end": 1768161600000, "n_trig": 175, "n_skip": 162, "n_fill": 13}
+          TF = 15; STEP = TF * 60000; TOL = 2e-6   # stored stop_pct is rounded to 6 decimals; tolerance in percentage points
+          MOCK = os.environ.get("AUDIT_MOCK") == "1"; cfg = dict(FROZEN); expect = (FROZEN_MASTER, FROZEN_CONTRACTS, FROZEN_RUN)
+          if MOCK:
+              cfg.update(events_sha=os.environ["EXPECT_EVENTS_SHA"], counts_sha=os.environ["EXPECT_COUNTS_SHA"], is_end=int(os.environ["IS_END"]), emb_end=int(os.environ["EMB_END"]), n_trig=None, n_skip=None, n_fill=None)
+              expect = (os.environ["EXPECT_MASTER"], os.environ["EXPECT_CONTRACTS"], os.environ["EXPECT_RUN"])
+          DL = os.environ.get("DL_DIR", "dl"); D = os.environ.get("RES_DIR", "s3res"); OUT = os.environ.get("OUT_DIR", "audit_out"); os.makedirs(OUT, exist_ok=True)
+          def _sha_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(1 << 20), b""): h.update(c)
+              return h.hexdigest()
+          def _d(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+          def abort(msg):
+              print("ABORT_STAGE3:", msg); print("NO_RESULTS_PRODUCED"); sys.exit(2)
+
+          def _analyze(tsv, tf):
+              step = tf * 60000; tsv = sorted(tsv); off = bad = zero = 0; runs = []; prev = None
+              for t, o, h, l, c, v in tsv:
+                  if t % step != 0: off += 1
+                  if min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h): bad += 1
+                  if v == 0: zero += 1
+                  if prev is not None and t - prev > step: runs.append([prev + step, (t - prev) // step - 1])
+                  prev = t
+              return {"rows": len(tsv), "first_ts": tsv[0][0] if tsv else None, "last_ts": tsv[-1][0] if tsv else None,
+                      "off_grid": off, "ohlc_bad": bad, "zero_vol": zero,
+                      "ms_units": all(1e12 < r[0] < 4e12 for r in tsv) if tsv else None,
+                      "interior_missing_bars": sum(r[1] for r in runs), "interior_missing_runs": runs}
+
+          def verify_and_load(DL, expect_master, expect_contracts, expect_run):
+              """Verify every required 15m artifact against the manifest. Abort on any problem. Returns (man, contracts, universe, metas)."""
+              mp = glob.glob(DL + "/*/manifest.json")
+              if len(mp) != 1: abort("manifest.json not found exactly once (%d)" % len(mp))
+              man = json.load(open(mp[0]))
+              files = [tuple(x) for x in man["files"]]; fh = dict(files)
+              master = hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files)).encode()).hexdigest()
+              if master != man["master_sha256"]: abort("manifest internal master hash mismatch %s" % master)
+              if master != expect_master: abort("manifest master %s != frozen %s" % (master, expect_master))
+              if str(man.get("run_id")) != expect_run: abort("manifest run_id %s != %s" % (man.get("run_id"), expect_run))
+              if man["tf_results"]["15"]["verdict"] != "PASS": abort("manifest 15m verdict not PASS")
+              print("V1 manifest ok: run_id", man["run_id"], "master", master, "manifest_files", len(files))
+              cj = [r for r, h in files if r.endswith("contracts_active_55.json")]
+              if len(cj) != 1: abort("contract snapshot not in manifest")
+              cp = os.path.join(DL, cj[0])
+              if not os.path.exists(cp): abort("contract snapshot file missing")
+              if _sha_file(cp) != fh[cj[0]] or fh[cj[0]] != expect_contracts: abort("contract snapshot hash mismatch")
+              contracts = json.load(open(cp)); universe = list(contracts["universe"])
+              if len(universe) != 55 or len(contracts["contracts"]) < 55 or contracts["missing"]: abort("contract snapshot universe/missing problem")
+              print("V2 contract snapshot ok sha", fh[cj[0]], "symbols", len(universe))
+              exp15 = {r for r, h in files if "/" in r and r.split("/")[0].startswith("mm-snap-15m-")}
+              if len(exp15) != 3 * len(universe): abort("manifest 15m file count %d != %d" % (len(exp15), 3 * len(universe)))
+              present = {os.path.relpath(p, DL) for p in glob.glob(DL + "/mm-snap-15m-*/*")}
+              if present - exp15: abort("unexpected extra files in 15m artifacts: %s" % sorted(present - exp15)[:5])
+              if exp15 - present: abort("missing 15m files: %s" % sorted(exp15 - present)[:5])
+              metas = {}; nbad = 0
+              for sym in universe:
+                  mrel = [r for r in exp15 if r.endswith("/%s_15m.meta.json" % sym)]
+                  if len(mrel) != 1: abort("meta missing for " + sym)
+                  dirn = os.path.dirname(mrel[0]); base = "%s_15m" % sym
+                  for suf in (".csv.gz", ".calls.csv", ".meta.json"):
+                      rel = dirn + "/" + base + suf
+                      if _sha_file(os.path.join(DL, rel)) != fh[rel]: abort("file hash != manifest: " + rel)
+                  m = json.load(open(os.path.join(DL, mrel[0])))
+                  if m["sha256_csv_gz"] != fh[dirn + "/" + base + ".csv.gz"] or m["sha256_calls"] != fh[dirn + "/" + base + ".calls.csv"]: abort("meta hash fields != manifest: " + sym)
+                  raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read())
+                  if hashlib.sha256(raw).hexdigest() != m["sha256_csv_raw"]: abort("raw csv hash mismatch " + sym)
+                  tsv = []
+                  for ln in raw.decode().split("\n")[1:]:
+                      if ln:
+                          f = ln.split(","); tsv.append((int(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5])))
+                  an = _analyze(tsv, TF)
+                  if json.loads(json.dumps(an)) != m["integrity"]: abort("integrity recompute differs " + sym)
+                  if not m["complete"] or m["integrity"]["off_grid"] or m["integrity"]["ohlc_bad"] or m["integrity"]["rows"] == 0: abort("meta integrity flags " + sym)
+                  if m["end_ms_exclusive"] != man["end_ms_exclusive"] or m["tf_min"] != TF or m["symbol"] != sym: abort("meta identity mismatch " + sym)
+                  if len({t[0] for t in tsv}) != len(tsv) or [t[0] for t in tsv] != sorted(t[0] for t in tsv): abort("timestamps not unique/sorted " + sym)
+                  metas[sym] = (m, dirn, base)
+              print("V3 all", len(universe), "symbols: 165 files hash==manifest, raw hash, integrity recompute, complete, no off-grid/ohlc-bad: PASS")
+              return man, contracts, universe, metas
+
+          def read_series(DL, dirn, base):
+              raw = gzip.decompress(open(os.path.join(DL, dirn, base + ".csv.gz"), "rb").read()).decode().split("\n")[1:]
+              ts = []; O = []; H = []; L = []; C = []
+              for ln in raw:
+                  if ln:
+                      f = ln.split(","); ts.append(int(f[0])); O.append(float(f[1])); H.append(float(f[2])); L.append(float(f[3])); C.append(float(f[4]))
+              return ts, O, H, L, C
+
+
+
+          import re, subprocess, time, csv
+          NOW = _dt.datetime.now(_dt.timezone.utc)
+          META = os.environ.get("META_DIR", "meta"); ZIPS = os.environ.get("ZIP_DIR", "zips"); DX = os.environ.get("DX_DIR", "dx"); REPO = os.environ.get("REPO_DIR", "repo"); WD = os.path.join(REPO, ".github", "workflows")
+          THIS_RUN = os.environ.get("THIS_AUDIT_RUN_ID", "unknown"); THIS_SHA = os.environ.get("GITHUB_SHA", "unknown"); S3_RUN = os.environ.get("STAGE3_RUN_ID", "39092938353")
+          def _iso(ms): return _dt.datetime.fromtimestamp(ms / 1000, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+          def _pt(s): return _dt.datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc)
+          def _jload(name):
+              p = os.path.join(META, name)
+              if not os.path.exists(p): return None
+              try: return json.load(open(p))
+              except Exception as ex: return {"_error": str(ex)}
+          print("D6 START | audit run id %s | repo head %s | now %s UTC | READ-ONLY: no market data fetched, no workflow/engine/parameter/state change" % (THIS_RUN, THIS_SHA, NOW.strftime("%Y-%m-%d %H:%M:%S")))
+          EXPECT_NAMES = {"mm-snap-meta", "mm-snap-manifest", "mm-stage3-15m-results"} | {"mm-snap-15m-%d" % i for i in range(1, 6)} | {"mm-snap-30m-%d" % i for i in range(1, 4)} | {"mm-snap-5m-%d" % i for i in range(1, 12)}
+          def tier(name):
+              if name in ("mm-snap-meta", "mm-snap-manifest", "mm-stage3-15m-results") or name.startswith("mm-snap-15m-"): return "T1"
+              return "T2" if name.startswith("mm-snap-30m-") else "T3"
+          # ---------------- D6-1 inventory (metadata from the GitHub API) ----------------
+          arts_j = _jload("arts_all.json")
+          if not arts_j or "artifacts" not in arts_j: abort("artifact listing not available")
+          ALL = [a for a in arts_j["artifacts"] if str(a.get("name", "")).startswith("mm-")]
+          chain = [a for a in ALL if str((a.get("workflow_run") or {}).get("id")) in (expect[2], S3_RUN)]
+          derived = [a for a in ALL if a not in chain]
+          chain.sort(key=lambda a: (a["expires_at"], a["name"])); derived.sort(key=lambda a: a["created_at"])
+          names = {a["name"] for a in chain}
+          print("D6-1 FROZEN EVIDENCE-CHAIN INVENTORY: runs %s (snapshot) and %s (Stage 3) | artifacts found %d | expected 22 | names equal the expected set: %s | duplicate names inside the chain: %d" % (expect[2], S3_RUN, len(chain), names == EXPECT_NAMES, len(chain) - len(names)))
+          if not MOCK and (len(chain) != 22 or names != EXPECT_NAMES): abort("evidence chain is not the expected 22 artifacts")
+          bad_meta = [a["name"] for a in chain if not str(a.get("digest", "")).startswith("sha256:") or a.get("expired") or not a.get("expires_at")]
+          print("   artifacts with a missing digest, already expired or no expiry: %d %s" % (len(bad_meta), bad_meta))
+          print("   %-24s %-12s %-12s %-3s %-10s %-64s %-20s %-20s %s" % ("name", "artifact_id", "run_id", "tier", "size_bytes", "sha256_zip_digest", "created_utc", "expires_utc", "days_left"))
+          tsz = collections.Counter()
+          for a in chain:
+              dl_ = (_pt(a["expires_at"]) - NOW).total_seconds() / 86400; tsz[tier(a["name"])] += a["size_in_bytes"]
+              print("   %-24s %-12s %-12s %-3s %-10s %-64s %-20s %-20s %.2f" % (a["name"], a["id"], a["workflow_run"]["id"], tier(a["name"]), a["size_in_bytes"], a["digest"].replace("sha256:", ""), a["created_at"][:19].replace("T", " "), a["expires_at"][:19].replace("T", " "), dl_))
+          exps = collections.Counter(a["expires_at"][:19] for a in chain)
+          print("   distinct expiry timestamps: %s" % "; ".join("%s UTC x%d" % kv for kv in sorted(exps.items())))
+          print("   earliest expiry: %s UTC (%.2f days after this run, %s)" % (chain[0]["expires_at"][:19].replace("T", " "), (_pt(chain[0]["expires_at"]) - NOW).total_seconds() / 86400, chain[0]["name"]))
+          print("   sizes by tier (bytes): T1 %d (manifest, meta, 15m x5, Stage 3 results) | T2 %d (30m x3) | T3 %d (5m x11) | all %d (%.1f MiB)" % (tsz["T1"], tsz["T2"], tsz["T3"], sum(tsz.values()), sum(tsz.values()) / 1048576))
+          print("   DERIVED (non-chain) mm-* artifacts, listed separately: %d" % len(derived))
+          for a in derived: print("   D %-26s id=%-12s run=%-12s size=%-6s digest=%s created=%s expires=%s" % (a["name"], a["id"], a["workflow_run"]["id"], a["size_in_bytes"], a["digest"].replace("sha256:", "") if a.get("digest") else None, a["created_at"][:19], a["expires_at"][:19]))
+          dupn = collections.Counter(a["name"] for a in ALL); dups = {k: [a["id"] for a in ALL if a["name"] == k] for k, v in dupn.items() if v > 1}
+          print("   artifact names that occur more than once in the repository: %s" % json.dumps(dups))
+          # ---------------- D6-2 retrieval with read-only access ----------------
+          res = {}
+          p_ = os.path.join(META, "dl_results.tsv")
+          if os.path.exists(p_):
+              for ln in open(p_).read().strip().split("\n"):
+                  f = ln.split("\t")
+                  if len(f) >= 5: res[f[0]] = {"http": f[1], "bytes": int(f[2] or 0), "sha": f[3], "exit": f[4]}
+          def status(a):
+              r = res.get(str(a["id"]))
+              if r is None: return "METADATA_ONLY (no retrieval attempted)"
+              if r["http"] != "200" or r["exit"] != "0": return "RETRIEVAL_FAILED http=%s curl_exit=%s" % (r["http"], r["exit"])
+              if r["bytes"] != a["size_in_bytes"]: return "RETRIEVED_SIZE_DIFFERS %d != %d" % (r["bytes"], a["size_in_bytes"])
+              return "VERIFIED_RETRIEVAL_ZIP_DIGEST_MATCH" if r["sha"] == (a.get("digest") or "").replace("sha256:", "") else "RETRIEVED_DIGEST_MISMATCH"
+          print("D6-2 RETRIEVAL CHECK (read-only API download of every ZIP, SHA-256 recomputed and compared with the API digest; ZIPs are not stored or published by this run)")
+          cs = collections.Counter();
+          for a in chain:
+              s_ = status(a); cs[s_.split(" ")[0]] += 1
+              print("   %-24s id=%-12s %s" % (a["name"], a["id"], s_) + ("" if str(a["id"]) not in res else " | recomputed sha256 %s bytes %d" % (res[str(a["id"])]["sha"], res[str(a["id"])]["bytes"])))
+          print("   CHAIN SUMMARY: %s" % dict(cs))
+          ds = collections.Counter(status(a).split(" ")[0] for a in derived); print("   DERIVED SUMMARY: %s" % dict(ds))
+          chain_ok = all(status(a) == "VERIFIED_RETRIEVAL_ZIP_DIGEST_MATCH" for a in chain)
+          for a in derived: print("   D %-26s id=%-12s %s" % (a["name"], a["id"], status(a)))
+          with open(os.path.join(OUT, "SHA256SUMS_frozen_chain.txt"), "w") as f:
+              for a in sorted(chain, key=lambda a: a["name"]): f.write("%s  %s.zip\n" % (a["digest"].replace("sha256:", ""), a["name"]))
+          with open(os.path.join(OUT, "SHA256SUMS_derived_by_id.txt"), "w") as f:
+              for a in derived: f.write("%s  %s__%s.zip\n" % (a["digest"].replace("sha256:", "") if a.get("digest") else "NO_DIGEST", a["name"], a["id"]))
+          sums_sha = _sha_file(os.path.join(OUT, "SHA256SUMS_frozen_chain.txt"))
+          print("   written to this run's artifact: SHA256SUMS_frozen_chain.txt (22 lines, 'digest  <artifact name>.zip', usable with sha256sum -c after saving each ZIP under that name) sha256 %s ; SHA256SUMS_derived_by_id.txt" % sums_sha)
+          # ---------------- D6-3 content verification of retrieved chain artifacts ----------------
+          ev_p, ct_p = os.path.join(D, "events.jsonl.gz"), os.path.join(D, "stage3_counts.json")
+          verified_content = {}
+          if chain_ok and os.path.exists(ev_p) and os.path.exists(ct_p):
+              if _sha_file(ev_p) != cfg["events_sha"]: abort("events hash mismatch %s" % _sha_file(ev_p))
+              if _sha_file(ct_p) != cfg["counts_sha"]: abort("counts hash mismatch %s" % _sha_file(ct_p))
+              verified_content["mm-stage3-15m-results"] = "events+counts hashes equal the frozen values"
+              print("D6-3a Stage 3 result files inside the retrieved ZIP equal the frozen hashes: events %s counts %s" % (cfg["events_sha"], cfg["counts_sha"]))
+              mp = glob.glob(DL + "/*/manifest.json")
+              if len(mp) != 1: abort("manifest.json not found exactly once")
+              man0 = json.load(open(mp[0])); files0 = [tuple(x) for x in man0["files"]]
+              if hashlib.sha256("".join("%s  %s\n" % (h, r) for r, h in sorted(files0)).encode()).hexdigest() != man0["master_sha256"] or man0["master_sha256"] != expect[0]: abort("manifest master hash mismatch")
+              miss = []; badh = []; per = collections.Counter(); perok = collections.Counter()
+              for rel, h in files0:
+                  per[rel.split("/")[0]] += 1; pth = os.path.join(DL, rel)
+                  if not os.path.exists(pth): miss.append(rel); continue
+                  if _sha_file(pth) != h: badh.append(rel); continue
+                  perok[rel.split("/")[0]] += 1
+              present = {os.path.relpath(p, DL) for p in glob.glob(DL + "/mm-snap-*/*") if os.path.isfile(p)}
+              extra = sorted(present - {r for r, h in files0} - {os.path.relpath(mp[0], DL)})
+              print("D6-3b FULL SNAPSHOT MANIFEST CHECK (all timeframes, not only 15m): manifest files %d | present and SHA-256 equal %d | missing %d | hash mismatch %d | extra files not in the manifest %d | master recomputed from the manifest listing equals %s" % (len(files0), sum(perok.values()), len(miss), len(badh), len(extra), expect[0]))
+              print("   per artifact (verified/listed): " + ", ".join("%s %d/%d" % (k, perok[k], per[k]) for k in sorted(per)))
+              if miss or badh: abort("snapshot content problem: missing %s mismatch %s" % (miss[:3], badh[:3]))
+              for k in per: verified_content[k] = "%d/%d files hash-equal to the manifest" % (perok[k], per[k])
+              verified_content["mm-snap-manifest"] = "manifest.json master recomputed equals the frozen MASTER_SHA256"
+              man, contracts, universe, metas = verify_and_load(DL, expect[0], expect[1], expect[2])
+              P0 = int(man["end_ms_exclusive"])
+              if not MOCK and P0 != 1792195200000: abort("snapshot end_ms_exclusive != frozen")
+              CONTENT_OK = True
+          else:
+              CONTENT_OK = False
+              print("D6-3 CONTENT VERIFICATION SKIPPED: not every chain ZIP was retrieved with a matching digest; affected artifacts remain METADATA-ONLY evidence")
+          print("   content-level verification per chain artifact: %s" % ("; ".join("%s: %s" % kv for kv in sorted(verified_content.items())) if verified_content else "none"))
+          # ---------------- D6-4 duplicate derived artifacts ----------------
+          print("D6-4 DUPLICATE DERIVED ARTIFACT NAMES (D5 finding F1)")
+          for k, ids in dups.items():
+              if k in names: continue
+              fl = {}
+              for i in ids:
+                  zp = os.path.join(ZIPS, "%s.zip" % i)
+                  if os.path.exists(zp):
+                      d_ = os.path.join(DX, str(i)); os.makedirs(d_, exist_ok=True); subprocess.run(["unzip", "-oq", zp, "-d", d_], check=False)
+                      fl[i] = {os.path.relpath(p, d_): _sha_file(p) for p in glob.glob(d_ + "/**/*", recursive=True) if os.path.isfile(p)}
+              if len(fl) == len(ids) and len(ids) == 2:
+                  a_, b_ = [fl[i] for i in ids]; common = sorted(set(a_) & set(b_))
+                  print("   %s ids %s: files %s | byte-identical files: %s | differing files: %s | only in one: %s" % (k, ids, sorted(set(a_) | set(b_)), [c for c in common if a_[c] == b_[c]], [c for c in common if a_[c] != b_[c]], sorted(set(a_) ^ set(b_))))
+              else: print("   %s ids %s: content comparison not possible (ZIPs not retrieved)" % (k, ids))
+          # ---------------- D6-5 repository history facts (read-only git) ----------------
+          def _git(*a):
+              try: return subprocess.run(["git", "-C", REPO] + list(a), capture_output=True, text=True, timeout=120).stdout.strip()
+              except Exception as ex: return "unavailable: %s" % ex
+          P0_ISO = "2026-10-17T00:00:00Z"
+          print("D6-5 REPOSITORY HISTORY (read-only; checkout head %s)" % _git("rev-parse", "HEAD"))
+          cm = [l for l in _git("log", "--since=" + P0_ISO, "--format=%h|%cI|%an|%s").split("\n") if l]
+          print("   commits since P0 (%s): %d | by author: %s" % (P0_ISO, len(cm), dict(collections.Counter(l.split("|")[2] for l in cm))))
+          nm = [l for l in _git("log", "--since=" + P0_ISO, "--name-only", "--format=").split("\n") if l]
+          print("   most frequently changed paths since P0: %s" % dict(collections.Counter(nm).most_common(8)))
+          pm = [l for l in _git("log", "--since=" + P0_ISO, "--format=%h|%cI|%s", "--", "crypto_signal_bot_v4.py", "v4_smc_cycle1.py").split("\n") if l]
+          print("   commits since P0 touching crypto_signal_bot_v4.py or v4_smc_cycle1.py: %d %s" % (len(pm), pm[:3]))
+          sm = [l for l in _git("log", "--format=%h|%cI", "--", "candidate11_paper_state.json").split("\n") if l]
+          print("   candidate11_paper_state.json: %d commits in total, latest %s" % (len(sm), sm[0] if sm else None))
+          mod = [l for l in _git("log", "--diff-filter=M", "--format=%h|%cI|%s", "--name-only", "--", ".github/workflows/micromap_*.yml").split("\n") if l]
+          print("   commits that MODIFIED (not created) an existing MicroMAP workflow file: %s" % (mod if mod else "none"))
+          add = [l for l in _git("log", "--diff-filter=A", "--format=%h|%cI", "--name-only", "--", ".github/workflows/micromap_*.yml").split("\n") if l]
+          print("   commits that created MicroMAP workflow files (hash|time then file): %d lines" % len(add))
+          # ---------------- D6-6 corrected workflow inventory (YAML structure; heredoc bodies excluded) ----------------
+          print("D6-6 WORKFLOW INVENTORY, STRUCTURE-BASED PARSER (corrects the D5 text-search false positive)")
+          try:
+              import yaml
+          except Exception: yaml = None
+          def strip_heredocs(s): return re.sub(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n[ \t]*\1[ \t]*(?:\n|$)", "\n", s, flags=re.S)
+          WRITE_RE = re.compile(r"git\s+(push|commit)|gh\s+workflow\s+run|(-X|--method)\s+(POST|PUT|PATCH|DELETE)|gh\s+(release|pr)\s+(create|upload|merge)")
+          rows6 = {}
+          if yaml:
+              for p in sorted(glob.glob(os.path.join(WD, "*.yml"))):
+                  nm_ = os.path.basename(p); y = yaml.safe_load(open(p, encoding="utf-8", errors="replace")) or {}
+                  on = y.get("on", y.get(True, {})); on = {k: None for k in on} if isinstance(on, list) else ({on: None} if isinstance(on, str) else (on or {}))
+                  cron = [s_.get("cron") for s_ in (on.get("schedule") or [])] if isinstance(on.get("schedule"), list) else []
+                  perms = [y.get("permissions")] + [j.get("permissions") for j in (y.get("jobs") or {}).values()]
+                  pw = any(isinstance(x, dict) and any(v == "write" for v in x.values()) or x == "write-all" for x in perms if x)
+                  runs = [stp.get("run", "") for j in (y.get("jobs") or {}).values() for stp in (j.get("steps") or []) if isinstance(stp, dict)]
+                  sw = any(WRITE_RE.search(strip_heredocs(r)) for r in runs)
+                  rows6[nm_] = {"triggers": sorted(str(k) for k in on), "cron": cron, "perm_write": bool(pw), "script_write": bool(sw)}
+              for nm_, r in sorted(rows6.items()): print("   %-36s triggers=%s cron=%s permissions-write=%s write-commands-in-run-steps=%s" % (nm_, ",".join(r["triggers"]), r["cron"] or "-", r["perm_write"], r["script_write"]))
+              mm_ = {k: v for k, v in rows6.items() if k.startswith("micromap")}
+              print("   MicroMAP files: %d | with permissions: write: %d | with write commands in run steps (heredoc bodies excluded): %d | with a schedule: %d | with workflow_run: %s" % (len(mm_), sum(1 for v in mm_.values() if v["perm_write"]), sum(1 for v in mm_.values() if v["script_write"]), sum(1 for v in mm_.values() if v["cron"]), [k for k, v in mm_.items() if "workflow_run" in v["triggers"]]))
+              d5 = rows6.get("micromap_stage3_d5.yml"); print("   micromap_stage3_d5.yml (flagged write-capable with cron ['\\\\s*['] by the D5 text search): corrected result = %s" % json.dumps(d5))
+              print("   other workflow files with a schedule: %s" % {k: v["cron"] for k, v in rows6.items() if not k.startswith("micromap") and v["cron"]})
+          else: print("   LIMITATION: PyYAML unavailable, structure-based inventory not produced")
+          # ---------------- D6-7 boundary probe (descriptive; not a strategy run) ----------------
+          def wilder(H, L, C):
+              n = len(H); atr = [None] * n; trs = []; prev = None
+              for k in range(n):
+                  tr = (H[k] - L[k]) if prev is None else max(H[k] - L[k], abs(H[k] - prev), abs(L[k] - prev)); trs.append(tr)
+                  if k == 13: atr[k] = sum(trs) / 14
+                  elif k >= 14: atr[k] = (atr[k - 1] * 13 + tr) / 14
+                  prev = C[k]
+              return atr
+          boundary = None
+          if CONTENT_OK:
+              events = [json.loads(ln) for ln in gzip.open(ev_p, "rt")]
+              spk = [(e["sym"], e["ts"], e["n"], e["d"]) for e in events if e["t"] == "spike_detected"]
+              pend = [e for e in events if e["t"] == "pending_end"]
+              SER = {}
+              for sym in universe:
+                  m, dirn, base = metas[sym]; ts_, O_, H_, L_, C_ = read_series(DL, dirn, base); SER[sym] = (ts_, O_, H_, L_, C_, wilder(H_, L_, C_), {t: j for j, t in enumerate(ts_)})
+              def qual(sym, d, k, ref):
+                  ts_, O_, H_, L_, C_, A_, ix = SER[sym]; o, h, l, c = (O_[k], H_[k], L_[k], C_[k]) if d == 1 else (-O_[k], -L_[k], -H_[k], -C_[k]); rng = h - l
+                  return c > o and rng > 0 and rng >= 1.0 * ref and (c - l) >= 0.7 * rng and (c - o) >= 0.5 * rng
+              def chain_at(sym, d, k, maxl=12):
+                  ts_, O_, H_, L_, C_, A_, ix = SER[sym]; best = 0
+                  for L_n in range(1, maxl + 1):
+                      s = k - L_n + 1
+                      if s - 1 < 13 or A_[s - 1] is None or A_[s - 1] <= 0: break
+                      if any(ts_[j] - ts_[j - 1] != STEP for j in range(s + 1, k + 1)): break
+                      if all(qual(sym, d, j, A_[s - 1]) for j in range(s, k + 1)): best = L_n
+                  return best
+              tested = skipped = ok_q = ok_end = ok_chain = 0
+              for sym, ts0, n, d in spk:
+                  ts_, O_, H_, L_, C_, A_, ix = SER[sym]; s = ix[ts0]
+                  if s - 1 < 13 or A_[s - 1] is None: skipped += 1; continue
+                  tested += 1; ref = A_[s - 1]
+                  okq = all(qual(sym, d, j, ref) for j in range(s, s + n)); ok_q += okq
+                  ok_end += (s + n < len(ts_) and not qual(sym, d, s + n, ref))
+                  ok_chain += (chain_at(sym, d, s + n - 1) == n)
+              print("D6-7a PROBE VALIDATION on the %d frozen spike_detected events (spike candle rule re-evaluated from hash-verified candles with the frozen constants; untested because the ATR reference is unavailable: %d): every spike candle qualifies under its reference ATR: %d of %d; the next candle does not qualify (run end): %d of %d; the longest same-reference chain ending at the run end equals the stored n: %d of %d" % (len(spk), skipped, ok_q, tested, ok_end, tested, ok_chain, tested))
+              pl = {}; fresh = collections.Counter(); lens = collections.Counter(); lst = []
+              for sym in universe:
+                  ts_, O_, H_, L_, C_, A_, ix = SER[sym]; k = len(ts_) - 1
+                  for d in (1, -1):
+                      f = (A_[k - 1] is not None and A_[k - 1] > 0 and qual(sym, d, k, A_[k - 1])); fresh[d] += bool(f)
+                      c_ = chain_at(sym, d, k); lens[(d, min(c_, 3))] += 1
+                      if c_ >= 1: lst.append((sym, "L" if d == 1 else "S", c_, _iso(ts_[k - c_ + 1])))
+              print("D6-7b PROBE AT THE SNAPSHOT END (last candle %s UTC; setups pending at the end recorded in the ledger: %d): symbol x direction cases where the last candle qualifies as a spike candle under the previous candle's ATR (a fresh run would start): long %d, short %d" % (_iso(P0 - STEP), len(pend), fresh[1], fresh[-1]))
+              print("   trailing same-reference chain length at the last candle, symbol x direction counts: " + "; ".join("%s chain %s%s: %d" % ("L" if d == 1 else "S", ">=" if n_ == 3 else "", n_, lens[(d, n_)]) for d in (1, -1) for n_ in (0, 1, 2, 3)))
+              print("   cases with a chain of length >= 1 (symbol, direction, chain length, run start): %s" % sorted(lst))
+              print("   reading: a chain of length >= 3 (the frozen minimum spike length) would be confirmed as a spike by the next non-qualifying candle after P0; its spike start would then lie before P0, so it is a BOUNDARY-STRADDLING setup; chains of length 1-2 could still grow. None of these appears in the pending-setup ledger because pending_end only records setups past the spike stage.")
+              boundary = {"fresh_long": fresh[1], "fresh_short": fresh[-1], "chains": lst, "validation": [tested, ok_q, ok_end, ok_chain], "pending_end_events": len(pend)}
+          else: print("D6-7 BOUNDARY PROBE SKIPPED (content verification not complete)")
+          # ---------------- D6-8 outputs ----------------
+          print("LIMITATIONS: (1) the retrieval check proves that each ZIP was retrievable through the API at this run and that its SHA-256 equals the API digest; it does not preserve anything (ZIPs are discarded with the runner); (2) the boundary probe re-evaluates the frozen spike-candle rule on the last candles only and is approximate where an earlier run state would differ; it is descriptive, not a strategy run; (3) no KuCoin request was made; (4) expiry times are GitHub metadata; (5) the structure-based parser reads workflow files at the checkout head only; (6) no P&L, expectancy, significance, threshold test or extrapolation; status INSUFFICIENT SAMPLE (IS 11/200, HO 2/100, prospective 0).")
+          out = {"label": "READ-ONLY D6 - evidence preservation and prospective-sample governance audit; no rule, state or workflow change", "chain": [{"name": a["name"], "id": a["id"], "run": a["workflow_run"]["id"], "size": a["size_in_bytes"], "digest": a["digest"], "created": a["created_at"], "expires": a["expires_at"], "status": status(a)} for a in chain],
+                 "derived": [{"name": a["name"], "id": a["id"], "run": a["workflow_run"]["id"], "digest": a.get("digest"), "expires": a["expires_at"], "status": status(a)} for a in derived], "sums_sha256": sums_sha, "content": verified_content, "boundary": boundary, "workflows": rows6}
+          js = json.dumps(out, sort_keys=True, indent=1, default=str); open(os.path.join(OUT, "d6_audit.json"), "w").write(js)
+          print("AUDIT_RESULTS_SHA256", hashlib.sha256(js.encode()).hexdigest()); print("AUDIT_DONE (read-only; engine, parameters, workflows and state untouched)")
+          PYEOF
+          echo "AUDIT_CODE_SHA256_COMPUTED=$(sha256sum stage3_d6_evidence_governance.py | cut -d' ' -f1)"
+          test "$(sha256sum stage3_d6_evidence_governance.py | cut -d' ' -f1)" = "$AUDIT_CODE_SHA256" || { echo "ABORT_AUDIT: code hash mismatch"; exit 2; }
+
+      - name: Run D6 evidence and governance audit
+        shell: bash
+        run: |
+          mkdir -p audit_out
+          export THIS_AUDIT_RUN_ID=$GITHUB_RUN_ID
+          DL_DIR=dl RES_DIR=s3res OUT_DIR=audit_out META_DIR=meta ZIP_DIR=zips DX_DIR=dx REPO_DIR=repo python3 -I stage3_d6_evidence_governance.py 2>&1 | tee audit_log.txt
+          cp audit_log.txt audit_out/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mm-stage3-d6
+          path: audit_out/
+          retention-days: 90
+          if-no-files-found: ignore
