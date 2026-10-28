@@ -1,8 +1,9 @@
+
 name: Daily Crypto Signal
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,6 +16,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,5 +45,5 @@ jobs:
             git pull --rebase --autostash origin main
             git push
           else
-            echo "فایلی برای Commit وجود ندارد، امروز سیگنالی ثبت نشد"
+            echo "No signal log file found"
           fi
