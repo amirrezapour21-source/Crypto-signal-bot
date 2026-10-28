@@ -2553,5 +2553,41 @@
     "entry_time": "2026-10-19T15:00:00+00:00",
     "closed_time": "2026-10-19T16:00:00+00:00",
     "result": "LOSS"
+  },
+  {
+    "id": "HBAR-USDT_1793190195",
+    "symbol": "HBAR",
+    "pair": "HBAR-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 0.07539,
+    "sl": 0.07675993342850079,
+    "tp1": 0.07265013314299841,
+    "tp2": 0.07128019971449762,
+    "rr": 2.0,
+    "signal_time": "2026-10-28T12:23:07.914821+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "CRO-USDT_1793190196",
+    "symbol": "CRO",
+    "pair": "CRO-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 0.05357,
+    "sl": 0.05429716172201224,
+    "tp1": 0.05211567655597552,
+    "tp2": 0.051388514833963284,
+    "rr": 2.0,
+    "signal_time": "2026-10-28T12:23:14.436164+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
