@@ -1,0 +1,46 @@
+name: U67 Universe Reselection (one-shot)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: u67-select
+  cancel-in-progress: false
+
+jobs:
+  reselect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests
+
+      - name: Run reselection
+        run: python reselect_u67_universe.py
+
+      - name: Save final universe
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add u67_universe_final.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Add U67 final universe"
+            ok=0
+            for i in 1 2 3; do
+              if git pull --rebase origin main && git push; then ok=1; break; fi
+              git rebase --abort 2>/dev/null || true
+              sleep 5
+            done
+            [ "$ok" = "1" ] || { echo "PUSH_FAILED_AFTER_3_ATTEMPTS"; exit 1; }
+          fi
