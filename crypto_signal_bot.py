@@ -1,788 +1,524 @@
 """
-Elite Crypto Volume Profile — Scan & Analysis Bot (Fully Automated)
---------------------------------------------------------------------
-بر اساس پرامپت "ELITE CRYPTO VOLUME PROFILE" ساخته شده، با این تفاوت که
-به‌جای دریافت اسکرین‌شات چارت از کاربر، خودش داده قیمت/حجم واقعی رو از
-API می‌گیره و Volume Profile / Market Structure رو محاسبه می‌کنه.
+Crypto Signal Bot V3 — replacement strategy
+Strategy: Daily + 4H trend alignment, followed by a confirmed 15m pullback.
+Uses real KuCoin Spot OHLCV candles. No synthetic candles and no order execution.
 
-منبع داده اصلی: CoinGecko (رایگان، بدون نیاز به کلید API)
-منبع اعتبارسنجی قیمت لحظه‌ای: KuCoin
-
-نسخه v9 - رفع باگ فاصله SL بی‌نهایت کوچیک: قبلاً سیگنال‌هایی مثل DOGE
-با فاصله SL فقط ۰.۰۲۷٪ صادر می‌شدن که عملاً غیرقابل معامله بودن (کارمزد
-صرافی از این فاصله بیشتره) و R:R محاسبه‌شده کاذب و بی‌معنی بود (مثلاً
-۱:۱۰). حالا حداقل فاصله SL برابر ۰.۵٪ از Entry اجباری شده - طبق توصیه
-Master Strategy Specification (بند ۱۴). اگه فاصله SL کمتر از این باشه،
-سیگنال رد می‌شه.
-
-نصب پیش‌نیاز:
+Dependencies:
     pip install requests pandas numpy
 
-تنظیمات: TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID از متغیر محیطی خونده میشه.
+Environment variables:
+    TELEGRAM_BOT_TOKEN
+    TELEGRAM_CHAT_ID
+
+Important:
+- This script only scans and sends signals. It does not place trades.
+- Validate on paper before relying on signals. No strategy can guarantee profits.
 """
 
-import requests
-import pandas as pd
-import numpy as np
-import time
-import os
+import html
 import json
+import logging
+import os
+import time
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
-# ============ تنظیمات ============
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
+import numpy as np
+import pandas as pd
+import requests
 
+# ---------------- Configuration ----------------
+KUCOIN_BASE = "https://api.kucoin.com"
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
-SCAN_TOP_N_COINS = 60
-REQUEST_DELAY = 1.5
+SCAN_TOP_N_COINS = 40
+REQUEST_DELAY_SECONDS = 0.25
+REQUEST_TIMEOUT_SECONDS = 15
+MAX_RETRIES = 3
+
 MIN_RR = 2.0
-PRICE_DEVIATION_THRESHOLD = 0.01
-MIN_SL_DISTANCE_PCT = 0.005  # حداقل فاصله SL از Entry: ۰.۵٪ (طبق Master Spec بند ۱۴)
+MIN_SL_DISTANCE_PCT = 0.005       # Reject stops closer than 0.5% to entry.
+STOP_ATR_BUFFER = 0.20            # Buffer beyond the 15m swing.
+PULLBACK_EMA_TOLERANCE_ATR = 0.35
+MAX_ENTRY_DEVIATION_PCT = 0.015   # Reject if live price is >1.5% from setup close.
+MIN_4H_CANDLES = 70
+MIN_DAILY_CANDLES = 35
+MIN_15M_CANDLES = 60
+MAX_SIGNALS_PER_RUN = 2
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.json"))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "CryptoSignalBotV3/1.0"})
 
 
-# ============ ابزار درخواست امن ============
-def safe_get(url, params=None, headers=None, retries=3):
-    resp = None
-    for attempt in range(retries):
+def safe_get_json(url: str, params: Optional[dict] = None) -> Optional[dict]:
+    """GET JSON with bounded retries, timeout, and rate-limit handling."""
+    for attempt in range(MAX_RETRIES):
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=20)
-        except requests.RequestException:
-            time.sleep(5)
-            continue
-        if resp.status_code == 200:
-            return resp
-        if resp.status_code == 429:
-            time.sleep(15 * (attempt + 1))
-            continue
-        return resp
-    return resp
-
-
-# ============ قیمت لحظه‌ای واقعی (KuCoin) ============
-def get_live_price_kucoin(symbol):
-    try:
-        url = "https://api.kucoin.com/api/v1/market/orderbook/level1"
-        params = {"symbol": f"{symbol}-USDT"}
-        resp = requests.get(url, params=params, timeout=10)
-        if resp.status_code != 200:
+            response = SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    logging.warning("Non-JSON response from %s", url)
+                    return None
+                return payload if isinstance(payload, (dict, list)) else None
+            if response.status_code == 429 or 500 <= response.status_code < 600:
+                wait = min(2 ** attempt * 2, 12)
+                logging.warning("HTTP %s from %s; retrying in %ss",
+                                response.status_code, url, wait)
+                time.sleep(wait)
+                continue
+            logging.warning("HTTP %s from %s", response.status_code, url)
             return None
-        data = resp.json()
-        if data.get("code") != "200000":
-            return None
-        price = data.get("data", {}).get("price")
-        return float(price) if price else None
-    except Exception:
-        return None
+        except requests.RequestException as exc:
+            logging.warning("Request error for %s: %s", url, exc)
+            time.sleep(min(2 ** attempt, 8))
+    return None
 
 
-def validate_and_adjust_prices(symbol, entry, sl, tp1, tp2, direction):
-    live_price = get_live_price_kucoin(symbol)
-    if live_price is None or entry == 0:
-        return entry, sl, tp1, tp2, False, None
-
-    deviation = abs(live_price - entry) / entry
-    if deviation <= PRICE_DEVIATION_THRESHOLD:
-        return entry, sl, tp1, tp2, False, live_price
-
-    shift = live_price - entry
-    new_entry = live_price
-    new_sl = sl + shift
-    new_tp1 = tp1 + shift
-    new_tp2 = tp2 + shift
-    return new_entry, new_sl, new_tp1, new_tp2, True, live_price
-
-
-# ============ چک حداقل فاصله SL ============
-def sl_distance_ok(entry, sl):
-    """
-    اگه فاصله SL از Entry کمتر از MIN_SL_DISTANCE_PCT باشه، سیگنال رد
-    می‌شه. این جلوی سیگنال‌هایی مثل DOGE (فاصله ۰.۰۲۷٪) رو می‌گیره که
-    عملاً غیرقابل معامله بودن و R:R کاذب و بی‌معنی تولید می‌کردن.
-    """
-    if entry == 0:
-        return False
-    distance_pct = abs(entry - sl) / entry
-    return distance_pct >= MIN_SL_DISTANCE_PCT
-
-
-# ============ فیلتر ضد تکرار سیگنال ============
-def has_recent_duplicate(symbol, direction):
-    """
-    اگه برای این نماد/جهت یه سیگنال باز (ENTRY_PENDING/OPEN/TP1_HIT) وجود
-    داشته باشه، سیگنال جدید رد می‌شه - صرف‌نظر از اینکه چقدر پیش صادر شده.
-    """
-    log = load_log()
-    open_statuses = ("ENTRY_PENDING", "OPEN", "TP1_HIT")
-    for s in log:
-        if s.get("symbol") == symbol and s.get("direction") == direction:
-            if s.get("status") in open_statuses:
-                return True
-    return False
-
-
-# ============ دریافت لیست ارزها (CoinGecko) ============
-def get_top_coins(n):
-    url = f"{COINGECKO_BASE}/coins/markets"
-    params = {
-        "vs_currency": "usd", "order": "market_cap_desc",
-        "per_page": n, "page": 1, "sparkline": "false",
-    }
-    resp = safe_get(url, params=params)
-    if resp is None or resp.status_code != 200:
+def get_top_coins(limit: int) -> list:
+    """CoinGecko is used only for the universe; all candle data comes from KuCoin."""
+    payload = safe_get_json(
+        f"{COINGECKO_BASE}/coins/markets",
+        {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": min(max(int(limit), 1), 250),
+            "page": 1,
+            "sparkline": "false",
+        },
+    )
+    if not payload or not isinstance(payload, list):
         return []
-    data = resp.json()
 
-    def is_stablecoin(c):
-        price = c.get("current_price") or 0
-        chg = c.get("price_change_percentage_24h") or 0
-        return 0.95 <= price <= 1.05 and abs(chg) < 0.5
+    coins = []
+    seen = set()
+    for coin in payload:
+        if not isinstance(coin, dict):
+            continue
+        symbol = str(coin.get("symbol", "")).upper().strip()
+        price = coin.get("current_price") or 0
+        change = coin.get("price_change_percentage_24h") or 0
+        coin_id = str(coin.get("id", "")).strip()
+        # Exclude stablecoins and malformed symbols.
+        if not symbol.isalnum() or not coin_id:
+            continue
+        if 0.97 <= float(price or 0) <= 1.03 and abs(float(change or 0)) < 0.5:
+            continue
+        pair = f"{symbol}-USDT"
+        if pair in seen:
+            continue
+        seen.add(pair)
+        coins.append({"symbol": symbol, "pair": pair, "coin_id": coin_id})
+    return coins
 
-    return [c for c in data if not is_stablecoin(c)]
 
+def get_kucoin_candles(pair: str, candle_type: str, limit: int) -> Optional[pd.DataFrame]:
+    """
+    KuCoin Spot candles response order:
+    [time, open, close, high, low, volume, turnover].
+    candle_type: 15min, 4hour, 1day.
+    API data is returned newest-first; normalize to oldest-first and remove
+    the currently forming candle using its opening timestamp and interval.
+    """
+    intervals = {"15min": 15 * 60, "4hour": 4 * 3600, "1day": 24 * 3600}
+    if candle_type not in intervals:
+        raise ValueError(f"Unsupported candle type: {candle_type}")
 
-# ============ دریافت سری قیمت/حجم و ساخت کندل مصنوعی (CoinGecko) ============
-def fetch_market_chart(coin_id, days):
-    url = f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"
-    params = {"vs_currency": "usd", "days": days}
-    resp = safe_get(url, params=params)
-    if resp is None or resp.status_code != 200:
+    now = int(time.time())
+    interval = intervals[candle_type]
+    # KuCoin's public endpoint returns up to 1500 candles; query a bounded window.
+    start_at = now - (int(limit) + 3) * interval
+    payload = safe_get_json(
+        f"{KUCOIN_BASE}/api/v1/market/candles",
+        {"symbol": pair, "type": candle_type, "startAt": start_at, "endAt": now},
+    )
+    if not payload or payload.get("code") != "200000":
         return None
-    data = resp.json()
-    prices = data.get("prices")
-    volumes = data.get("total_volumes")
-    if not prices or not volumes:
+    raw = payload.get("data")
+    if not isinstance(raw, list) or not raw:
         return None
-    df = pd.DataFrame({"time": [p[0] // 1000 for p in prices], "price": [p[1] for p in prices]})
-    vol_df = pd.DataFrame({"time": [v[0] // 1000 for v in volumes], "volume": [v[1] for v in volumes]})
-    df = df.merge(vol_df, on="time", how="left").sort_values("time").reset_index(drop=True)
-    df["volume"] = df["volume"].fillna(0)
+
+    rows = []
+    for item in raw:
+        try:
+            if not isinstance(item, (list, tuple)) or len(item) < 6:
+                continue
+            rows.append({
+                "time": int(item[0]),
+                "open": float(item[1]),
+                "close": float(item[2]),
+                "high": float(item[3]),
+                "low": float(item[4]),
+                "volume": float(item[5]),
+            })
+        except (TypeError, ValueError, OverflowError):
+            continue
+    if not rows:
+        return None
+
+    df = pd.DataFrame(rows).drop_duplicates(subset=["time"]).sort_values("time")
+    df = df[(df["open"] > 0) & (df["close"] > 0) &
+            (df["high"] >= df["low"]) & (df["volume"] >= 0)]
+    # Keep only completed candles. A candle is complete only after its interval ends.
+    df = df[df["time"] + interval <= now - 2]
+    df = df.tail(int(limit)).reset_index(drop=True)
+    if df.empty:
+        return None
     return df
 
 
-def resample_to_ohlcv(df, bucket_size):
-    n = len(df) // bucket_size
-    if n < 1:
+def get_live_price(pair: str) -> Optional[float]:
+    payload = safe_get_json(
+        f"{KUCOIN_BASE}/api/v1/market/orderbook/level1",
+        {"symbol": pair},
+    )
+    if not payload or payload.get("code") != "200000":
         return None
-    rows = []
-    for i in range(n):
-        chunk = df.iloc[i * bucket_size:(i + 1) * bucket_size]
-        rows.append({
-            "time": chunk["time"].iloc[-1],
-            "open": chunk["price"].iloc[0],
-            "high": chunk["price"].max(),
-            "low": chunk["price"].min(),
-            "close": chunk["price"].iloc[-1],
-            "volume": chunk["volume"].sum(),
-        })
-    return pd.DataFrame(rows)
-
-
-def get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150):
-    if timeframe == "hour":
-        hours_needed = limit * aggregate
-        days = min(90, max(2, (hours_needed // 24) + 3))
-        raw = fetch_market_chart(coin_id, days)
-        if raw is None or len(raw) < aggregate * 10:
-            return None
-        candles = resample_to_ohlcv(raw, aggregate)
-    else:
-        raw = fetch_market_chart(coin_id, 1)
-        if raw is None or len(raw) < 10:
-            return None
-        bucket = max(1, round(aggregate / 5))
-        candles = resample_to_ohlcv(raw, bucket)
-
-    if candles is None or len(candles) < 10:
+    try:
+        price = float(payload["data"]["price"])
+        return price if np.isfinite(price) and price > 0 else None
+    except (KeyError, TypeError, ValueError):
         return None
-    return candles.tail(limit).reset_index(drop=True)
 
 
-# ============ تشخیص پیوت‌ها ============
-def find_pivots(df, left=2, right=2):
-    highs, lows = df["high"].values, df["low"].values
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False, min_periods=period).mean()
+
+
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - prev_close).abs(),
+        (df["low"] - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def classify_trend(df: pd.DataFrame) -> str:
+    """Trend filter combines EMA alignment with recent confirmed swing structure."""
+    if df is None or len(df) < 55:
+        return "choppy"
+    close = df["close"]
+    e20, e50 = ema(close, 20), ema(close, 50)
+    if pd.isna(e20.iloc[-1]) or pd.isna(e50.iloc[-1]):
+        return "choppy"
+
+    # Confirmed pivots only: pivot at i needs two candles to its right.
+    highs, lows = df["high"].to_numpy(), df["low"].to_numpy()
     pivot_highs, pivot_lows = [], []
-    for i in range(left, len(df) - right):
-        window_h = highs[i - left:i + right + 1]
-        window_l = lows[i - left:i + right + 1]
-        if highs[i] == window_h.max() and (window_h == highs[i]).sum() == 1:
+    for i in range(2, len(df) - 2):
+        wh = highs[i - 2:i + 3]
+        wl = lows[i - 2:i + 3]
+        if highs[i] == np.max(wh) and np.sum(wh == highs[i]) == 1:
             pivot_highs.append((i, highs[i]))
-        if lows[i] == window_l.min() and (window_l == lows[i]).sum() == 1:
+        if lows[i] == np.min(wl) and np.sum(wl == lows[i]) == 1:
             pivot_lows.append((i, lows[i]))
-    return pivot_highs, pivot_lows
 
-
-# ============ تشخیص ساختار بازار ============
-def classify_structure(df):
-    pivot_highs, pivot_lows = find_pivots(df)
     if len(pivot_highs) < 2 or len(pivot_lows) < 2:
-        return {"trend": "choppy", "pivot_highs": pivot_highs, "pivot_lows": pivot_lows}
+        return "choppy"
+    hh = pivot_highs[-1][1] > pivot_highs[-2][1]
+    hl = pivot_lows[-1][1] > pivot_lows[-2][1]
+    lh = pivot_highs[-1][1] < pivot_highs[-2][1]
+    ll = pivot_lows[-1][1] < pivot_lows[-2][1]
 
-    last_two_highs = pivot_highs[-2:]
-    last_two_lows = pivot_lows[-2:]
-    higher_high = last_two_highs[1][1] > last_two_highs[0][1]
-    higher_low = last_two_lows[1][1] > last_two_lows[0][1]
-    lower_high = last_two_highs[1][1] < last_two_highs[0][1]
-    lower_low = last_two_lows[1][1] < last_two_lows[0][1]
-
-    if higher_high and higher_low:
-        trend = "up"
-    elif lower_high and lower_low:
-        trend = "down"
-    else:
-        trend = "choppy"
-
-    return {"trend": trend, "pivot_highs": pivot_highs, "pivot_lows": pivot_lows}
+    if e20.iloc[-1] > e50.iloc[-1] and close.iloc[-1] > e50.iloc[-1] and hh and hl:
+        return "up"
+    if e20.iloc[-1] < e50.iloc[-1] and close.iloc[-1] < e50.iloc[-1] and lh and ll:
+        return "down"
+    return "choppy"
 
 
-# ============ تأیید روند در تایم‌فریم بالاتر (روزانه) ============
-def get_daily_trend_bias(coin_id):
-    df_daily = get_ohlcv(coin_id, timeframe="hour", aggregate=24, limit=45)
-    if df_daily is None or len(df_daily) < 30:
+def recent_swing(df: pd.DataFrame, direction: str, lookback: int = 12) -> Optional[float]:
+    recent = df.iloc[-lookback - 1:-1]
+    if recent.empty:
         return None
-    structure = classify_structure(df_daily)
-    return structure["trend"]
+    return float(recent["low"].min() if direction == "LONG" else recent["high"].max())
 
 
-# ============ Volume Profile ============
-def compute_volume_profile(df, bins=24):
-    typical_price = (df["high"] + df["low"] + df["close"]) / 3
-    lo, hi = df["low"].min(), df["high"].max()
-    if hi <= lo:
+def detect_setup(pair: str, symbol: str) -> Optional[dict]:
+    """Return a setup only when daily and 4H direction agree and 15m confirms pullback."""
+    daily = get_kucoin_candles(pair, "1day", 100)
+    time.sleep(REQUEST_DELAY_SECONDS)
+    h4 = get_kucoin_candles(pair, "4hour", 120)
+    time.sleep(REQUEST_DELAY_SECONDS)
+    m15 = get_kucoin_candles(pair, "15min", 100)
+
+    if daily is None or len(daily) < MIN_DAILY_CANDLES:
         return None
-    bin_edges = np.linspace(lo, hi, bins + 1)
-    bin_idx = np.clip(np.digitize(typical_price, bin_edges) - 1, 0, bins - 1)
-    vol_per_bin = np.zeros(bins)
-    for idx, vol in zip(bin_idx, df["volume"].values):
-        vol_per_bin[idx] += vol
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    poc_i = int(np.argmax(vol_per_bin))
-    poc_price = bin_centers[poc_i]
-    threshold_hvn = np.percentile(vol_per_bin, 70)
-    hvn_prices = bin_centers[vol_per_bin >= threshold_hvn]
-    return {"poc": poc_price, "hvn": hvn_prices, "bin_centers": bin_centers, "vol_per_bin": vol_per_bin}
-
-
-# ============ RVOL ============
-def compute_rvol(df, lookback=20):
-    if len(df) < lookback + 1:
-        return 1.0
-    recent = df["volume"].iloc[-1]
-    avg = df["volume"].iloc[-lookback - 1:-1].mean()
-    if avg == 0:
-        return 1.0
-    return recent / avg
-
-
-# ============ کیفیت زون ============
-def zone_quality_ok(df):
-    tr = (df["high"] - df["low"]).abs()
-    if len(tr) < 50:
-        return False
-    atr_short = tr.iloc[-10:].mean()
-    atr_long = tr.iloc[-50:].mean()
-    if atr_long == 0:
-        return False
-    return (atr_short / atr_long) < 0.85
-
-
-# ============ شکار نقدینگی ============
-def liquidity_sweep_detected(df, pivot_highs, pivot_lows):
-    if len(df) < 10:
-        return False
-    recent = df.iloc[-10:]
-    if pivot_highs:
-        last_high = pivot_highs[-1][1]
-        for _, row in recent.iterrows():
-            if row["high"] > last_high and row["close"] < last_high:
-                return True
-    if pivot_lows:
-        last_low = pivot_lows[-1][1]
-        for _, row in recent.iterrows():
-            if row["low"] < last_low and row["close"] > last_low:
-                return True
-    return False
-
-
-# ============ RSI ============
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1/period, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1/period, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
-
-# ============ Bollinger Bands ============
-def compute_bollinger(df, period=20, num_std=2):
-    mid = df["close"].rolling(window=period).mean()
-    std = df["close"].rolling(window=period).std()
-    upper = mid + num_std * std
-    lower = mid - num_std * std
-    return mid, upper, lower
-
-
-# ============ PART A: امتیازدهی — روند ============
-def score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol):
-    zq = zone_quality_ok(df4h)
-    liq = liquidity_sweep_detected(df4h, structure["pivot_highs"], structure["pivot_lows"])
-
-    current_price = df4h["close"].iloc[-1]
-    price_near_poc = abs(current_price - vp["poc"]) / current_price < 0.06
-
-    daily_trend = get_daily_trend_bias(coin_id)
-    daily_confirmed = daily_trend is not None and daily_trend == structure["trend"]
-    if not daily_confirmed:
+    if h4 is None or len(h4) < MIN_4H_CANDLES:
+        return None
+    if m15 is None or len(m15) < MIN_15M_CANDLES:
         return None
 
-    checks = {
-        "Volume Profile": price_near_poc,
-        "Volume/RVOL": rvol > 1.25,
-        "Zone Quality": zq,
-        "Structure Clarity": structure["trend"] in ("up", "down"),
-        "Liquidity Context": liq,
-    }
-    score = sum(checks.values())
-
-    if score >= 4:
-        confidence = "بالا" if score == 5 else "متوسط"
-    else:
+    daily_trend = classify_trend(daily)
+    h4_trend = classify_trend(h4)
+    if daily_trend not in ("up", "down") or daily_trend != h4_trend:
         return None
 
-    return {
-        "symbol": symbol, "coin_id": coin_id, "strategy": "trend", "score": score, "confidence": confidence,
-        "checks": checks, "trend": structure["trend"], "rvol": rvol,
-        "price": current_price, "df4h": df4h, "structure": structure, "vp": vp,
-    }
-
-
-# ============ PART A: امتیازدهی — Mean Reversion ============
-def score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol):
-    if structure["trend"] in ("up", "down"):
-        return None
-    if len(df4h) < 45:
+    direction = "LONG" if h4_trend == "up" else "SHORT"
+    close = m15["close"]
+    e20, e50 = ema(close, 20), ema(close, 50)
+    atr15 = atr(m15, 14)
+    if any(pd.isna(x) for x in (e20.iloc[-1], e20.iloc[-2],
+                                e50.iloc[-1], atr15.iloc[-1])):
         return None
 
-    lookback = df4h.iloc[-40:]
-    range_high = lookback["high"].max()
-    range_low = lookback["low"].min()
-    if range_high <= range_low:
+    last = m15.iloc[-1]  # last fully closed candle only
+    prev = m15.iloc[-2]
+    a = float(atr15.iloc[-1])
+    if a <= 0 or not np.isfinite(a):
         return None
 
-    mid_bb, upper_bb, lower_bb = compute_bollinger(df4h)
-    last_mid = mid_bb.iloc[-1]
-    last_upper = upper_bb.iloc[-1]
-    last_lower = lower_bb.iloc[-1]
-    if any(pd.isna(x) for x in [last_mid, last_upper, last_lower]):
-        return None
-
-    rsi = compute_rsi(df4h["close"])
-    last_rsi = rsi.iloc[-1]
-    if pd.isna(last_rsi):
-        return None
-
-    last_close = df4h["close"].iloc[-1]
-    last_low = df4h["low"].iloc[-1]
-    last_high = df4h["high"].iloc[-1]
-
-    dist_to_lower = last_close - range_low
-    dist_to_upper = range_high - last_close
-    direction_bias = "LONG" if dist_to_lower < dist_to_upper else "SHORT"
-
-    touches_high = (lookback["high"] >= range_high * 0.99).sum()
-    touches_low = (lookback["low"] <= range_low * 1.01).sum()
-    range_confirmed = touches_high >= 2 and touches_low >= 2
-
-    if direction_bias == "LONG":
-        rsi_extreme = last_rsi < 28
-        bb_touch = last_low <= last_lower
-        reversal = last_low <= last_lower and last_close > last_lower
-    else:
-        rsi_extreme = last_rsi > 72
-        bb_touch = last_high >= last_upper
-        reversal = last_high >= last_upper and last_close < last_upper
-
-    checks = {
-        "Range Confirmed": range_confirmed,
-        "RSI Extreme": rsi_extreme,
-        "Volume Confirmation": rvol > 1.3,
-        "Bollinger Band Touch": bb_touch,
-        "Reversal Rejection": reversal,
-    }
-    score = sum(checks.values())
-
-    if score >= 4:
-        confidence = "بالا" if score == 5 else "متوسط"
-    else:
-        return None
-
-    return {
-        "symbol": symbol, "coin_id": coin_id, "strategy": "mean_reversion", "score": score, "confidence": confidence,
-        "checks": checks, "direction_bias": direction_bias, "rvol": rvol,
-        "price": last_close, "df4h": df4h, "range_high": range_high, "range_low": range_low,
-        "range_mid": (range_high + range_low) / 2, "vp": vp,
-    }
-
-
-def evaluate_symbol(coin):
-    symbol = coin["symbol"].upper()
-    coin_id = coin["id"]
-    df4h = get_ohlcv(coin_id, timeframe="hour", aggregate=4, limit=150)
-    if df4h is None or len(df4h) < 60:
-        return None
-    structure = classify_structure(df4h)
-    vp = compute_volume_profile(df4h)
-    if vp is None:
-        return None
-    rvol = compute_rvol(df4h)
-
-    if structure["trend"] in ("up", "down"):
-        return score_trend_candidate(symbol, coin_id, df4h, structure, vp, rvol)
-    else:
-        return score_mean_reversion_candidate(symbol, coin_id, df4h, structure, vp, rvol)
-
-
-def part_a_scan(coins):
-    candidates = []
-    for c in coins:
-        symbol = c["symbol"].upper()
-        try:
-            res = evaluate_symbol(c)
-            if res:
-                candidates.append(res)
-        except Exception as e:
-            print(f"خطا در اسکن {symbol}: {e}")
-        time.sleep(REQUEST_DELAY)
-    candidates.sort(key=lambda x: (x["score"], x["rvol"]), reverse=True)
-    return candidates[:2]
-
-
-# ============ انتخاب هدف معتبر ============
-def get_valid_targets(pivots, entry, direction):
+    tolerance = a * PULLBACK_EMA_TOLERANCE_ATR
     if direction == "LONG":
-        valid = sorted([p[1] for p in pivots if p[1] > entry])
+        # Pullback approaches EMA20/EMA50, then a bullish close reclaims EMA20.
+        touched_zone = (
+            float(last["low"]) <= float(e20.iloc[-1]) + tolerance
+            or float(prev["low"]) <= float(e20.iloc[-2]) + tolerance
+        )
+        confirmed = (
+            float(last["close"]) > float(last["open"])
+            and float(last["close"]) > float(e20.iloc[-1])
+            and float(last["close"]) > float(prev["high"])
+            and float(last["close"]) > float(e50.iloc[-1])
+        )
     else:
-        valid = sorted([p[1] for p in pivots if p[1] < entry], reverse=True)
+        touched_zone = (
+            float(last["high"]) >= float(e20.iloc[-1]) - tolerance
+            or float(prev["high"]) >= float(e20.iloc[-2]) - tolerance
+        )
+        confirmed = (
+            float(last["close"]) < float(last["open"])
+            and float(last["close"]) < float(e20.iloc[-1])
+            and float(last["close"]) < float(prev["low"])
+            and float(last["close"]) < float(e50.iloc[-1])
+        )
 
-    if len(valid) >= 2:
-        return valid[0], valid[1]
-    if len(valid) == 1:
-        tp1 = valid[0]
-        tp2 = tp1 * 1.02 if direction == "LONG" else tp1 * 0.98
-        return tp1, tp2
+    if not touched_zone or not confirmed:
+        return None
 
-    if len(pivots) >= 2:
-        last_two = sorted(pivots, key=lambda p: p[0])[-2:]
-        leg_size = abs(last_two[1][1] - last_two[0][1])
-        if leg_size > 0:
-            if direction == "LONG":
-                return entry + leg_size * 0.5, entry + leg_size * 1.0
-            else:
-                return entry - leg_size * 0.5, entry - leg_size * 1.0
+    setup_close = float(last["close"])
+    live_price = get_live_price(pair)
+    if live_price is None:
+        return None
+    deviation = abs(live_price - setup_close) / setup_close
+    if deviation > MAX_ENTRY_DEVIATION_PCT:
+        logging.info("%s rejected: live price too far from setup close (%.2f%%)",
+                     pair, deviation * 100)
+        return None
 
-    return None, None
+    entry = live_price
+    swing = recent_swing(m15, direction, lookback=12)
+    if swing is None:
+        return None
 
-
-# ============ PART B: اجرای معامله — روند ============
-def execute_trend(candidate):
-    symbol = candidate["symbol"]
-    coin_id = candidate["coin_id"]
-    trend = candidate["trend"]
-    structure = candidate["structure"]
-
-    df15m = get_ohlcv(coin_id, timeframe="minute", aggregate=15, limit=90)
-    if df15m is None or len(df15m) < 20:
-        return {"symbol": symbol, "rejected": True}
-
-    vp15 = compute_volume_profile(df15m.iloc[-20:])
-    if vp15 is None:
-        return {"symbol": symbol, "rejected": True}
-
-    pivot_highs, pivot_lows = structure["pivot_highs"], structure["pivot_lows"]
-
-    if trend == "up" and len(pivot_lows) >= 2 and len(pivot_highs) >= 1:
-        direction = "LONG"
-        entry = vp15["poc"]
-        invalidation = pivot_lows[-1][1]
-        sl = invalidation * 0.997
-        tp1, tp2 = get_valid_targets(pivot_highs, entry, "LONG")
-        if tp1 is None:
-            return {"symbol": symbol, "rejected": True}
+    if direction == "LONG":
+        sl = min(swing, float(last["low"])) - STOP_ATR_BUFFER * a
         risk = entry - sl
-        reward1 = tp1 - entry
-        if risk <= 0 or reward1 <= 0:
-            return {"symbol": symbol, "rejected": True}
-        rr = reward1 / risk
-
-    elif trend == "down" and len(pivot_highs) >= 2 and len(pivot_lows) >= 1:
-        direction = "SHORT"
-        entry = vp15["poc"]
-        invalidation = pivot_highs[-1][1]
-        sl = invalidation * 1.003
-        tp1, tp2 = get_valid_targets(pivot_lows, entry, "SHORT")
-        if tp1 is None:
-            return {"symbol": symbol, "rejected": True}
-        risk = sl - entry
-        reward1 = entry - tp1
-        if risk <= 0 or reward1 <= 0:
-            return {"symbol": symbol, "rejected": True}
-        rr = reward1 / risk
+        if risk <= 0:
+            return None
+        tp1 = entry + MIN_RR * risk
+        tp2 = entry + 3.0 * risk
     else:
-        return {"symbol": symbol, "rejected": True}
+        sl = max(swing, float(last["high"])) + STOP_ATR_BUFFER * a
+        risk = sl - entry
+        if risk <= 0:
+            return None
+        tp1 = entry - MIN_RR * risk
+        tp2 = entry - 3.0 * risk
 
-    if not sl_distance_ok(entry, sl):
-        return {"symbol": symbol, "rejected": True}
-
-    if rr < MIN_RR:
-        return {"symbol": symbol, "rejected": True}
-
-    if has_recent_duplicate(symbol, direction):
-        return {"symbol": symbol, "rejected": True, "duplicate": True}
-
-    entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
-        symbol, entry, sl, tp1, tp2, direction
-    )
-
-    if not sl_distance_ok(entry, sl):
-        return {"symbol": symbol, "rejected": True}
-
-    risk = abs(entry - sl)
-    reward1 = abs(tp1 - entry)
-    if risk <= 0 or reward1 <= 0:
-        return {"symbol": symbol, "rejected": True}
-    rr = reward1 / risk
-    if rr < MIN_RR:
-        return {"symbol": symbol, "rejected": True}
-
-    risk_level = "LOW" if (candidate["confidence"] == "بالا" and rr >= 3) else "MEDIUM"
+    if entry <= 0 or abs(entry - sl) / entry < MIN_SL_DISTANCE_PCT:
+        return None
+    rr = abs(tp1 - entry) / abs(entry - sl)
+    if not np.isfinite(rr) or rr < MIN_RR:
+        return None
 
     return {
-        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction,
-        "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
-        "risk_level": risk_level, "confidence": candidate["confidence"],
-        "price_adjusted": adjusted, "live_price": live_price,
-        "strategy_type": "Trend + Volume Profile + Liquidity",
+        "symbol": symbol,
+        "pair": pair,
+        "direction": direction,
+        "entry": entry,
+        "sl": sl,
+        "tp1": tp1,
+        "tp2": tp2,
+        "rr": rr,
+        "strategy_type": "Daily + 4H Trend / 15m Pullback",
+        "daily_trend": daily_trend,
+        "h4_trend": h4_trend,
+        "setup_close": setup_close,
+        "live_price": live_price,
+        "signal_time": datetime.now(timezone.utc).isoformat(),
     }
 
 
-# ============ PART B: اجرای معامله — Mean Reversion ============
-def execute_mean_reversion(candidate):
-    symbol = candidate["symbol"]
-    coin_id = candidate["coin_id"]
-    direction_bias = candidate["direction_bias"]
-    range_high, range_low, range_mid = candidate["range_high"], candidate["range_low"], candidate["range_mid"]
+def load_log() -> list:
+    if not LOG_PATH.exists():
+        return []
+    try:
+        with LOG_PATH.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        logging.warning("Signal log is unreadable; starting with an empty in-memory log.")
+        return []
 
-    df15m = get_ohlcv(coin_id, timeframe="minute", aggregate=15, limit=90)
-    if df15m is None or len(df15m) < 20:
-        return {"symbol": symbol, "rejected": True}
 
-    vp15 = compute_volume_profile(df15m.iloc[-20:])
-    if vp15 is None:
-        return {"symbol": symbol, "rejected": True}
+def save_log(records: list) -> None:
+    """Atomic write prevents a partial JSON file if the process stops mid-write."""
+    tmp = LOG_PATH.with_suffix(LOG_PATH.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(records, handle, ensure_ascii=False, indent=2)
+        os.replace(tmp, LOG_PATH)
+    except OSError as exc:
+        logging.error("Could not save signal log: %s", exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
-    entry = vp15["poc"]
 
-    if direction_bias == "LONG":
-        direction = "LONG"
-        sl = range_low * 0.99
-        tp1 = range_mid
-        tp2 = range_high
-        risk = entry - sl
-        reward1 = tp1 - entry
-    else:
-        direction = "SHORT"
-        sl = range_high * 1.01
-        tp1 = range_mid
-        tp2 = range_low
-        risk = sl - entry
-        reward1 = entry - tp1
-
-    if risk <= 0 or reward1 <= 0:
-        return {"symbol": symbol, "rejected": True}
-    rr = reward1 / risk
-
-    if not sl_distance_ok(entry, sl):
-        return {"symbol": symbol, "rejected": True}
-
-    if rr < MIN_RR:
-        return {"symbol": symbol, "rejected": True}
-
-    if has_recent_duplicate(symbol, direction):
-        return {"symbol": symbol, "rejected": True, "duplicate": True}
-
-    entry, sl, tp1, tp2, adjusted, live_price = validate_and_adjust_prices(
-        symbol, entry, sl, tp1, tp2, direction
+def has_open_duplicate(records: list, pair: str, direction: str) -> bool:
+    open_statuses = {"ENTRY_PENDING", "OPEN", "TP1_HIT"}
+    return any(
+        r.get("pair", f"{r.get('symbol', '')}-USDT") == pair
+        and r.get("direction") == direction
+        and r.get("status") in open_statuses
+        for r in records if isinstance(r, dict)
     )
 
-    if not sl_distance_ok(entry, sl):
-        return {"symbol": symbol, "rejected": True}
 
-    risk = abs(entry - sl)
-    reward1 = abs(tp1 - entry)
-    if risk <= 0 or reward1 <= 0:
-        return {"symbol": symbol, "rejected": True}
-    rr = reward1 / risk
-    if rr < MIN_RR:
-        return {"symbol": symbol, "rejected": True}
-
-    risk_level = "LOW" if (candidate["confidence"] == "بالا" and rr >= 3) else "MEDIUM"
-
-    return {
-        "symbol": symbol, "coin_id": coin_id, "rejected": False, "direction": direction,
-        "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
-        "risk_level": risk_level, "confidence": candidate["confidence"],
-        "price_adjusted": adjusted, "live_price": live_price,
-        "strategy_type": "Mean Reversion",
-    }
+def fmt_price(value: float) -> str:
+    if not np.isfinite(value):
+        return "N/A"
+    if value >= 1000:
+        return f"{value:,.2f}"
+    if value >= 1:
+        return f"{value:.4f}"
+    if value >= 0.01:
+        return f"{value:.6f}"
+    return f"{value:.8f}"
 
 
-def part_b_execute(candidate):
-    if candidate["strategy"] == "trend":
-        return execute_trend(candidate)
-    else:
-        return execute_mean_reversion(candidate)
-
-
-# ============ فرمت خروجی — تمیز و ساده (برای اسکرین‌شات) ============
-def fmt_price(p):
-    return f"{p:.6f}" if p < 1 else f"{p:.4f}"
-
-
-def format_single_signal(ex):
-    direction_emoji = "🟢" if ex["direction"] == "LONG" else "🔴"
+def format_signal(signal: dict) -> str:
+    direction = signal["direction"]
+    icon = "🟢" if direction == "LONG" else "🔴"
     lines = [
-        f"📊 {ex['symbol']}/USDT — SIGNAL",
+        f"<b>{html.escape(signal['symbol'])}/USDT — V3 SIGNAL</b>",
         "",
-        f"{direction_emoji} Direction: {ex['direction']}",
-        f"📈 Strategy: {ex.get('strategy_type', '-')}",
-        "",
-        "📍 Entry",
-        f"{fmt_price(ex['entry'])}",
-        "",
-        "🛑 Stop Loss",
-        f"{fmt_price(ex['sl'])}",
-        "",
-        "🎯 Take Profit",
-        f"TP1 → {fmt_price(ex['tp1'])}",
-        f"TP2 → {fmt_price(ex['tp2'])}",
-        "",
-        "⚖️ Risk/Reward",
-        f"1 : {ex['rr']:.2f}",
-        "",
-        "⚠️ Risk Level",
-        f"{ex['risk_level']}",
-        "",
-        "🏦 Exchange",
-        "KuCoin" if ex.get("live_price") else "CoinGecko",
+        f"{icon} <b>Direction:</b> {direction}",
+        f"<b>Strategy:</b> {html.escape(signal['strategy_type'])}",
+        f"<b>Entry:</b> {fmt_price(signal['entry'])}",
+        f"<b>Stop Loss:</b> {fmt_price(signal['sl'])}",
+        f"<b>TP1 (minimum 1:{MIN_RR:.0f}):</b> {fmt_price(signal['tp1'])}",
+        f"<b>TP2 (3R):</b> {fmt_price(signal['tp2'])}",
+        f"<b>Risk/Reward:</b> 1:{signal['rr']:.2f}",
+        f"<b>Daily / 4H:</b> {signal['daily_trend'].upper()} / {signal['h4_trend'].upper()}",
+        "<b>Exchange:</b> KuCoin Spot",
+        "<i>Signal only; no order was placed. Confirm spread and execution before trading.</i>",
     ]
     return "\n".join(lines)
 
 
-def format_output(candidates, executions):
-    if not candidates:
-        return None
-
-    messages = []
-    for ex in executions:
-        if ex.get("rejected"):
-            continue
-        messages.append(format_single_signal(ex))
-
-    if not messages:
-        return None
-
-    return messages
-
-
-# ============ لاگ سیگنال‌ها ============
-LOG_PATH = "signals_log.json"
-
-
-def load_log():
-    if not os.path.exists(LOG_PATH):
-        return []
+def send_telegram_message(message: str) -> bool:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.warning("Telegram credentials missing; message will only be printed.")
+        return False
     try:
-        with open(LOG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+        response = SESSION.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            logging.error("Telegram HTTP %s: %s", response.status_code, response.text[:300])
+            return False
+        payload = response.json()
+        if not payload.get("ok"):
+            logging.error("Telegram API rejected message: %s", payload)
+            return False
+        return True
+    except (requests.RequestException, ValueError) as exc:
+        logging.error("Telegram send failed: %s", exc)
+        return False
 
 
-def save_log(data):
-    with open(LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def log_signal(ex):
-    log = load_log()
-    entry_id = f"{ex['symbol']}_{int(time.time())}"
-    log.append({
-        "id": entry_id,
-        "symbol": ex["symbol"],
-        "coin_id": ex.get("coin_id", ""),
-        "direction": ex["direction"],
-        "strategy_type": ex.get("strategy_type", ""),
-        "entry": ex["entry"],
-        "sl": ex["sl"],
-        "tp1": ex["tp1"],
-        "tp2": ex["tp2"],
-        "signal_time": datetime.now(timezone.utc).isoformat(),
-        "status": "ENTRY_PENDING",
-        "entered": False,
-        "entry_time": None,
-        "closed_time": None,
-        "result": None,
-    })
-    save_log(log)
-
-
-# ============ تلگرام ============
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
-               "disable_web_page_preview": True}
-    resp = requests.post(url, data=payload, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ============ اجرای اصلی ============
-def main():
-    print("در حال دریافت لیست ارزها...")
+def main() -> None:
+    logging.info("V3 replacement scanner started; real KuCoin candles only.")
     coins = get_top_coins(SCAN_TOP_N_COINS)
-    print(f"در حال اسکن {len(coins)} ارز (PART A)...")
+    if not coins:
+        logging.error("Coin universe unavailable. Check CoinGecko connectivity/rate limits.")
+        return
 
-    candidates = part_a_scan(coins)
+    records = load_log()
+    candidates = []
+    checked_pairs = set()
 
-    executions = []
-    if candidates:
-        print("در حال اجرای تحلیل چارت خودکار (PART B)...")
-        for c in candidates:
-            try:
-                executions.append(part_b_execute(c))
-            except Exception as e:
-                print(f"خطا در Part B برای {c['symbol']}: {e}")
-                executions.append({"symbol": c["symbol"], "rejected": True})
-            time.sleep(REQUEST_DELAY)
+    for coin in coins:
+        pair = coin["pair"]
+        if pair in checked_pairs:
+            continue
+        checked_pairs.add(pair)
+        try:
+            signal = detect_setup(pair, coin["symbol"])
+            if signal:
+                if has_open_duplicate(records, pair, signal["direction"]):
+                    logging.info("%s skipped: duplicate open signal", pair)
+                else:
+                    candidates.append(signal)
+                    logging.info("Candidate: %s %s RR=%.2f",
+                                 pair, signal["direction"], signal["rr"])
+        except Exception:
+            logging.exception("Unexpected scan error for %s", pair)
+        time.sleep(REQUEST_DELAY_SECONDS)
 
-        for ex in executions:
-            if not ex.get("rejected"):
-                log_signal(ex)
+    candidates.sort(key=lambda s: (s["rr"], s["symbol"]), reverse=True)
+    selected = candidates[:MAX_SIGNALS_PER_RUN]
 
-    messages = format_output(candidates, executions)
+    for signal in selected:
+        message = format_signal(signal)
+        print("\n" + message.replace("<b>", "").replace("</b>", "")
+              .replace("<i>", "").replace("</i>", "") + "\n")
+        # Log signal before delivery so repeated runs don't emit duplicates.
+        records.append({
+            "id": f"{signal['pair']}_{int(time.time())}",
+            "symbol": signal["symbol"],
+            "pair": signal["pair"],
+            "direction": signal["direction"],
+            "strategy_type": signal["strategy_type"],
+            "entry": signal["entry"],
+            "sl": signal["sl"],
+            "tp1": signal["tp1"],
+            "tp2": signal["tp2"],
+            "rr": signal["rr"],
+            "signal_time": signal["signal_time"],
+            "status": "ENTRY_PENDING",
+            "entered": False,
+            "entry_time": None,
+            "closed_time": None,
+            "result": None,
+        })
+        save_log(records)
+        send_telegram_message(message)
 
-    if messages:
-        for msg in messages:
-            print(msg)
-            print("-" * 30)
-            if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
-                send_telegram_message(msg)
-        print("ارسال شد.")
-    else:
-        print("سیگنال معتبری برای ارسال به تلگرام وجود نداشت.")
+    logging.info("Scan finished: %d coins considered, %d setups, %d signals emitted.",
+                 len(coins), len(candidates), len(selected))
 
 
 if __name__ == "__main__":
