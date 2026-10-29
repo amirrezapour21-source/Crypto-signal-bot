@@ -2602,9 +2602,9 @@
     "tp2": 1352.4544273974007,
     "rr": 2.0,
     "signal_time": "2026-10-28T18:53:15.111584+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-29T02:05:17.238816+00:00",
     "closed_time": null,
     "result": null
   }
