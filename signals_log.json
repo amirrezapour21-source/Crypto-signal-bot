@@ -2602,10 +2602,10 @@
     "tp2": 1352.4544273974007,
     "rr": 2.0,
     "signal_time": "2026-10-28T18:53:15.111584+00:00",
-    "status": "OPEN",
+    "status": "CLOSED_SL",
     "entered": true,
     "entry_time": "2026-10-29T02:05:17.238816+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-29T08:28:26.183574+00:00",
+    "result": "SL"
   }
 ]
