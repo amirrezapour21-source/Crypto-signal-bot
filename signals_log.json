@@ -2585,11 +2585,11 @@
     "tp2": 0.051388514833963284,
     "rr": 2.0,
     "signal_time": "2026-10-28T12:23:14.436164+00:00",
-    "status": "TP1_HIT",
+    "status": "CLOSED_TP2",
     "entered": true,
     "entry_time": "2026-10-29T14:37:25.686033+00:00",
-    "closed_time": null,
-    "result": null,
+    "closed_time": "2026-10-29T22:15:31.722007+00:00",
+    "result": "TP2",
     "tp1_time": "2026-10-29T21:30:47.253549+00:00"
   },
   {
