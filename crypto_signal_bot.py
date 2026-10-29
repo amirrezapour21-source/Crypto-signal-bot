@@ -1,14 +1,6 @@
 """
-Crypto Signal Bot V3 — Signal + Price Alerts
-Strategy: Daily + 4H trend alignment, confirmed 15m pullback.
-KuCoin Spot data. No real order execution.
-
-Dependencies:
-    pip install requests pandas numpy
-
-Environment variables:
-    TELEGRAM_BOT_TOKEN
-    TELEGRAM_CHAT_ID
+Crypto Signal Bot — Signal + Price Alerts
+KuCoin Spot data. Paper tracking only; no real orders.
 """
 
 import html
@@ -16,7 +8,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -24,7 +16,6 @@ import numpy as np
 import pandas as pd
 import requests
 
-# ---------------- Configuration ----------------
 KUCOIN_BASE = "https://api.kucoin.com"
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
@@ -42,6 +33,7 @@ MIN_4H_CANDLES = 70
 MIN_DAILY_CANDLES = 35
 MIN_15M_CANDLES = 60
 MAX_SIGNALS_PER_RUN = 2
+TIMEOUT_DAYS = 10
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -53,33 +45,40 @@ logging.basicConfig(
 )
 
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "CryptoSignalBotV3/1.1"})
+SESSION.headers.update({"User-Agent": "CryptoSignalBot/1.2"})
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def parse_time(value):
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 def safe_get_json(url: str, params: Optional[dict] = None) -> Optional[dict]:
-    """GET JSON with bounded retries."""
     for attempt in range(MAX_RETRIES):
         try:
             response = SESSION.get(
                 url, params=params, timeout=REQUEST_TIMEOUT_SECONDS
             )
-
             if response.status_code == 200:
                 try:
                     payload = response.json()
                 except ValueError:
-                    logging.warning("Non-JSON response from %s", url)
                     return None
-
                 return payload if isinstance(payload, (dict, list)) else None
 
             if response.status_code == 429 or 500 <= response.status_code < 600:
-                wait = min(2 ** attempt * 2, 12)
-                logging.warning(
-                    "HTTP %s from %s; retrying in %ss",
-                    response.status_code, url, wait
-                )
-                time.sleep(wait)
+                time.sleep(min(2 ** attempt * 2, 12))
                 continue
 
             logging.warning("HTTP %s from %s", response.status_code, url)
@@ -93,7 +92,6 @@ def safe_get_json(url: str, params: Optional[dict] = None) -> Optional[dict]:
 
 
 def get_top_coins(limit: int) -> list:
-    """CoinGecko selects the universe; candle data comes from KuCoin."""
     payload = safe_get_json(
         f"{COINGECKO_BASE}/coins/markets",
         {
@@ -105,7 +103,7 @@ def get_top_coins(limit: int) -> list:
         },
     )
 
-    if not payload or not isinstance(payload, list):
+    if not isinstance(payload, list):
         return []
 
     coins = []
@@ -116,9 +114,9 @@ def get_top_coins(limit: int) -> list:
             continue
 
         symbol = str(coin.get("symbol", "")).upper().strip()
+        coin_id = str(coin.get("id", "")).strip()
         price = coin.get("current_price") or 0
         change = coin.get("price_change_percentage_24h") or 0
-        coin_id = str(coin.get("id", "")).strip()
 
         if not symbol.isalnum() or not coin_id:
             continue
@@ -127,16 +125,11 @@ def get_top_coins(limit: int) -> list:
             continue
 
         pair = f"{symbol}-USDT"
-
         if pair in seen:
             continue
 
         seen.add(pair)
-        coins.append({
-            "symbol": symbol,
-            "pair": pair,
-            "coin_id": coin_id,
-        })
+        coins.append({"symbol": symbol, "pair": pair, "coin_id": coin_id})
 
     return coins
 
@@ -144,11 +137,6 @@ def get_top_coins(limit: int) -> list:
 def get_kucoin_candles(
     pair: str, candle_type: str, limit: int
 ) -> Optional[pd.DataFrame]:
-    """
-    KuCoin candle order:
-    [time, open, close, high, low, volume, turnover].
-    Only completed candles are returned.
-    """
     intervals = {
         "15min": 15 * 60,
         "4hour": 4 * 3600,
@@ -176,17 +164,14 @@ def get_kucoin_candles(
         return None
 
     raw = payload.get("data")
-
     if not isinstance(raw, list) or not raw:
         return None
 
     rows = []
-
     for item in raw:
         try:
             if not isinstance(item, (list, tuple)) or len(item) < 6:
                 continue
-
             rows.append({
                 "time": int(item[0]),
                 "open": float(item[1]),
@@ -195,7 +180,6 @@ def get_kucoin_candles(
                 "low": float(item[4]),
                 "volume": float(item[5]),
             })
-
         except (TypeError, ValueError, OverflowError):
             continue
 
@@ -217,7 +201,6 @@ def get_kucoin_candles(
 
     df = df[df["time"] + interval <= now - 2]
     df = df.tail(int(limit)).reset_index(drop=True)
-
     return None if df.empty else df
 
 
@@ -233,7 +216,6 @@ def get_live_price(pair: str) -> Optional[float]:
     try:
         price = float(payload["data"]["price"])
         return price if np.isfinite(price) and price > 0 else None
-
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -246,7 +228,6 @@ def ema(series: pd.Series, period: int) -> pd.Series:
 
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     prev_close = df["close"].shift(1)
-
     tr = pd.concat([
         df["high"] - df["low"],
         (df["high"] - prev_close).abs(),
@@ -254,14 +235,11 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     ], axis=1).max(axis=1)
 
     return tr.ewm(
-        alpha=1 / period,
-        adjust=False,
-        min_periods=period,
+        alpha=1 / period, adjust=False, min_periods=period
     ).mean()
 
 
 def classify_trend(df: pd.DataFrame) -> str:
-    """EMA alignment plus confirmed swing structure."""
     if df is None or len(df) < 55:
         return "choppy"
 
@@ -283,7 +261,6 @@ def classify_trend(df: pd.DataFrame) -> str:
 
         if highs[i] == np.max(wh) and np.sum(wh == highs[i]) == 1:
             pivot_highs.append((i, highs[i]))
-
         if lows[i] == np.min(wl) and np.sum(wl == lows[i]) == 1:
             pivot_lows.append((i, lows[i]))
 
@@ -295,18 +272,10 @@ def classify_trend(df: pd.DataFrame) -> str:
     lh = pivot_highs[-1][1] < pivot_highs[-2][1]
     ll = pivot_lows[-1][1] < pivot_lows[-2][1]
 
-    if (
-        e20.iloc[-1] > e50.iloc[-1]
-        and close.iloc[-1] > e50.iloc[-1]
-        and hh and hl
-    ):
+    if e20.iloc[-1] > e50.iloc[-1] and close.iloc[-1] > e50.iloc[-1] and hh and hl:
         return "up"
 
-    if (
-        e20.iloc[-1] < e50.iloc[-1]
-        and close.iloc[-1] < e50.iloc[-1]
-        and lh and ll
-    ):
+    if e20.iloc[-1] < e50.iloc[-1] and close.iloc[-1] < e50.iloc[-1] and lh and ll:
         return "down"
 
     return "choppy"
@@ -316,32 +285,24 @@ def recent_swing(
     df: pd.DataFrame, direction: str, lookback: int = 12
 ) -> Optional[float]:
     recent = df.iloc[-lookback - 1:-1]
-
     if recent.empty:
         return None
-
     if direction == "LONG":
         return float(recent["low"].min())
-
     return float(recent["high"].max())
 
 
 def detect_setup(pair: str, symbol: str) -> Optional[dict]:
-    """Daily + 4H alignment and confirmed 15m pullback."""
     daily = get_kucoin_candles(pair, "1day", 100)
     time.sleep(REQUEST_DELAY_SECONDS)
-
     h4 = get_kucoin_candles(pair, "4hour", 120)
     time.sleep(REQUEST_DELAY_SECONDS)
-
     m15 = get_kucoin_candles(pair, "15min", 100)
 
     if daily is None or len(daily) < MIN_DAILY_CANDLES:
         return None
-
     if h4 is None or len(h4) < MIN_4H_CANDLES:
         return None
-
     if m15 is None or len(m15) < MIN_15M_CANDLES:
         return None
 
@@ -359,10 +320,7 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
     atr15 = atr(m15, 14)
 
     if any(pd.isna(x) for x in (
-        e20.iloc[-1],
-        e20.iloc[-2],
-        e50.iloc[-1],
-        atr15.iloc[-1],
+        e20.iloc[-1], e20.iloc[-2], e50.iloc[-1], atr15.iloc[-1]
     )):
         return None
 
@@ -380,20 +338,17 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
             float(last["low"]) <= float(e20.iloc[-1]) + tolerance
             or float(prev["low"]) <= float(e20.iloc[-2]) + tolerance
         )
-
         confirmed = (
             float(last["close"]) > float(last["open"])
             and float(last["close"]) > float(e20.iloc[-1])
             and float(last["close"]) > float(prev["high"])
             and float(last["close"]) > float(e50.iloc[-1])
         )
-
     else:
         touched_zone = (
             float(last["high"]) >= float(e20.iloc[-1]) - tolerance
             or float(prev["high"]) >= float(e20.iloc[-2]) - tolerance
         )
-
         confirmed = (
             float(last["close"]) < float(last["open"])
             and float(last["close"]) < float(e20.iloc[-1])
@@ -406,42 +361,31 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
 
     setup_close = float(last["close"])
     live_price = get_live_price(pair)
-
     if live_price is None:
         return None
 
     deviation = abs(live_price - setup_close) / setup_close
-
     if deviation > MAX_ENTRY_DEVIATION_PCT:
-        logging.info(
-            "%s rejected: live price too far from setup close (%.2f%%)",
-            pair, deviation * 100
-        )
+        logging.info("%s rejected: live price too far from setup close", pair)
         return None
 
     entry = live_price
     swing = recent_swing(m15, direction, lookback=12)
-
     if swing is None:
         return None
 
     if direction == "LONG":
         sl = min(swing, float(last["low"])) - STOP_ATR_BUFFER * a
         risk = entry - sl
-
         if risk <= 0:
             return None
-
         tp1 = entry + MIN_RR * risk
         tp2 = entry + 3.0 * risk
-
     else:
         sl = max(swing, float(last["high"])) + STOP_ATR_BUFFER * a
         risk = sl - entry
-
         if risk <= 0:
             return None
-
         tp1 = entry - MIN_RR * risk
         tp2 = entry - 3.0 * risk
 
@@ -449,7 +393,6 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
         return None
 
     rr = abs(tp1 - entry) / abs(entry - sl)
-
     if not np.isfinite(rr) or rr < MIN_RR:
         return None
 
@@ -467,38 +410,30 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
         "h4_trend": h4_trend,
         "setup_close": setup_close,
         "live_price": live_price,
-        "signal_time": datetime.now(timezone.utc).isoformat(),
+        "signal_time": utc_now().isoformat(),
     }
 
 
 def load_log() -> list:
     if not LOG_PATH.exists():
         return []
-
     try:
         with LOG_PATH.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
-
         return data if isinstance(data, list) else []
-
     except (OSError, json.JSONDecodeError):
         logging.error("Signal log is unreadable.")
         return []
 
 
 def save_log(records: list) -> None:
-    """Atomic write of the signal state."""
     tmp = LOG_PATH.with_suffix(LOG_PATH.suffix + ".tmp")
-
     try:
         with tmp.open("w", encoding="utf-8") as handle:
             json.dump(records, handle, ensure_ascii=False, indent=2)
-
         os.replace(tmp, LOG_PATH)
-
     except OSError as exc:
         logging.error("Could not save signal log: %s", exc)
-
         try:
             tmp.unlink(missing_ok=True)
         except OSError:
@@ -507,33 +442,25 @@ def save_log(records: list) -> None:
 
 def has_open_duplicate(records: list, pair: str, direction: str) -> bool:
     open_statuses = {"ENTRY_PENDING", "OPEN", "TP1_HIT"}
-
     return any(
         r.get("pair", f"{r.get('symbol', '')}-USDT") == pair
         and r.get("direction") == direction
         and r.get("status") in open_statuses
-        for r in records
-        if isinstance(r, dict)
+        for r in records if isinstance(r, dict)
     )
 
 
 def fmt_price(value: float) -> str:
     if not np.isfinite(value):
         return "N/A"
-
     if value >= 1000:
         return f"{value:,.2f}"
-
     if value >= 1:
         return f"{value:.4f}"
-
     if value >= 0.01:
         return f"{value:.6f}"
-
     return f"{value:.8f}"
 
-
-# ---------------- Telegram message formatting ----------------
 
 def format_signal(signal: dict) -> str:
     direction = signal["direction"]
@@ -556,8 +483,9 @@ def format_signal(signal: dict) -> str:
         f"TP2 → <code>{fmt_price(signal['tp2'])}</code>",
         "",
         f"⚖️ <b>Risk/Reward:</b> 1:{signal['rr']:.2f}",
+        "⚠️ <b>Risk Level:</b> MEDIUM",
         "",
-        "🏦 <b>Exchange:</b> KuCoin Spot",
+        "🏦 <b>Exchange:</b> CoinGecko",
         "",
         "⚠️ <i>Signal only — no order placed.</i>",
     ])
@@ -581,14 +509,10 @@ def send_telegram_message(message: str) -> bool:
         )
 
         if response.status_code != 200:
-            logging.error(
-                "Telegram HTTP %s: %s",
-                response.status_code, response.text[:300]
-            )
+            logging.error("Telegram HTTP %s: %s", response.status_code, response.text[:300])
             return False
 
         payload = response.json()
-
         if not payload.get("ok"):
             logging.error("Telegram rejected message: %s", payload)
             return False
@@ -600,29 +524,25 @@ def send_telegram_message(message: str) -> bool:
         return False
 
 
-# ---------------- Entry / SL / TP monitoring ----------------
-
 def monitor_signals(records: list) -> bool:
-    """
-    Monitor previously announced signals using KuCoin's live price.
-    This is alerting/paper tracking only; it does not execute trades.
-    Returns True if the stored records changed.
-    """
     changed = False
+    now = utc_now()
+    active_statuses = {"ENTRY_PENDING", "OPEN", "TP1_HIT"}
 
     for record in records:
         if not isinstance(record, dict):
             continue
 
         status = record.get("status")
-
-        if status not in {"ENTRY_PENDING", "OPEN", "TP1_HIT"}:
+        if status not in active_statuses:
             continue
 
         pair = record.get("pair")
-
         if not pair:
             continue
+
+        symbol = html.escape(str(record.get("symbol", pair.replace("-USDT", ""))))
+        direction = record.get("direction")
 
         try:
             entry = float(record["entry"])
@@ -633,166 +553,160 @@ def monitor_signals(records: list) -> bool:
             logging.warning("Invalid levels in signal record: %s", pair)
             continue
 
-        direction = record.get("direction")
-
         if direction not in {"LONG", "SHORT"}:
             continue
 
-        price = get_live_price(pair)
+        # Unfilled pending signal expires 10 days after signal creation.
+        if status == "ENTRY_PENDING":
+            signal_time = parse_time(record.get("signal_time"))
+            if signal_time and now - signal_time >= timedelta(days=TIMEOUT_DAYS):
+                message = (
+                    f"⌛ <b>سفارش منقضی شد (Limit پر نشد): "
+                    f"{symbol} — ورودی: {fmt_price(entry)}$</b>"
+                )
+                if send_telegram_message(message):
+                    record["status"] = "CLOSED_EXPIRED"
+                    record["result"] = "EXPIRED"
+                    record["closed_time"] = now.isoformat()
+                    changed = True
+                continue
 
+        # An entered trade expires 10 days after entry if unresolved.
+        if status in {"OPEN", "TP1_HIT"}:
+            entry_time = parse_time(record.get("entry_time"))
+            if entry_time and now - entry_time >= timedelta(days=TIMEOUT_DAYS):
+                message = (
+                    f"⏱️ <b>TRADE TIMEOUT — {symbol}/USDT</b>\n\n"
+                    f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
+                    f"📍 Entry: <code>{fmt_price(entry)}</code>\n\n"
+                    "پس از ۱۰ روز بدون نتیجه قطعی بسته شد."
+                )
+                if send_telegram_message(message):
+                    record["status"] = "CLOSED_TIMEOUT"
+                    record["result"] = "TIMEOUT"
+                    record["closed_time"] = now.isoformat()
+                    changed = True
+                continue
+
+        price = get_live_price(pair)
         if price is None:
             continue
 
-        symbol = html.escape(
-            str(record.get("symbol", pair.replace("-USDT", "")))
-        )
-
-        # Entry alert: record paper entry once price reaches the entry level.
+        # Entry is considered reached when price touches the entry level.
         if status == "ENTRY_PENDING":
-            entry_hit = (
-                price <= entry if direction == "LONG"
-                else price >= entry
-            )
-
+            entry_hit = price <= entry if direction == "LONG" else price >= entry
             if not entry_hit:
                 continue
 
             message = (
-                f"📍 <b>ENTRY HIT — {symbol}/USDT</b>\n\n"
+                f"➕ <b>ENTRY EXECUTED — {symbol}/USDT</b>\n\n"
                 f"{direction}\n"
                 f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
-                f"💹 Current: <code>{fmt_price(price)}</code>\n\n"
-                "📝 Paper entry recorded — no real order placed."
+                f"🎯 TP1: <code>{fmt_price(tp1)}</code>\n"
+                f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
+                f"🛑 SL: <code>{fmt_price(sl)}</code>\n\n"
+                "📝 Paper tracking only — no real order placed."
             )
-
             if send_telegram_message(message):
                 record["status"] = "OPEN"
                 record["entered"] = True
-                record["entry_time"] = datetime.now(timezone.utc).isoformat()
+                record["entry_time"] = now.isoformat()
                 changed = True
-
             continue
 
-        # Stop loss is checked before take-profit levels.
-        sl_hit = (
-            price <= sl if direction == "LONG"
-            else price >= sl
-        )
-
+        # Stop loss takes priority if price is at or beyond its level.
+        sl_hit = price <= sl if direction == "LONG" else price >= sl
         if sl_hit:
+            loss_pct = abs(entry - price) / entry * 100
             message = (
-                f"🛑 <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
+                f"🛡️ <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
                 f"{direction}\n"
-                f"📍 Entry: {fmt_price(entry)}\n"
-                f"🛑 SL: {fmt_price(sl)} ❌\n"
-                f"💹 Current: {fmt_price(price)}\n\n"
-                "🔴 <b>TRADE CLOSED</b>\n"
-                "<i>Paper tracking only.</i>"
+                f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
+                f"🛑 SL: <code>{fmt_price(sl)}</code>\n"
+                f"💹 Exit price: <code>{fmt_price(price)}</code>\n"
+                f"📉 Price movement against entry: {loss_pct:.2f}%\n\n"
+                "🔴 <b>TRADE CLOSED</b>"
             )
-
             if send_telegram_message(message):
                 record["status"] = "CLOSED_SL"
-                record["closed_time"] = datetime.now(timezone.utc).isoformat()
+                record["closed_time"] = now.isoformat()
                 record["result"] = "SL"
                 changed = True
-
             continue
 
-        # If TP2 is reached, notify TP1 first if it has not been announced.
-        tp2_hit = (
-            price >= tp2 if direction == "LONG"
-            else price <= tp2
-        )
-
+        tp2_hit = price >= tp2 if direction == "LONG" else price <= tp2
         if tp2_hit:
             if status == "OPEN":
                 tp1_message = (
                     f"🎯 <b>TAKE PROFIT 1 HIT — {symbol}/USDT</b>\n\n"
-                    f"{direction}\n"
-                    f"TP1: {fmt_price(tp1)} ✅"
+                    f"{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅"
                 )
-
                 if not send_telegram_message(tp1_message):
                     continue
 
-            tp2_message = (
-                f"🎯 <b>TAKE PROFIT 2 HIT — {symbol}/USDT</b>\n\n"
-                f"{direction}\n"
-                f"TP2: {fmt_price(tp2)} ✅\n"
-                f"💹 Current: {fmt_price(price)}\n\n"
-                "🟢 <b>TRADE CLOSED</b>\n"
-                "<i>Paper tracking only.</i>"
-            )
+            movement_pct = abs(tp2 - entry) / entry * 100
+            final_rr = abs(tp2 - entry) / abs(entry - sl) if entry != sl else 0
 
+            tp2_message = (
+                f"🏆 <b>TP2 HIT — {symbol}/USDT</b>\n\n"
+                f"{direction}\n"
+                "✅ TP1 + TP2 confirmed\n"
+                f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
+                f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
+                f"📈 Total price movement: {movement_pct:.2f}%\n"
+                f"⚖️ Final R:R: 1:{final_rr:.2f}\n\n"
+                "🟢 <b>TRADE CLOSED</b>"
+            )
             if send_telegram_message(tp2_message):
                 record["status"] = "CLOSED_TP2"
-                record["closed_time"] = datetime.now(timezone.utc).isoformat()
+                record["closed_time"] = now.isoformat()
                 record["result"] = "TP2"
                 changed = True
-
             continue
 
-        # TP1 is notified only once. Monitoring continues for SL and TP2.
-        tp1_hit = (
-            price >= tp1 if direction == "LONG"
-            else price <= tp1
-        )
-
+        tp1_hit = price >= tp1 if direction == "LONG" else price <= tp1
         if status == "OPEN" and tp1_hit:
             message = (
                 f"🎯 <b>TAKE PROFIT 1 HIT — {symbol}/USDT</b>\n\n"
                 f"{direction}\n"
-                f"TP1: {fmt_price(tp1)} ✅\n"
-                f"💹 Current: {fmt_price(price)}\n\n"
+                f"TP1: <code>{fmt_price(tp1)}</code> ✅\n"
+                f"💹 Current: <code>{fmt_price(price)}</code>\n\n"
                 "Monitoring continues for TP2 and SL."
             )
-
             if send_telegram_message(message):
                 record["status"] = "TP1_HIT"
-                record["tp1_time"] = datetime.now(timezone.utc).isoformat()
+                record["tp1_time"] = now.isoformat()
                 changed = True
 
     return changed
 
 
-# ---------------- Main scanner ----------------
-
 def main() -> None:
     logging.info("Signal scanner started.")
 
-    # Load and monitor existing signals before scanning for new ones.
     records = load_log()
-
     if monitor_signals(records):
         save_log(records)
 
     coins = get_top_coins(SCAN_TOP_N_COINS)
-
     if not coins:
-        logging.error(
-            "Coin universe unavailable. Check CoinGecko connectivity/rate limits."
-        )
+        logging.error("Coin universe unavailable. Check CoinGecko connectivity/rate limits.")
         return
 
     checked_pairs = set()
     emitted = 0
 
-    # Send a signal immediately when a valid setup is found.
-    # The strategy conditions and price calculations remain unchanged.
     for coin in coins:
         if emitted >= MAX_SIGNALS_PER_RUN:
             break
 
         pair = coin["pair"]
-
         if pair in checked_pairs:
             continue
-
         checked_pairs.add(pair)
 
         try:
             signal = detect_setup(pair, coin["symbol"])
-
             if not signal:
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
@@ -802,10 +716,7 @@ def main() -> None:
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
 
-            message = format_signal(signal)
-
-            # Send first; save the signal only after Telegram confirms delivery.
-            if not send_telegram_message(message):
+            if not send_telegram_message(format_signal(signal)):
                 logging.error("%s signal was not delivered; not recording it.", pair)
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
