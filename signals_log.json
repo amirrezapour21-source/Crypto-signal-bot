@@ -2566,11 +2566,12 @@
     "tp2": 0.07128019971449762,
     "rr": 2.0,
     "signal_time": "2026-10-28T12:23:07.914821+00:00",
-    "status": "OPEN",
+    "status": "TP1_HIT",
     "entered": true,
     "entry_time": "2026-10-28T18:03:02.541243+00:00",
     "closed_time": null,
-    "result": null
+    "result": null,
+    "tp1_time": "2026-10-29T20:29:42.103972+00:00"
   },
   {
     "id": "CRO-USDT_1793190196",
