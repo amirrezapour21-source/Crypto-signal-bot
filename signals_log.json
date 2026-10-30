@@ -2609,5 +2609,23 @@
     "entry_time": "2026-10-29T02:05:17.238816+00:00",
     "closed_time": "2026-10-29T08:28:26.183574+00:00",
     "result": "SL"
+  },
+  {
+    "id": "HBAR-USDT_1793329293",
+    "symbol": "HBAR",
+    "pair": "HBAR-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 0.06949,
+    "sl": 0.06998148871761922,
+    "tp1": 0.06850702256476154,
+    "tp2": 0.06801553384714232,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T03:01:32.642601+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
