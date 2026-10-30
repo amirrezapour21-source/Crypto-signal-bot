@@ -2658,9 +2658,9 @@
     "tp2": 1.1115690868730796,
     "rr": 2.0,
     "signal_time": "2026-10-30T06:01:21.840132+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-30T06:15:38.502056+00:00",
     "closed_time": null,
     "result": null
   },
@@ -2676,9 +2676,9 @@
     "tp2": 222.23486348385006,
     "rr": 2.0,
     "signal_time": "2026-10-30T06:01:28.600319+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-30T06:15:38.502056+00:00",
     "closed_time": null,
     "result": null
   }
