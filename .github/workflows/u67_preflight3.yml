@@ -1,0 +1,94 @@
+name: U67 Preflight 3 (one-shot, isolated)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: u67-pf3
+  cancel-in-progress: false
+
+env:
+  SCRATCH: u67-pf3-scratch
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      go_epoch: ${{ steps.t.outputs.go_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create scratch branch from main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push origin --delete "$SCRATCH" 2>/dev/null || true
+          git push origin "HEAD:refs/heads/$SCRATCH"
+      - id: t
+        run: echo "go_epoch=$(( $(date +%s) + 100 ))" >> "$GITHUB_OUTPUT"
+
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: U67-L guard line, three cases
+        run: |
+          cat > "$RUNNER_TEMP/guard.sh" <<'GUARD'
+          if [ -n "$(git log --oneline -1 -- u67_long_paper_state.json)" ] && [ ! -f u67_long_paper_state.json ]; then
+            echo "STATE_FILE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
+          GUARD
+          d="$(mktemp -d)"; cd "$d"; git init -q; git config user.name t; git config user.email t@t
+          echo x > a; git add a; git commit -qm a
+          r1=0; bash "$RUNNER_TEMP/guard.sh" || r1=$?
+          echo '{}' > u67_long_paper_state.json; git add .; git commit -qm s
+          r2=0; bash "$RUNNER_TEMP/guard.sh" || r2=$?
+          git rm -q u67_long_paper_state.json; git commit -qm del
+          r3=0; bash "$RUNNER_TEMP/guard.sh" || r3=$?
+          echo "A=$r1 (expect 0) B=$r2 (expect 0) C=$r3 (expect 1)"
+          if [ "$r1" = 0 ] && [ "$r2" = 0 ] && [ "$r3" = 1 ]; then echo "GUARD_RESULT PASS" | tee -a "$GITHUB_STEP_SUMMARY"; else echo "GUARD_RESULT FAIL" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; fi
+
+  race:
+    needs: prep
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        who: [r1, r2, r3, r4, r5, r6, r7, r8]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: u67-pf3-scratch
+      - name: Commit and push with the new U67 loop, 8 jobs at the same second
+        env:
+          GO: ${{ needs.prep.outputs.go_epoch }}
+          WHO: ${{ matrix.who }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$WHO $(date +%s%N)" > "race_${WHO}.txt"
+          git add "race_${WHO}.txt"
+          git commit -qm "race $WHO"
+          now=$(date +%s); [ "$GO" -gt "$now" ] && sleep $(( GO - now ))
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            if git pull --rebase origin "$SCRATCH" && git push origin "HEAD:$SCRATCH"; then ok=1; echo "RACE_RESULT $WHO OK attempts=$i" | tee -a "$GITHUB_STEP_SUMMARY"; break; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $(( 2 + RANDOM % 8 ))
+          done
+          [ "$ok" = "1" ] || { echo "RACE_RESULT $WHO FAIL PUSH_FAILED_AFTER_6_ATTEMPTS" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+  verify:
+    needs: [prep, guard, race]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: u67-pf3-scratch
+      - name: Count files and delete scratch branch
+        run: |
+          echo "RACE_FILES_COUNT $(ls race_*.txt 2>/dev/null | wc -l) (expect 8)" | tee -a "$GITHUB_STEP_SUMMARY"
+          git push origin --delete "$SCRATCH" || true
