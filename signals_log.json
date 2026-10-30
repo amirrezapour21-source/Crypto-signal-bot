@@ -2681,5 +2681,41 @@
     "entry_time": "2026-10-30T06:15:38.502056+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ETH-USDT_1793346336",
+    "symbol": "ETH",
+    "pair": "ETH-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 2235.35,
+    "sl": 2262.336712296005,
+    "tp1": 2181.37657540799,
+    "tp2": 2154.389863111985,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T07:45:35.806345+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "SOL-USDT_1793346340",
+    "symbol": "SOL",
+    "pair": "SOL-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 97.42,
+    "sl": 98.68220521395828,
+    "tp1": 94.89558957208344,
+    "tp2": 93.63338435812516,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T07:45:40.209235+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
