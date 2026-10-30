@@ -2789,5 +2789,23 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "XRP-USDT_1793361660",
+    "symbol": "XRP",
+    "pair": "XRP-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 1.24651,
+    "sl": 1.2645201768176968,
+    "tp1": 1.2104896463646064,
+    "tp2": 1.1924794695469096,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T12:01:00.071371+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
