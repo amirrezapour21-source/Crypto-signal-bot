@@ -1,0 +1,221 @@
+name: U67 Preflight 2 (one-shot, isolated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "controller (default) or probe (used internally)"
+        required: false
+        default: "controller"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: ${{ inputs.mode == 'probe' && 'u67-pf2-probe' || format('u67-pf2-ctl-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+env:
+  L_ENGINE_SHA256: 2197368bd68ecf74d93dd6bb0c11902e68bf594af3c90649a4d56e671b792442
+  SCRATCH: u67-pf2-scratch
+
+jobs:
+  probe:
+    if: ${{ inputs.mode == 'probe' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe (sleep 70 s, log times)
+        run: |
+          echo "PROBE_START $(date -u +%H:%M:%S) run_id=${{ github.run_id }}"
+          sleep 70
+          echo "PROBE_END $(date -u +%H:%M:%S)"
+
+  prep:
+    if: ${{ inputs.mode != 'probe' }}
+    runs-on: ubuntu-latest
+    outputs:
+      go_epoch: ${{ steps.t.outputs.go_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create scratch branch from main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push origin --delete "$SCRATCH" 2>/dev/null || true
+          git push origin "HEAD:refs/heads/$SCRATCH"
+      - id: t
+        run: echo "go_epoch=$(( $(date +%s) + 110 ))" >> "$GITHUB_OUTPUT"
+
+  live_l:
+    if: ${{ inputs.mode != 'probe' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: Verify L engine hash
+        run: echo "$L_ENGINE_SHA256  crypto_signal_bot_u67_long_v1.py" | sha256sum -c -
+      - name: Live KuCoin, two U67-L engine runs on isolated temp state
+        env:
+          U67L_STATE_FILE: ${{ runner.temp }}/u67l_pre_state.json
+        run: |
+          cat > "$RUNNER_TEMP/pre.py" <<'PY'
+          import importlib.util, json, os, sys, time, statistics, collections
+          spec = importlib.util.spec_from_file_location("u67l", "crypto_signal_bot_u67_long_v1.py")
+          m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          log = []
+          orig = m.SESSION.get
+          def wrapped(*a, **k):
+              t = time.time()
+              try:
+                  r = orig(*a, **k)
+                  log.append((r.status_code, time.time() - t, dict((h, r.headers.get(h)) for h in ("gw-ratelimit-limit","gw-ratelimit-remaining","gw-ratelimit-reset","retry-after"))))
+                  return r
+              except Exception as e:
+                  log.append((type(e).__name__, time.time() - t, {}))
+                  raise
+          m.SESSION.get = wrapped
+          sf = os.environ["U67L_STATE_FILE"]
+          def snap():
+              s = json.load(open(sf)); syms = s["symbols"]
+              return dict(strategy=s["strategy"], created_at=s["created_at"], eligible_from=s["eligible_from"], n_syms=len(syms),
+                          baseline=sum(1 for v in syms.values() if v.get("baseline_done")), signals=len(s["signals"]), missed=len(s["missed"]),
+                          open=len(s["open"]), closed=len(s["closed"]), errors=len(s.get("errors", [])),
+                          last_ts_min=min((v.get("last_ts") or "") for v in syms.values()), last_ts_max=max((v.get("last_ts") or "") for v in syms.values()))
+          res = []
+          for n in (1, 2):
+              log.clear(); t0 = time.time(); code = 0
+              try: m.main()
+              except SystemExit as e: code = e.code if isinstance(e.code, int) else 1
+              lat = [x[1] for x in log]
+              res.append(dict(run=n, exit=code, elapsed_s=round(time.time() - t0, 1), requests=len(log), status=dict(collections.Counter(str(x[0]) for x in log)),
+                              lat_p50=round(statistics.median(lat), 3), lat_max=round(max(lat), 3), state=snap()))
+              print("PREFLIGHT2_RUN", json.dumps(res[-1], sort_keys=True))
+              time.sleep(20)
+          a, b = res[0]["state"], res[1]["state"]
+          cont = dict(strategy_ok=a["strategy"] == "u67_long_only_frozen_v1", created_at_same=a["created_at"] == b["created_at"], eligible_from_same=a["eligible_from"] == b["eligible_from"],
+                      eligible_is_registered_literal=a["eligible_from"].startswith("2026-10-30T12:00:00"),
+                      baseline_all_after_run1=a["baseline"] == 67, baseline_all_after_run2=b["baseline"] == 67,
+                      no_replay_run1=(a["signals"] + a["missed"]) <= 67 and a["open"] == 0 and a["closed"] == 0,
+                      run2_new_signals=b["signals"] - a["signals"], run2_new_missed=b["missed"] - a["missed"])
+          print("STATE_CONTINUITY_L", json.dumps(cont, sort_keys=True))
+          ok = all(r["exit"] == 0 for r in res) and all(cont[k] for k in ("strategy_ok","created_at_same","eligible_from_same","eligible_is_registered_literal","baseline_all_after_run1","baseline_all_after_run2","no_replay_run1"))
+          print("LIVE_L_RESULT", "PASS" if ok else "FAIL")
+          sys.exit(0 if ok else 1)
+          PY
+          python "$RUNNER_TEMP/pre.py" | tee "$RUNNER_TEMP/live.log"
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### live_l'; grep -E "PREFLIGHT2_RUN|STATE_CONTINUITY_L|LIVE_L_RESULT|SYMBOLS_OK|RUN_STATUS" "$RUNNER_TEMP/live.log" | cut -c1-700; } >> "$GITHUB_STEP_SUMMARY" || true
+
+  guard:
+    if: ${{ inputs.mode != 'probe' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard line from the U67-L production workflow, three cases
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/guard.sh" <<'GUARD'
+          if [ -n "$(git log --oneline -1 -- u67_long_paper_state.json)" ] && [ ! -f u67_long_paper_state.json ]; then
+            echo "STATE_FILE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
+          GUARD
+          d="$(mktemp -d)"; cd "$d"; git init -q; git config user.name t; git config user.email t@t
+          echo x > a; git add a; git commit -qm a
+          bash "$RUNNER_TEMP/guard.sh"; r1=$?
+          echo '{}' > u67_long_paper_state.json; git add .; git commit -qm s
+          bash "$RUNNER_TEMP/guard.sh"; r2=$?
+          git rm -q u67_long_paper_state.json; git commit -qm del
+          bash "$RUNNER_TEMP/guard.sh"; r3=$?
+          echo "A=$r1 (expect 0) B=$r2 (expect 0) C=$r3 (expect 1)"
+          if [ "$r1" = 0 ] && [ "$r2" = 0 ] && [ "$r3" = 1 ]; then echo "GUARD_RESULT PASS" | tee -a "$GITHUB_STEP_SUMMARY"; else echo "GUARD_RESULT FAIL" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; fi
+
+  race:
+    needs: prep
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        who: [c11, longm1, u67s, u67l, signal]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: u67-pf2-scratch
+      - name: Commit and push with the production pattern, simultaneously
+        env:
+          GO: ${{ needs.prep.outputs.go_epoch }}
+          WHO: ${{ matrix.who }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$WHO $(date +%s%N)" > "race_${WHO}.txt"
+          git add "race_${WHO}.txt"
+          git commit -qm "race $WHO"
+          now=$(date +%s); [ "$GO" -gt "$now" ] && sleep $(( GO - now ))
+          echo "START_EPOCH $WHO $(date +%s.%N)"
+          if [ "$WHO" = "signal" ]; then
+            git pull --rebase --autostash origin "$SCRATCH" && git push origin "HEAD:$SCRATCH" && echo "RACE_RESULT $WHO OK attempts=1(no-retry-pattern)" || { echo "RACE_RESULT $WHO FAIL attempts=1(no-retry-pattern)"; exit 1; }
+          else
+            ok=0
+            for i in 1 2 3; do
+              if git pull --rebase origin "$SCRATCH" && git push origin "HEAD:$SCRATCH"; then ok=1; echo "RACE_RESULT $WHO OK attempts=$i"; break; fi
+              git rebase --abort 2>/dev/null || true
+              sleep 5
+            done
+            [ "$ok" = "1" ] || { echo "RACE_RESULT $WHO FAIL PUSH_FAILED_AFTER_3_ATTEMPTS"; exit 1; }
+          fi
+
+  conc:
+    if: ${{ inputs.mode != 'probe' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch 3 probes at t=0,8,16 s into the same concurrency group, then report what GitHub did
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          for n in 1 2 3; do
+            echo "DISPATCH_$n $(date -u +%H:%M:%S.%N | cut -c1-12)"
+            gh api -X POST "repos/$REPO/actions/workflows/u67_preflight2.yml/dispatches" -f ref=main -f 'inputs[mode]=probe' || echo "DISPATCH_$n FAILED"
+            [ "$n" = 3 ] || sleep 8
+          done
+          sleep 230
+          echo "--- probe runs created since $T0 (workflow_dispatch):"
+          gh api -X GET "repos/$REPO/actions/workflows/u67_preflight2.yml/runs" -f event=workflow_dispatch -f created=">=$T0" -f per_page=20 \
+            --jq '.workflow_runs[] | select(.id != ${{ github.run_id }}) | [.id, .created_at, .run_started_at, .status, .conclusion] | @tsv' | sort -k2 | tee "$RUNNER_TEMP/probes.tsv"
+          n_ok=$(awk -F'\t' '$5=="success"' "$RUNNER_TEMP/probes.tsv" | wc -l); n_can=$(awk -F'\t' '$5=="cancelled"' "$RUNNER_TEMP/probes.tsv" | wc -l)
+          echo "CONC_RESULT success=$n_ok cancelled=$n_can total=$(wc -l < "$RUNNER_TEMP/probes.tsv")"
+          { echo '### concurrency probe (3 dispatches 8 s apart, group cancel-in-progress=false)'; echo '```'; cat "$RUNNER_TEMP/probes.tsv"; echo "success=$n_ok cancelled=$n_can"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: [prep, live_l, guard, race, conc]
+    if: ${{ always() && inputs.mode != 'probe' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: u67-pf2-scratch
+          fetch-depth: 0
+      - name: Verify scratch branch and measure queue latency
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+          echo "### verify"
+          echo "RACE_FILES: $(ls race_*.txt 2>/dev/null | tr '\n' ' ')"
+          echo "RACE_FILES_COUNT $(ls race_*.txt 2>/dev/null | wc -l) (expect 4 retry-pattern files; signal may fail: no retry)"
+          echo "MERGE_COMMITS $(git rev-list --merges HEAD --count)"
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs[] | "JOB \(.name) created=\(.created_at) started=\(.started_at)"'
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '"RUN created=\(.created_at) started=\(.run_started_at)"'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Delete scratch branch
+        if: always()
+        run: git push origin --delete "u67-pf2-scratch" || true
