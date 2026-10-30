@@ -2645,5 +2645,41 @@
     "entry_time": "2026-10-30T04:45:37.623216+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "GRAM-USDT_1793340082",
+    "symbol": "GRAM",
+    "pair": "GRAM-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 1.171,
+    "sl": 1.1908103043756402,
+    "tp1": 1.1313793912487198,
+    "tp2": 1.1115690868730796,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T06:01:21.840132+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "TAO-USDT_1793340088",
+    "symbol": "TAO",
+    "pair": "TAO-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 235.96,
+    "sl": 240.53504550538332,
+    "tp1": 226.80990898923338,
+    "tp2": 222.23486348385006,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T06:01:28.600319+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
