@@ -2771,5 +2771,23 @@
     "entry_time": "2026-10-30T09:45:36.198785+00:00",
     "closed_time": "2026-10-30T10:45:37.772797+00:00",
     "result": "SL"
+  },
+  {
+    "id": "LTC-USDT_1793359873",
+    "symbol": "LTC",
+    "pair": "LTC-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 55.5,
+    "sl": 56.05642615200457,
+    "tp1": 54.38714769599086,
+    "tp2": 53.83072154398629,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T11:31:13.116507+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
