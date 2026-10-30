@@ -17,7 +17,7 @@ import pandas as pd
 import requests
 
 KUCOIN_BASE = "https://api.kucoin.com"
-COINGECKO_BASE = "https://api.coingecko.com/api/v3"
+COINGECKO_BASE = "https://api.coingecko.com"
 
 SCAN_TOP_N_COINS = 40
 REQUEST_DELAY_SECONDS = 0.25
@@ -472,13 +472,10 @@ def format_signal(signal: dict) -> str:
         f"{icon} <b>Direction:</b> {direction}",
         f"📈 <b>Strategy:</b> {html.escape(signal['strategy_type'])}",
         "",
-        "📍 <b>Entry</b>",
-        f"<code>{fmt_price(signal['entry'])}</code>",
+        f"📍 <b>Entry:</b> <code>{fmt_price(signal['entry'])}</code>",
+        f"🛑 <b>Stop Loss:</b> <code>{fmt_price(signal['sl'])}</code>",
         "",
-        "🛑 <b>Stop Loss</b>",
-        f"<code>{fmt_price(signal['sl'])}</code>",
-        "",
-        "🎯 <b>Take Profit</b>",
+        "🎯 <b>Take Profit:</b>",
         f"TP1 → <code>{fmt_price(signal['tp1'])}</code>",
         f"TP2 → <code>{fmt_price(signal['tp2'])}</code>",
         "",
@@ -486,8 +483,6 @@ def format_signal(signal: dict) -> str:
         "⚠️ <b>Risk Level:</b> MEDIUM",
         "",
         "🏦 <b>Exchange:</b> CoinGecko",
-        "",
-        "⚠️ <i>Signal only — no order placed.</i>",
     ])
 
 
@@ -556,7 +551,6 @@ def monitor_signals(records: list) -> bool:
         if direction not in {"LONG", "SHORT"}:
             continue
 
-        # Unfilled pending signal expires 10 days after signal creation.
         if status == "ENTRY_PENDING":
             signal_time = parse_time(record.get("signal_time"))
             if signal_time and now - signal_time >= timedelta(days=TIMEOUT_DAYS):
@@ -571,7 +565,6 @@ def monitor_signals(records: list) -> bool:
                     changed = True
                 continue
 
-        # An entered trade expires 10 days after entry if unresolved.
         if status in {"OPEN", "TP1_HIT"}:
             entry_time = parse_time(record.get("entry_time"))
             if entry_time and now - entry_time >= timedelta(days=TIMEOUT_DAYS):
@@ -592,7 +585,6 @@ def monitor_signals(records: list) -> bool:
         if price is None:
             continue
 
-        # Entry is considered reached when price touches the entry level.
         if status == "ENTRY_PENDING":
             entry_hit = price <= entry if direction == "LONG" else price >= entry
             if not entry_hit:
@@ -600,12 +592,12 @@ def monitor_signals(records: list) -> bool:
 
             message = (
                 f"➕ <b>ENTRY EXECUTED — {symbol}/USDT</b>\n\n"
-                f"{direction}\n"
                 f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
+                f"{'🟢' if direction == 'LONG' else '🔴'} "
+                f"<b>{direction} ACTIVE</b>\n\n"
                 f"🎯 TP1: <code>{fmt_price(tp1)}</code>\n"
                 f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
-                f"🛑 SL: <code>{fmt_price(sl)}</code>\n\n"
-                "📝 Paper tracking only — no real order placed."
+                f"🛑 SL: <code>{fmt_price(sl)}</code>"
             )
             if send_telegram_message(message):
                 record["status"] = "OPEN"
@@ -614,17 +606,15 @@ def monitor_signals(records: list) -> bool:
                 changed = True
             continue
 
-        # Stop loss takes priority if price is at or beyond its level.
         sl_hit = price <= sl if direction == "LONG" else price >= sl
         if sl_hit:
             loss_pct = abs(entry - price) / entry * 100
             message = (
-                f"🛡️ <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
-                f"{direction}\n"
+                f"🛑 <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
+                f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
                 f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
-                f"🛑 SL: <code>{fmt_price(sl)}</code>\n"
-                f"💹 Exit price: <code>{fmt_price(price)}</code>\n"
-                f"📉 Price movement against entry: {loss_pct:.2f}%\n\n"
+                f"🛑 SL: <code>{fmt_price(sl)}</code> ❌\n\n"
+                f"📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n"
                 "🔴 <b>TRADE CLOSED</b>"
             )
             if send_telegram_message(message):
@@ -636,25 +626,15 @@ def monitor_signals(records: list) -> bool:
 
         tp2_hit = price >= tp2 if direction == "LONG" else price <= tp2
         if tp2_hit:
-            if status == "OPEN":
-                tp1_message = (
-                    f"🎯 <b>TAKE PROFIT 1 HIT — {symbol}/USDT</b>\n\n"
-                    f"{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅"
-                )
-                if not send_telegram_message(tp1_message):
-                    continue
-
             movement_pct = abs(tp2 - entry) / entry * 100
             final_rr = abs(tp2 - entry) / abs(entry - sl) if entry != sl else 0
 
             tp2_message = (
                 f"🏆 <b>TP2 HIT — {symbol}/USDT</b>\n\n"
-                f"{direction}\n"
-                "✅ TP1 + TP2 confirmed\n"
-                f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
-                f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
-                f"📈 Total price movement: {movement_pct:.2f}%\n"
-                f"⚖️ Final R:R: 1:{final_rr:.2f}\n\n"
+                f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
+                "✅ TP1 + TP2 hit\n\n"
+                f"📈 <b>Total Profit: +{movement_pct:.2f}%</b>\n"
+                f"⚖️ <b>Final R:R: 1:{final_rr:.2f}</b>\n\n"
                 "🟢 <b>TRADE CLOSED</b>"
             )
             if send_telegram_message(tp2_message):
