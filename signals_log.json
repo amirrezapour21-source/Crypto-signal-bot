@@ -2753,5 +2753,23 @@
     "entry_time": "2026-10-30T09:00:50.805320+00:00",
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "CRO-USDT_1793352681",
+    "symbol": "CRO",
+    "pair": "CRO-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 0.05111,
+    "sl": 0.05176138188175309,
+    "tp1": 0.04980723623649383,
+    "tp2": 0.04915585435474074,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T09:31:21.424835+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
