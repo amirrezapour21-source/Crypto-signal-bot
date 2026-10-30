@@ -2694,9 +2694,9 @@
     "tp2": 2154.389863111985,
     "rr": 2.0,
     "signal_time": "2026-10-30T07:45:35.806345+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-10-30T08:00:53.451785+00:00",
     "closed_time": null,
     "result": null
   },
