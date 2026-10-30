@@ -2717,5 +2717,41 @@
     "entry_time": null,
     "closed_time": null,
     "result": null
+  },
+  {
+    "id": "ADA-USDT_1793349953",
+    "symbol": "ADA",
+    "pair": "ADA-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 0.1919,
+    "sl": 0.19563300565158778,
+    "tp1": 0.1844339886968244,
+    "tp2": 0.1807009830452366,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T08:45:53.202350+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
+  },
+  {
+    "id": "XLM-USDT_1793349955",
+    "symbol": "XLM",
+    "pair": "XLM-USDT",
+    "direction": "SHORT",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 0.1653,
+    "sl": 0.16829370059080576,
+    "tp1": 0.1593125988183885,
+    "tp2": 0.15631889822758274,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T08:45:54.956368+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
