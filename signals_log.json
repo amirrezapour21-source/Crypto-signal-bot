@@ -2627,5 +2627,23 @@
     "entry_time": "2026-10-30T03:15:34.342102+00:00",
     "closed_time": "2026-10-30T03:30:46.174434+00:00",
     "result": "SL"
+  },
+  {
+    "id": "ZEC-USDT_1793334657",
+    "symbol": "ZEC",
+    "pair": "ZEC-USDT",
+    "direction": "LONG",
+    "strategy_type": "Daily + 4H Trend / 15m Pullback",
+    "entry": 1286.999,
+    "sl": 1203.7727939190156,
+    "tp1": 1453.4514121619688,
+    "tp2": 1536.6776182429533,
+    "rr": 2.0,
+    "signal_time": "2026-10-30T04:30:56.503719+00:00",
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null
   }
 ]
