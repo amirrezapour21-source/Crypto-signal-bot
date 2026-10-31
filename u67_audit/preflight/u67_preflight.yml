@@ -1,0 +1,203 @@
+name: U67 Preflight (one-shot, isolated)
+
+# ONE-SHOT, workflow_dispatch ONLY. No schedule. Never writes to main.
+# Reads: live KuCoin (read-only public klines). Writes: only branch
+# u67-preflight-scratch (deleted at the end) and the run summary.
+# Production state files are never touched.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: u67-preflight
+  cancel-in-progress: false
+
+env:
+  ENGINE_SHA256: aa1d7ac050d3db28f8404d39a5fd21e2eaca1ca5172478453cdd7fa193f5689a
+  SCRATCH: u67-preflight-scratch
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      go_epoch: ${{ steps.t.outputs.go_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create scratch branch from main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push origin --delete "$SCRATCH" 2>/dev/null || true
+          git push origin "HEAD:refs/heads/$SCRATCH"
+      - id: t
+        run: echo "go_epoch=$(( $(date +%s) + 110 ))" >> "$GITHUB_OUTPUT"
+
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: Verify engine copy hash
+        run: |
+          echo "$ENGINE_SHA256  crypto_signal_bot_u67_short_v1.py" | sha256sum -c -
+      - name: Live KuCoin, two engine runs on isolated temp state
+        env:
+          U67_STATE_FILE: ${{ runner.temp }}/u67_pre_state.json
+        run: |
+          cat > "$RUNNER_TEMP/pre.py" <<'PY'
+          import importlib.util, json, os, sys, time, statistics, collections
+          spec = importlib.util.spec_from_file_location("u67", "crypto_signal_bot_u67_short_v1.py")
+          m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          log = []
+          orig = m.SESSION.get
+          def wrapped(*a, **k):
+              t = time.time()
+              try:
+                  r = orig(*a, **k)
+                  log.append((r.status_code, time.time() - t, dict((h, r.headers.get(h)) for h in ("gw-ratelimit-limit","gw-ratelimit-remaining","gw-ratelimit-reset","retry-after"))))
+                  return r
+              except Exception as e:
+                  log.append((type(e).__name__, time.time() - t, {}))
+                  raise
+          m.SESSION.get = wrapped
+          sf = os.environ["U67_STATE_FILE"]
+          def snap():
+              s = json.load(open(sf))
+              syms = s["symbols"]
+              return dict(created_at=s["created_at"], eligible_from=s["eligible_from"],
+                          n_syms=len(syms), baseline=sum(1 for v in syms.values() if v.get("baseline_done")),
+                          signals=len(s["signals"]), missed=len(s["missed"]), open=len(s["open"]),
+                          closed=len(s["closed"]), errors=len(s.get("errors", [])),
+                          last_ts_min=min((v.get("last_ts") or "") for v in syms.values()),
+                          last_ts_max=max((v.get("last_ts") or "") for v in syms.values()))
+          res = []
+          for n in (1, 2):
+              log.clear(); t0 = time.time(); code = 0
+              try:
+                  m.main()
+              except SystemExit as e:
+                  code = e.code if isinstance(e.code, int) else 1
+              el = time.time() - t0
+              lat = [x[1] for x in log]
+              cnt = collections.Counter(str(x[0]) for x in log)
+              hdr = next((x[2] for x in log if x[2].get("gw-ratelimit-limit")), {})
+              res.append(dict(run=n, exit=code, elapsed_s=round(el, 1), requests=len(log), status=dict(cnt),
+                              lat_p50=round(statistics.median(lat), 3), lat_p95=round(sorted(lat)[int(len(lat)*.95)-1], 3), lat_max=round(max(lat), 3),
+                              ratelimit_headers=hdr, state=snap()))
+              print("PREFLIGHT_RUN", json.dumps(res[-1], sort_keys=True))
+              time.sleep(20)
+          a, b = res[0]["state"], res[1]["state"]
+          cont = dict(created_at_same=a["created_at"] == b["created_at"], eligible_from_same=a["eligible_from"] == b["eligible_from"],
+                      baseline_all_after_run1=a["baseline"] == a["n_syms"] == 67, baseline_all_after_run2=b["baseline"] == 67,
+                      no_replay_run1=(a["signals"] + a["missed"]) <= 67 and a["open"] == 0 and a["closed"] == 0,
+                      run2_new_signals=b["signals"] - a["signals"], run2_new_missed=b["missed"] - a["missed"])
+          print("STATE_CONTINUITY", json.dumps(cont, sort_keys=True))
+          # bounded burst: 40 back-to-back requests on one symbol, no pause, to observe limit headers / 429
+          bl = []
+          now_ms = int(time.time() * 1000)
+          for _ in range(40):
+              t = time.time()
+              r = orig(m.KLINE_URL, params=dict(symbol="XBTUSDTM", granularity=m.GRANULARITY, **{"from": now_ms - 3600*1000*40, "to": now_ms}), timeout=m.REQUEST_TIMEOUT)
+              bl.append((r.status_code, round(time.time() - t, 3), r.headers.get("gw-ratelimit-remaining")))
+          print("BURST40", json.dumps(dict(status=dict(collections.Counter(str(x[0]) for x in bl)), last_remaining=bl[-1][2], max_lat=max(x[1] for x in bl))))
+          ok = all(r["exit"] == 0 for r in res) and all(cont[k] for k in ("created_at_same","eligible_from_same","baseline_all_after_run1","baseline_all_after_run2","no_replay_run1"))
+          print("LIVE_RESULT", "PASS" if ok else "FAIL")
+          sys.exit(0 if ok else 1)
+          PY
+          python "$RUNNER_TEMP/pre.py" | tee "$RUNNER_TEMP/live.log"
+      - name: Show run summary
+        if: always()
+        run: |
+          { echo '### live'; grep -E "PREFLIGHT_RUN|STATE_CONTINUITY|BURST40|LIVE_RESULT|U67-S|RUN_STATUS|OK=|FAIL" "$RUNNER_TEMP/live.log" | cut -c1-900; } >> "$GITHUB_STEP_SUMMARY" || true
+
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test the exact production guard line in a throwaway repo
+        run: |
+          set -u
+          cat > "$RUNNER_TEMP/guard.sh" <<'GUARD'
+          if [ -n "$(git log --oneline -1 -- u67_short_paper_state.json)" ] && [ ! -f u67_short_paper_state.json ]; then
+            echo "STATE_FILE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
+          GUARD
+          G="$(cat "$RUNNER_TEMP/guard.sh")"
+          d="$(mktemp -d)"; cd "$d"; git init -q; git config user.name t; git config user.email t@t
+          echo x > a; git add a; git commit -qm a
+          bash -c "$G"; r1=$?; echo "A no history, no file -> exit $r1 (expect 0)"
+          echo '{}' > u67_short_paper_state.json; git add .; git commit -qm s
+          bash -c "$G"; r2=$?; echo "B file present -> exit $r2 (expect 0)"
+          git rm -q u67_short_paper_state.json; git commit -qm del
+          bash -c "$G"; r3=$?; echo "C in history, missing -> exit $r3 (expect 1)"
+          [ "$r1" = 0 ] && [ "$r2" = 0 ] && [ "$r3" = 1 ] && echo "GUARD_RESULT PASS" | tee -a "$GITHUB_STEP_SUMMARY" || { echo "GUARD_RESULT FAIL" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+  race:
+    needs: prep
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        who: [c11, longm1, u67, signal]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: u67-preflight-scratch
+      - name: Commit and push with the production pattern, simultaneously
+        env:
+          GO: ${{ needs.prep.outputs.go_epoch }}
+          WHO: ${{ matrix.who }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$WHO $(date +%s%N)" > "race_${WHO}.txt"
+          git add "race_${WHO}.txt"
+          git commit -qm "race $WHO"
+          now=$(date +%s); [ "$GO" -gt "$now" ] && sleep $(( GO - now ))
+          echo "START_EPOCH $WHO $(date +%s.%N)"
+          if [ "$WHO" = "signal" ]; then
+            # existing old-bot pattern: single attempt, no retry
+            git pull --rebase --autostash origin "$SCRATCH" && git push origin "HEAD:$SCRATCH" && echo "RACE_RESULT $WHO OK attempts=1(no-retry-pattern)" || { echo "RACE_RESULT $WHO FAIL attempts=1(no-retry-pattern)"; exit 1; }
+          else
+            ok=0
+            for i in 1 2 3; do
+              if git pull --rebase origin "$SCRATCH" && git push origin "HEAD:$SCRATCH"; then ok=1; echo "RACE_RESULT $WHO OK attempts=$i"; break; fi
+              git rebase --abort 2>/dev/null || true
+              sleep 5
+            done
+            [ "$ok" = "1" ] || { echo "RACE_RESULT $WHO FAIL PUSH_FAILED_AFTER_3_ATTEMPTS"; exit 1; }
+          fi
+
+  verify:
+    needs: [prep, live, guard, race]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: u67-preflight-scratch
+          fetch-depth: 0
+      - name: Verify scratch branch and measure dispatch/queue latency
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "FILES: $(ls race_*.txt 2>/dev/null | tr '\n' ' ')"
+          echo "RACE_FILES_COUNT $(ls race_*.txt 2>/dev/null | wc -l) (expect 4 if all pushed; 'signal' may legitimately fail: no-retry pattern)"
+          echo "MERGE_COMMITS_ON_BRANCH $(git rev-list --merges origin/$SCRATCH --count 2>/dev/null || git rev-list --merges HEAD --count)"
+          echo "--- dispatch/queue latency (run created_at vs job started_at)"
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs[] | [.name, .created_at, .started_at] | @tsv' || true
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '"RUN created_at=\(.created_at) run_started_at=\(.run_started_at) event=\(.event)"' || true
+      - name: Delete scratch branch
+        if: always()
+        run: git push origin --delete "$SCRATCH" || true
