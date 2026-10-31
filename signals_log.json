@@ -2644,7 +2644,8 @@
     "entered": true,
     "entry_time": "2026-10-30T04:45:37.623216+00:00",
     "closed_time": null,
-    "result": null
+    "result": null,
+    "last_monitor_candle_time": 1793440800
   },
   {
     "id": "GRAM-USDT_1793340082",
@@ -2680,7 +2681,8 @@
     "entered": true,
     "entry_time": "2026-10-30T06:15:38.502056+00:00",
     "closed_time": null,
-    "result": null
+    "result": null,
+    "last_monitor_candle_time": 1793440800
   },
   {
     "id": "ETH-USDT_1793346336",
@@ -2698,7 +2700,8 @@
     "entered": true,
     "entry_time": "2026-10-30T08:00:53.451785+00:00",
     "closed_time": null,
-    "result": null
+    "result": null,
+    "last_monitor_candle_time": 1793440800
   },
   {
     "id": "SOL-USDT_1793346340",
@@ -2712,11 +2715,14 @@
     "tp2": 93.63338435812516,
     "rr": 2.0,
     "signal_time": "2026-10-30T07:45:40.209235+00:00",
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
-    "closed_time": null,
-    "result": null
+    "status": "CLOSED_TP2",
+    "entered": true,
+    "entry_time": "2026-10-30T08:30:00+00:00",
+    "closed_time": "2026-10-30T18:45:00+00:00",
+    "result": "TP2",
+    "last_monitor_candle_time": 1793385000,
+    "last_notification_sent": true,
+    "tp1_time": "2026-10-30T14:00:00+00:00"
   },
   {
     "id": "ADA-USDT_1793349953",
@@ -2784,11 +2790,13 @@
     "tp2": 53.83072154398629,
     "rr": 2.0,
     "signal_time": "2026-10-30T11:31:13.116507+00:00",
-    "status": "OPEN",
+    "status": "CLOSED_SL",
     "entered": true,
     "entry_time": "2026-10-30T13:00:53.687899+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-30T15:30:00+00:00",
+    "result": "SL",
+    "last_monitor_candle_time": 1793373300,
+    "last_notification_sent": true
   },
   {
     "id": "XRP-USDT_1793361660",
@@ -2806,7 +2814,8 @@
     "entered": true,
     "entry_time": "2026-10-30T12:15:33.947219+00:00",
     "closed_time": null,
-    "result": null
+    "result": null,
+    "last_monitor_candle_time": 1793440800
   },
   {
     "id": "CRO-USDT_1793367086",
@@ -2824,7 +2833,8 @@
     "entered": true,
     "entry_time": "2026-10-30T21:15:35.999621+00:00",
     "closed_time": null,
-    "result": null
+    "result": null,
+    "last_monitor_candle_time": 1793440800
   },
   {
     "id": "HBAR-USDT_1793367968",
