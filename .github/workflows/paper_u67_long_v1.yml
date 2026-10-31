@@ -1,0 +1,62 @@
+name: U67-L Paper Trading
+
+on:
+  # No schedule trigger by design (Stage 4): external dispatch only (cron-job.org, hours 0,4,8,12,16,20 UTC).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: u67-long-paper
+  cancel-in-progress: false
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests
+
+      - name: Guard state continuity
+        run: |
+          if [ -n "$(git log --oneline -1 -- u67_long_paper_state.json)" ] && [ ! -f u67_long_paper_state.json ]; then
+            echo "STATE_FILE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
+
+      - name: Run U67-L
+        id: run
+        continue-on-error: true
+        run: python crypto_signal_bot_u67_long_v1.py
+
+      - name: Save paper state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add u67_long_paper_state.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update U67-L paper state"
+            ok=0
+            for i in 1 2 3 4 5 6; do
+              if git pull --rebase origin main && git push; then ok=1; break; fi
+              git rebase --abort 2>/dev/null || true
+              sleep $(( 2 + RANDOM % 8 ))
+            done
+            [ "$ok" = "1" ] || { echo "PUSH_FAILED_AFTER_6_ATTEMPTS"; exit 1; }
+          fi
+
+      - name: Fail if engine failed
+        if: steps.run.outcome == 'failure'
+        run: exit 1
