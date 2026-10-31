@@ -1,0 +1,149 @@
+2,4c2,5
+< # LONG-M1 — FORWARD PAPER TRADING ENGINE (v1)
+< # Pre-registration: LONG_M1_REGISTRATION_v1.txt
+< # (sha256 2ba707dbf6b57c82df38e848230f8fe4606b2a3807619bf8bf13aec792e56ffa)
+---
+> # U67-L — FORWARD PAPER TRADING ENGINE (v1)
+> # Pre-registration: U67_L_REGISTRATION_v1.txt
+> # (sha256 3f0298f2314d1dc54c7768dbe181b41839e5223f9903356b7a1b903f2af5b02a)
+> # LONG-M1 rules (mirror of Candidate 11) on the independent 67-symbol universe.
+10c11
+< # Mirror of Candidate 11; separate state; no shared files.
+---
+> # Copy of the LONG-M1 engine; separate state; no shared files.
+29,30c30,31
+<     "LONG_M1_STATE_FILE",
+<     "long_m1_paper_state.json"
+---
+>     "U67L_STATE_FILE",
+>     "u67_long_paper_state.json"
+35c36
+< # Registration section 0c: only entries at/after this instant
+---
+> # Registration section 0e: only entries at/after this instant
+38c39
+<     "2026-10-25T15:00:00Z"
+---
+>     "2026-10-30T12:00:00Z"
+119,151c120,186
+<     "XBTUSDTM",
+<     "ETHUSDTM",
+<     "SOLUSDTM",
+<     "BNBUSDTM",
+<     "XRPUSDTM",
+<     "DOGEUSDTM",
+<     "ADAUSDTM",
+<     "LINKUSDTM",
+<     "AVAXUSDTM",
+<     "DOTUSDTM",
+<     "SUIUSDTM",
+<     "TRXUSDTM",
+<     "NEARUSDTM",
+<     "AAVEUSDTM",
+<     "OPUSDTM",
+<     "ARBUSDTM",
+<     "APTUSDTM",
+<     "ATOMUSDTM",
+<     "FILUSDTM",
+<     "LTCUSDTM",
+<     "BCHUSDTM",
+<     "ETCUSDTM",
+<     "UNIUSDTM",
+<     "INJUSDTM",
+<     "SEIUSDTM",
+<     "VETUSDTM",
+<     "HBARUSDTM",
+<     "ALGOUSDTM",
+<     "XLMUSDTM",
+<     "ICPUSDTM",
+<     "WIFUSDTM",
+<     "PEPEUSDTM",
+<     "FLOKIUSDTM",
+---
+>     "ZECUSDTM",
+>     "IRYSUSDTM",
+>     "EVAAUSDTM",
+>     "HYPEUSDTM",
+>     "KCSUSDTM",
+>     "ASTERUSDTM",
+>     "TIAUSDTM",
+>     "USELESSUSDTM",
+>     "QUSDTM",
+>     "XMRUSDTM",
+>     "PENGUUSDTM",
+>     "SOONUSDTM",
+>     "LIGHTUSDTM",
+>     "AINUSDTM",
+>     "ENAUSDTM",
+>     "PUMPUSDTM",
+>     "TAOUSDTM",
+>     "LDOUSDTM",
+>     "NIGHTUSDTM",
+>     "GRAMUSDTM",
+>     "1000BONKUSDTM",
+>     "ICNTUSDTM",
+>     "CAKEUSDTM",
+>     "XANUSDTM",
+>     "WLDUSDTM",
+>     "METUSDTM",
+>     "ARCUSDTM",
+>     "SUSDTM",
+>     "APRUSDTM",
+>     "ZEREBROUSDTM",
+>     "ZORAUSDTM",
+>     "QNTUSDTM",
+>     "MUSDTM",
+>     "CRVUSDTM",
+>     "0GUSDTM",
+>     "ZBTUSDTM",
+>     "JCTUSDTM",
+>     "FETUSDTM",
+>     "ONDOUSDTM",
+>     "CLOUSDTM",
+>     "DOODUSDTM",
+>     "BTWUSDTM",
+>     "MYXUSDTM",
+>     "MOODENGUSDTM",
+>     "HEMIUSDTM",
+>     "BEATUSDTM",
+>     "AVNTUSDTM",
+>     "CAPUSDTM",
+>     "ZKPUSDTM",
+>     "ALLOUSDTM",
+>     "AKEUSDTM",
+>     "DASHUSDTM",
+>     "HUSDTM",
+>     "WETUSDTM",
+>     "4USDTM",
+>     "PIEVERSEUSDTM",
+>     "KGENUSDTM",
+>     "VIRTUALUSDTM",
+>     "POWERUSDTM",
+>     "CASHCATUSDTM",
+>     "AEONUSDTM",
+>     "CHIPUSDTM",
+>     "LONGXIAUSDTM",
+>     "GENIUSUSDTM",
+>     "TRUSTUSDTM",
+>     "FOLKSUSDTM",
+>     "EDENUSDTM",
+158c193
+<         "User-Agent": "long-m1-paper-v1/1.0"
+---
+>         "User-Agent": "u67-long-paper-v1/1.0"
+182c217
+<         "strategy": "long_m1_long_only_frozen_v1",
+---
+>         "strategy": "u67_long_only_frozen_v1",
+1552c1587
+<         "LONG-M1 — "
+---
+>         "U67-L — "
+1597c1632
+<     # Registration section 7: no R values are reported before LC1.
+---
+>     # Registration section 7: no R values are reported before UL1.
+1696c1731
+<         "LONG-M1 — "
+---
+>         "U67-L — "

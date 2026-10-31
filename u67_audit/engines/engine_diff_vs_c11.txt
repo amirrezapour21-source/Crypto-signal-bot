@@ -1,0 +1,235 @@
+2c2,5
+< # CANDIDATE 11 — FORWARD PAPER TRADING ENGINE (v4)
+---
+> # U67-S — FORWARD PAPER TRADING ENGINE (v1)
+> # Pre-registration: U67_S_REGISTRATION_v1.txt
+> # (sha256 9efe88d1b07c166be1e4e371e3c2339fc941194b22f8cf03fd5c8d8fe879d8be)
+> # Candidate 11 SHORT rules on an independent 67-symbol universe.
+8a12
+> # Copy of the Candidate 11 engine; separate state; no shared files.
+26,27c30,31
+<     "PAPER_STATE_FILE",
+<     "candidate11_paper_state.json"
+---
+>     "U67_STATE_FILE",
+>     "u67_short_paper_state.json"
+30c34,40
+< STATE_VERSION = 3
+---
+> STATE_VERSION = 1
+> 
+> # Registration section 0e: only entries at/after this instant
+> # (and at/after the state's created_at) are eligible evidence.
+> REGISTRATION_ELIGIBLE_FROM = pd.Timestamp(
+>     "2026-10-28T12:00:00Z"
+> )
+82a93,97
+> # Registration section 6, scenario S3 (decision scenario):
+> # 0.15% fee per side + assumed funding 0.010% per 8h (cost).
+> S3_FEE_PER_SIDE = 0.0015
+> S3_FUNDING_PER_8H = 0.00010
+> 
+105,137c120,186
+<     "XBTUSDTM",
+<     "ETHUSDTM",
+<     "SOLUSDTM",
+<     "BNBUSDTM",
+<     "XRPUSDTM",
+<     "DOGEUSDTM",
+<     "ADAUSDTM",
+<     "LINKUSDTM",
+<     "AVAXUSDTM",
+<     "DOTUSDTM",
+<     "SUIUSDTM",
+<     "TRXUSDTM",
+<     "NEARUSDTM",
+<     "AAVEUSDTM",
+<     "OPUSDTM",
+<     "ARBUSDTM",
+<     "APTUSDTM",
+<     "ATOMUSDTM",
+<     "FILUSDTM",
+<     "LTCUSDTM",
+<     "BCHUSDTM",
+<     "ETCUSDTM",
+<     "UNIUSDTM",
+<     "INJUSDTM",
+<     "SEIUSDTM",
+<     "VETUSDTM",
+<     "HBARUSDTM",
+<     "ALGOUSDTM",
+<     "XLMUSDTM",
+<     "ICPUSDTM",
+<     "WIFUSDTM",
+<     "PEPEUSDTM",
+<     "FLOKIUSDTM",
+---
+>     "ZECUSDTM",
+>     "IRYSUSDTM",
+>     "EVAAUSDTM",
+>     "HYPEUSDTM",
+>     "KCSUSDTM",
+>     "ASTERUSDTM",
+>     "TIAUSDTM",
+>     "USELESSUSDTM",
+>     "QUSDTM",
+>     "XMRUSDTM",
+>     "PENGUUSDTM",
+>     "SOONUSDTM",
+>     "LIGHTUSDTM",
+>     "AINUSDTM",
+>     "ENAUSDTM",
+>     "PUMPUSDTM",
+>     "TAOUSDTM",
+>     "LDOUSDTM",
+>     "NIGHTUSDTM",
+>     "GRAMUSDTM",
+>     "1000BONKUSDTM",
+>     "ICNTUSDTM",
+>     "CAKEUSDTM",
+>     "XANUSDTM",
+>     "WLDUSDTM",
+>     "METUSDTM",
+>     "ARCUSDTM",
+>     "SUSDTM",
+>     "APRUSDTM",
+>     "ZEREBROUSDTM",
+>     "ZORAUSDTM",
+>     "QNTUSDTM",
+>     "MUSDTM",
+>     "CRVUSDTM",
+>     "0GUSDTM",
+>     "ZBTUSDTM",
+>     "JCTUSDTM",
+>     "FETUSDTM",
+>     "ONDOUSDTM",
+>     "CLOUSDTM",
+>     "DOODUSDTM",
+>     "BTWUSDTM",
+>     "MYXUSDTM",
+>     "MOODENGUSDTM",
+>     "HEMIUSDTM",
+>     "BEATUSDTM",
+>     "AVNTUSDTM",
+>     "CAPUSDTM",
+>     "ZKPUSDTM",
+>     "ALLOUSDTM",
+>     "AKEUSDTM",
+>     "DASHUSDTM",
+>     "HUSDTM",
+>     "WETUSDTM",
+>     "4USDTM",
+>     "PIEVERSEUSDTM",
+>     "KGENUSDTM",
+>     "VIRTUALUSDTM",
+>     "POWERUSDTM",
+>     "CASHCATUSDTM",
+>     "AEONUSDTM",
+>     "CHIPUSDTM",
+>     "LONGXIAUSDTM",
+>     "GENIUSUSDTM",
+>     "TRUSTUSDTM",
+>     "FOLKSUSDTM",
+>     "EDENUSDTM",
+144c193
+<         "User-Agent": "candidate11-paper-v4/1.0"
+---
+>         "User-Agent": "u67-short-paper-v1/1.0"
+168c217
+<         "strategy": "candidate11_short_only_frozen_v3",
+---
+>         "strategy": "u67_short_only_frozen_v1",
+169a219,224
+>         "eligible_from": iso(
+>             max(
+>                 REGISTRATION_ELIGIBLE_FROM,
+>                 utc_now(),
+>             )
+>         ),
+260a316
+>         "eligible_from",
+890a947,960
+>     # Registration boundary: entry before eligibility is never evidence.
+>     if entry_ts < pd.Timestamp(
+>         state["eligible_from"]
+>     ):
+> 
+>         add_missed(
+>             state,
+>             symbol,
+>             signal_ts,
+>             "BEFORE_REGISTRATION_START",
+>         )
+> 
+>         return "MISSED"
+> 
+1171a1242,1263
+>         # S3 decision scenario (registration section 6).
+>         bars_held = int(pos["bars"])
+> 
+>         s3_cost_fraction = (
+>             S3_FEE_PER_SIDE
+>             * (1.0 + exit_price / entry)
+>             + S3_FUNDING_PER_8H
+>             * bars_held
+>             * 0.5
+>         )
+> 
+>         net_r_s3 = (
+>             gross_r
+>             - s3_cost_fraction
+>             / risk_pct
+>         )
+> 
+>         stop_gap = bool(
+>             reason == "SL"
+>             and float(row["open"]) >= sl
+>         )
+> 
+1187a1280,1283
+>                 "net_r_s3": net_r_s3,
+> 
+>                 "stop_gap": stop_gap,
+> 
+1491,1492c1587,1588
+<         "CANDIDATE 11 — "
+<         "FORWARD PAPER TRADING (v4)"
+---
+>         "U67-S — "
+>         "FORWARD PAPER TRADING (v1)"
+1535a1632
+>     # Registration section 7: no R values are reported before UC1.
+1537c1634
+<         f"CLOSED={len(closed)}/{TARGET_TRADES} "
+---
+>         f"CLOSED={len(closed)} "
+1544,1548c1641
+<         f"NET_EXP={net_exp:+.4f}R "
+<         f"| NET_PF={net_pf:.3f} "
+<         f"| NET_TOTAL={net_total:+.2f}R "
+<         f"| NET_DD={max_dd(net):+.2f}R "
+<         f"| WR={wr * 100:.2f}%"
+---
+>         f"ELIGIBLE_FROM={state['eligible_from']}"
+1594,1608d1686
+<     if len(closed) >= TARGET_TRADES:
+< 
+<         print(
+<             "PAPER_TARGET_REACHED = "
+<             f"YES ({len(closed)} closed trades)"
+<         )
+< 
+<     else:
+< 
+<         print(
+<             "PAPER_TARGET_REACHED = "
+<             f"NO ({TARGET_TRADES - len(closed)} "
+<             "more closed trades needed)"
+<         )
+< 
+1657,1658c1735,1736
+<         "CANDIDATE 11 — "
+<         "FORWARD PAPER TRADING ENGINE (v4)"
+---
+>         "U67-S — "
+>         "FORWARD PAPER TRADING ENGINE (v1)"
