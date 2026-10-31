@@ -2645,7 +2645,7 @@
     "entry_time": "2026-10-30T04:45:37.623216+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793450700
+    "last_monitor_candle_time": 1793451600
   },
   {
     "id": "GRAM-USDT_1793340082",
@@ -2682,7 +2682,7 @@
     "entry_time": "2026-10-30T06:15:38.502056+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793450700
+    "last_monitor_candle_time": 1793451600
   },
   {
     "id": "ETH-USDT_1793346336",
@@ -2701,7 +2701,7 @@
     "entry_time": "2026-10-30T08:00:53.451785+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793450700
+    "last_monitor_candle_time": 1793451600
   },
   {
     "id": "SOL-USDT_1793346340",
@@ -2815,7 +2815,7 @@
     "entry_time": "2026-10-30T12:15:33.947219+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793450700
+    "last_monitor_candle_time": 1793451600
   },
   {
     "id": "CRO-USDT_1793367086",
@@ -2834,7 +2834,7 @@
     "entry_time": "2026-10-30T21:15:35.999621+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793450700
+    "last_monitor_candle_time": 1793451600
   },
   {
     "id": "HBAR-USDT_1793367968",
