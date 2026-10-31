@@ -1,0 +1,39 @@
+PASS trigger respects open trade in cluster 15 (has_open=True)
+PASS UC1 trigger holds
+PASS evaluation instant = commit time of FIRST satisfying commit (not HEAD)
+PASS scan output contains counts only (no R fields)
+PASS evaluate runs
+PASS cluster mean S0 matches independent
+PASS cluster mean S3 matches independent
+PASS cluster mean S3a matches independent
+PASS cluster mean S3b matches independent
+PASS cluster mean S1 matches independent
+PASS cluster mean S2 matches independent
+PASS bootstrap CI matches independent (seed 20261028, 20000 draws)
+PASS P(mean>0) matches
+PASS jackknife largest cluster
+PASS jackknife best month
+PASS only first 15 clusters, later clusters excluded
+PASS created_at check OK
+PASS UC1 verdict rule consistent with S3 cluster-mean sign
+PASS adjacent-merge: 15 consecutive 4H clusters chain into 1 group
+PASS deterministic: byte-identical output on rerun
+PASS UC2 evaluate refused (trigger false), no R shown
+PASS open position blocks trigger before 45 days
+PASS 44d23h: not yet UNRESOLVED
+PASS exactly 45d: UNRESOLVED -> trigger holds at that commit
+PASS one UNRESOLVED trade counted
+PASS UNRESOLVED counted as -1R stop-out with S3 cost, bars 30
+PASS sensitivity excluding UNRESOLVED
+PASS UNRESOLVED applies to S0 too
+PASS created_at mismatch labelled DEFECT
+PASS entry before eligibility boundary is not evidence
+PASS UC2 all winners -> PAPER GATE PASSED
+PASS UC2 all losers -> REJECTED
+PASS UC2 mixed -> REJECTED or NOT ESTABLISHED (never PASSED with CI<=0): NOT ESTABLISHED (final for U67-S v1)
+PASS scan/trigger path computes NO R or cost (cost_fraction patched to raise; trigger true and false cases)
+PASS evaluate refused before trigger: exit 3, no R in output
+PASS no override flag exists (unknown option rejected)
+PASS first satisfying commit stable
+
+FAILS: []

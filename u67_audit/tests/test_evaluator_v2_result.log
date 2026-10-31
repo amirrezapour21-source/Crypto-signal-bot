@@ -1,0 +1,95 @@
+
+===== U67-S v2 =====
+PASS U67-S v2 constants: eligibility 2026-10-28T12:00:00Z, seed 20261028, 45-day censoring
+PASS evaluator never references the other track's state file or label
+PASS counter 0: repository with no state file -> 0 state commits, trigger False
+PASS scan below N: counts only, no R field in output
+PASS evaluate before trigger refuses (exit 3), no R printed
+PASS no override flag
+PASS last_ts exactly 45 days before the evaluation instant -> CENSORED
+PASS 44d23h59m -> NOT censored (open)
+PASS status is a function of the evaluation instant only (recomputation at another instant is the evaluator's, never stored)
+PASS with_r=False computes no R or cost
+PASS cohort = 15 non-censored clusters although 2 fully censored clusters sit inside the range; censored clusters counted (2)
+PASS first 15 non-censored clusters in signal_ts order (censored clusters skipped)
+PASS counts + mandatory limitation text printed
+PASS notes: funding UNVALIDATED, committer time not exchange time
+PASS cluster mean = equal-weight mean of resolved S3 net R (0.337000)
+PASS primary uses resolved trades only (censored carry no R)
+PASS -1R / -2R sensitivities on the same cohort, S3 cost formula unchanged (0.3070 / -0.1930)
+PASS v1 stop-out S3 value equals the v2 -1R stress input (cost formula unchanged)
+PASS censored trade count in cohort = 15, no fully censored cluster
+PASS b2 fires: primary S3 > 0, -1R sensitivity <= 0
+PASS at UC1 a guard is flagged but does not convert the continuation (interpretation I1)
+PASS at UC2 b2 gives NOT ESTABLISHED (b2), PAPER GATE PASSED prohibited
+PASS primary S3 cluster-mean <= 0 -> REJECTED at UC1
+PASS guards never replace the primary rejection (REJECTED even with a fully censored cluster)
+PASS baseline: strong positive 30-cluster sample passes (no guard)
+PASS fully censored cluster anywhere in the snapshot -> NOT ESTABLISHED - CENSORING LIMITATION, no PASS
+PASS fully censored cluster cannot reduce the sensitivity (limitation is real and disclosed)
+PASS open (non-censored) trade inside the cohort blocks the checkpoint
+PASS open trade in a LATER cluster does not block
+PASS censored trade inside the cohort does not block
+PASS cluster not complete before entry + 90 min
+PASS complete at entry + 90 min
+PASS UC1 cap (120 d) reached with N never reached -> observed rate, no verdict
+PASS UC1 cap not reached at 119 d
+PASS UC2 cap not reached at 239 d
+PASS UC2 cap reached: no evaluation, no verdict
+PASS deterministic: two runs identical
+PASS v2 registration holds the exact eligibility constant, WAIVER and DISCLOSURE text
+PASS v2 registration: counter 0, supersession of the recorded v1 sha
+PASS engine constant REGISTRATION_ELIGIBLE_FROM == v2 ELIGIBLE_FROM (2026-10-28T12:00:00Z)
+PASS engine hash in v2 registration equals the engine file hash in the repository root
+PASS v1 registration file unchanged (sha256 9efe88d1...)
+PASS evaluator header carries the v2 registration sha256
+PASS v2 registration: v1 rule withdrawn, -2R informational
+
+===== U67-L v2 =====
+PASS U67-L v2 constants: eligibility 2026-10-30T12:00:00Z, seed 20261029, 45-day censoring
+PASS evaluator never references the other track's state file or label
+PASS counter 0: repository with no state file -> 0 state commits, trigger False
+PASS scan below N: counts only, no R field in output
+PASS evaluate before trigger refuses (exit 3), no R printed
+PASS no override flag
+PASS last_ts exactly 45 days before the evaluation instant -> CENSORED
+PASS 44d23h59m -> NOT censored (open)
+PASS status is a function of the evaluation instant only (recomputation at another instant is the evaluator's, never stored)
+PASS with_r=False computes no R or cost
+PASS cohort = 15 non-censored clusters although 2 fully censored clusters sit inside the range; censored clusters counted (2)
+PASS first 15 non-censored clusters in signal_ts order (censored clusters skipped)
+PASS counts + mandatory limitation text printed
+PASS notes: funding UNVALIDATED, committer time not exchange time
+PASS cluster mean = equal-weight mean of resolved S3 net R (0.337000)
+PASS primary uses resolved trades only (censored carry no R)
+PASS -1R / -2R sensitivities on the same cohort, S3 cost formula unchanged (0.3070 / -0.1930)
+PASS v1 stop-out S3 value equals the v2 -1R stress input (cost formula unchanged)
+PASS censored trade count in cohort = 15, no fully censored cluster
+PASS b2 fires: primary S3 > 0, -1R sensitivity <= 0
+PASS at UL1 a guard is flagged but does not convert the continuation (interpretation I1)
+PASS at UL2 b2 gives NOT ESTABLISHED (b2), PAPER GATE PASSED prohibited
+PASS primary S3 cluster-mean <= 0 -> REJECTED at UL1
+PASS guards never replace the primary rejection (REJECTED even with a fully censored cluster)
+PASS baseline: strong positive 30-cluster sample passes (no guard)
+PASS fully censored cluster anywhere in the snapshot -> NOT ESTABLISHED - CENSORING LIMITATION, no PASS
+PASS fully censored cluster cannot reduce the sensitivity (limitation is real and disclosed)
+PASS open (non-censored) trade inside the cohort blocks the checkpoint
+PASS open trade in a LATER cluster does not block
+PASS censored trade inside the cohort does not block
+PASS cluster not complete before entry + 90 min
+PASS complete at entry + 90 min
+PASS UL1 cap (120 d) reached with N never reached -> observed rate, no verdict
+PASS UL1 cap not reached at 119 d
+PASS UL2 cap not reached at 239 d
+PASS UL2 cap reached: no evaluation, no verdict
+PASS deterministic: two runs identical
+PASS v2 registration holds the exact eligibility constant, WAIVER and DISCLOSURE text
+PASS v2 registration: counter 0, supersession of the recorded v1 sha
+PASS engine constant REGISTRATION_ELIGIBLE_FROM == v2 ELIGIBLE_FROM (2026-10-30T12:00:00Z)
+PASS engine hash in v2 registration equals the engine file hash in the repository root
+PASS v1 registration file unchanged (sha256 3f0298f2...)
+PASS evaluator header carries the v2 registration sha256
+PASS v2 registration: v1 rule withdrawn, -2R informational
+PASS S and L v2 evaluators are separate files, no cross reference
+
+FAILS: []

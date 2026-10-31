@@ -1,0 +1,92 @@
+PASS const ZSCORE_N
+PASS const EMA_N
+PASS const RANGE_N
+PASS const VOL_N
+PASS const ATR_N
+PASS const SL_ATR
+PASS const TP_R
+PASS const HOLD
+PASS const MAX_BARS
+PASS const MAX_ENTRY_DELAY_MIN
+PASS const MIN_CANDLES
+PASS const BAR
+PASS const GRANULARITY
+PASS const CHUNK
+PASS const N_CHUNKS
+PASS const OVERLAP
+PASS const FEE_RT
+PASS const RETRIES
+PASS const MAX_FAIL_FRAC
+PASS const MAX_SIGNALS
+PASS const MAX_MISSED
+PASS const MAX_ERRORS
+PASS const MAX_CLOSED
+PASS const PAUSE
+PASS const REQUEST_TIMEOUT
+PASS const BAR_SECONDS
+PASS 67 symbols == final.json order
+PASS list sha256 equals registered
+PASS disjoint from C11/LONG-M1 33 symbols
+PASS no excluded/non-crypto symbol in list
+PASS state file / version
+PASS eligibility constant = registered literal
+PASS registration sha256 as recorded
+PASS registration literals: ELIGIBLE_FROM strictly after freeze and equal to engine constant
+PASS engine source references neither C11 nor LONG-M1 state files
+PASS prepare identical to C11
+PASS signal_reason identical to C11 on 12 series (89 SHORT signals)
+PASS incremental sim parity U67 vs C11: 30 trades, TP=11 SL=18 TIMEOUT=1; S0/S3 independent recomputation; SHORT geometry
+PASS parity test power
+PASS new fields present on closed records
+PASS both hit same candle -> SL first
+PASS open above stop -> SL + stop_gap flag
+PASS TP at 2R
+PASS 30-bar timeout, entry candle = bar 1
+PASS 29 bars -> still open
+PASS S3 formula on timeout (short)
+PASS monitor idempotent for same candle
+PASS state has fields used by registered UNRESOLVED rule
+PASS completed_only at 2026-11-02T11:59:59Z -> 4 (forming candle excluded), equals C11
+PASS completed_only at 2026-11-02T12:00:00Z -> 5 (forming candle excluded), equals C11
+PASS completed_only at 2026-11-02T12:00:01Z -> 5 (forming candle excluded), equals C11
+PASS completed_only at 2026-11-02T08:00:00Z -> 4 (forming candle excluded), equals C11
+PASS gap in last 250 -> data-quality failure (same as C11)
+PASS entry before eligible_from -> BEFORE_REGISTRATION_START, not opened
+PASS entry_ts == eligible_from is eligible
+PASS new_state eligible_from >= max(constant, created_at)
+PASS first run does not replay history
+PASS idempotent re-run on same data
+PASS entry delay 0 min -> open
+PASS entry delay 89 min -> open
+PASS entry delay 90 min -> open
+PASS entry delay 90.5 min -> miss
+PASS entry delay 91 min -> miss
+PASS entry delay 600 min -> miss
+PASS duplicate signal not recorded twice (cursor reset)
+PASS same signal -> DUPLICATE
+PASS second signal while open -> SYMBOL_ALREADY_OPEN, no second position
+PASS retry: 500,500,500 then 200 (calls=4)
+PASS retry: 429 then 200 (calls=2)
+PASS retry: timeout exception then 200 (calls=2)
+PASS retry: HTTP200 bad payload then 200 (calls=2)
+PASS retry: 4 failures -> FETCH_FAILED (calls=4)
+PASS retry: 404 repeated -> FETCH_FAILED (calls=4)
+PASS backoff sleeps recorded
+PASS main(): clean run, only u67_short_paper_state.json created (state isolation)
+PASS state structure 67/67 OK, strategy name
+PASS report prints no R figures
+PASS health line 67/67
+PASS repo checkout untouched by test
+PASS 13/67 symbols failing -> exit 0 (OK)
+PASS 14/67 symbols failing -> exit 2 (DEGRADED)
+PASS degraded run saves state and reports DEGRADED
+PASS 3x load: 201 symbols processed in one run (fetch_raw calls=201, compute 1.5s)
+PASS 3x load request budget: 804 kline requests/run, pause sleeps ~121s + network latency; 67-symbol run ~268 requests / ~40s pause
+PASS 3x load: no errors
+PASS second run on same data leaves state byte-identical (no commit churn)
+PASS workflow name/group distinct
+PASS workflow references only U67 files
+PASS checkout full history
+PASS guard: fresh repo passes (0), committed-then-missing fails (1), present passes (0)
+
+FAILS: []

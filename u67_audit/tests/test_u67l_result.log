@@ -1,0 +1,106 @@
+PASS const equals LONG-M1: ZSCORE_N
+PASS const equals LONG-M1: EMA_N
+PASS const equals LONG-M1: RANGE_N
+PASS const equals LONG-M1: VOL_N
+PASS const equals LONG-M1: ATR_N
+PASS const equals LONG-M1: SL_ATR
+PASS const equals LONG-M1: TP_R
+PASS const equals LONG-M1: HOLD
+PASS const equals LONG-M1: MAX_BARS
+PASS const equals LONG-M1: MAX_ENTRY_DELAY_MIN
+PASS const equals LONG-M1: MIN_CANDLES
+PASS const equals LONG-M1: BAR
+PASS const equals LONG-M1: GRANULARITY
+PASS const equals LONG-M1: CHUNK
+PASS const equals LONG-M1: N_CHUNKS
+PASS const equals LONG-M1: OVERLAP
+PASS const equals LONG-M1: FEE_RT
+PASS const equals LONG-M1: RETRIES
+PASS const equals LONG-M1: MAX_FAIL_FRAC
+PASS const equals LONG-M1: MAX_SIGNALS
+PASS const equals LONG-M1: MAX_MISSED
+PASS const equals LONG-M1: MAX_ERRORS
+PASS const equals LONG-M1: MAX_CLOSED
+PASS const equals LONG-M1: PAUSE
+PASS const equals LONG-M1: REQUEST_TIMEOUT
+PASS const equals LONG-M1: BAR_SECONDS
+PASS const equals LONG-M1: S3_FEE_PER_SIDE
+PASS const equals LONG-M1: S3_FUNDING_PER_8H
+PASS 67 symbols == final.json order
+PASS list sha256 equals registered
+PASS disjoint from C11/LONG-M1 33 symbols
+PASS same 67 symbols, same order as U67-S engine
+PASS no excluded/non-crypto symbol in list
+PASS own state file, distinct from U67-S/LONG-M1
+PASS registration literals: ELIGIBLE_FROM strictly after freeze and equal to engine constant
+PASS engine header carries the sha256 of this exact registration text
+PASS engine source references no other track's state file
+PASS diff vs LONG-M1 engine limited to registered differences (symbols, names, eligibility literal, headers)
+PASS symbol list replaced (>=60 added symbol lines)
+PASS prepare identical to C11 and LONG-M1
+PASS signal_reason identical to LONG-M1 on 12 series (115 LONG signals)
+PASS LONG signals on X == C11 SHORT signals on mirror(X) (12 series)
+PASS boundary: prev z==-2.0, cur>-2, range==median, vol==median -> SIGNAL
+PASS boundary: prev z -1.99 -> NO_Z_CROSS
+PASS boundary: cur z == -2.0 -> NO_Z_CROSS
+PASS boundary: close == ema200 -> BELOW_EMA200
+PASS boundary: range below median -> LOW_RANGE
+PASS boundary: volume below median -> LOW_VOLUME
+PASS incremental sim parity U67-L vs LONG-M1 (byte-level fields) and vs C11(mirror X): 45 trades, TP=23 SL=21 TIMEOUT=1; S0/S3 independent recomputation; LONG geometry
+PASS parity test power
+PASS new fields present on closed records
+PASS both hit same candle -> SL first
+PASS open below stop -> SL + stop_gap flag
+PASS TP at 2R
+PASS 30-bar timeout, entry candle = bar 1
+PASS 29 bars -> still open
+PASS S3 formula on timeout (long)
+PASS monitor idempotent for same candle
+PASS state has fields used by the UNRESOLVED rule; side LONG
+PASS completed_only at 2026-11-02T11:59:59Z -> 4, equals C11
+PASS completed_only at 2026-11-02T12:00:00Z -> 5, equals C11
+PASS completed_only at 2026-11-02T12:00:01Z -> 5, equals C11
+PASS completed_only at 2026-11-02T08:00:00Z -> 4, equals C11
+PASS gap in last 250 -> data-quality failure (same as C11)
+PASS entry before eligible_from -> BEFORE_REGISTRATION_START, not opened
+PASS entry_ts == eligible_from is eligible
+PASS new_state eligible_from >= max(constant, created_at)
+PASS first run does not replay history
+PASS idempotent re-run on same data
+PASS entry delay 0 min -> open
+PASS entry delay 89 min -> open
+PASS entry delay 90 min -> open
+PASS entry delay 90.5 min -> miss
+PASS entry delay 91 min -> miss
+PASS entry delay 600 min -> miss
+PASS duplicate signal not recorded twice (cursor reset)
+PASS same signal -> DUPLICATE
+PASS second signal while open -> SYMBOL_ALREADY_OPEN, no second position
+PASS retry: 500,500,500 then 200 (calls=4)
+PASS retry: 429 then 200 (calls=2)
+PASS retry: timeout exception then 200 (calls=2)
+PASS retry: HTTP200 bad payload then 200 (calls=2)
+PASS retry: 4 failures -> FETCH_FAILED (calls=4)
+PASS retry: 404 repeated -> FETCH_FAILED (calls=4)
+PASS main(): clean run, only u67_long_paper_state.json created (state isolation)
+PASS state structure 67/67 OK, strategy name
+PASS report prints no R figures
+PASS health line 67/67
+PASS repo checkout untouched by test
+PASS 13/67 symbols failing -> exit 0 (OK)
+PASS 14/67 symbols failing -> exit 2 (DEGRADED)
+PASS degraded run saves state and reports DEGRADED
+PASS 3x load: 201 symbols processed in one run (fetch_raw calls=201, compute 1.4s)
+PASS 3x load: no errors
+PASS second run on same data leaves state byte-identical (no commit churn)
+PASS workflow name/group distinct
+PASS cancel-in-progress false
+PASS workflow references only U67-L files
+PASS checkout full history
+PASS guard: fresh repo passes (0), committed-then-missing fails (1), present passes (0)
+PASS workflow identical to the U67-S workflow after the registered name substitutions
+PASS jittered 6-attempt rebase/push loop present
+PASS workflow_dispatch only, no schedule trigger (Stage 4)
+PASS workflow_dispatch trigger present
+
+FAILS: []
