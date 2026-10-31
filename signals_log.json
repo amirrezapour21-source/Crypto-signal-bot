@@ -2658,11 +2658,11 @@
     "tp2": 1.1115690868730796,
     "rr": 2.0,
     "signal_time": "2026-10-30T06:01:21.840132+00:00",
-    "status": "OPEN",
+    "status": "CLOSED_SL",
     "entered": true,
     "entry_time": "2026-10-30T06:15:38.502056+00:00",
-    "closed_time": null,
-    "result": null
+    "closed_time": "2026-10-31T05:45:33.533207+00:00",
+    "result": "SL"
   },
   {
     "id": "TAO-USDT_1793340088",
