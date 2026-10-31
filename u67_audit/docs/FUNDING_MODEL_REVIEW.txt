@@ -1,0 +1,26 @@
+U67 FUNDING-MODEL REVIEW (Stage 4, item 4) - 2026-10-30
+Scope: both engines (S and L) and the S3 decision scenario. Frozen rules and thresholds NOT changed.
+
+FINDINGS (verified in both engine sources, S3 cost block):
+F1. Funding term = S3_FUNDING_PER_8H (0.00010) x bars_held x 0.5, bars_held = number of 4H bars. It is an AVERAGE flat rate, not real cash flows.
+F2. NOT charged at actual funding timestamps (00/08/16 UTC). Real funding events inside a holding = floor(n/2)..ceil(n/2) of n bars, depending on entry candle.
+F3. NO sign handling. Funding is charged as a COST in every case, for both S and L. Reality: positive funding is PAID by longs and RECEIVED by shorts; negative funding is the opposite.
+    - U67-S: flat charge is conservative when funding is positive (normal), understated when funding is negative (squeeze) or when the rate is higher than 0.01%/8h.
+    - U67-L: flat charge matches the direction of normal positive funding but UNDERSTATES it whenever real funding > 0.01%/8h (hype / new listings can be several times higher). Funding negative = longs receive (flat charge conservative).
+F4. Real funding rates are not measured (S4 needs designer authorization; unchanged).
+
+SENSITIVITY (analytic, per trade, in R; delta R = events x r / risk%, risk% = initial risk as % of entry; no trade R used):
+
+bars   risk%  ev    | flat_dR   | S: r=+.01%/+.03%/+.10%/-.03%   | L: r=+.01%/+.03%/+.10%/-.03%  
+6      1.5    3.0   | -0.02     | +0.02/+0.06/+0.20/-0.06        | -0.02/-0.06/-0.20/+0.06       
+6      3.0    3.0   | -0.01     | +0.01/+0.03/+0.10/-0.03        | -0.01/-0.03/-0.10/+0.03       
+6      5.0    3.0   | -0.01     | +0.01/+0.02/+0.06/-0.02        | -0.01/-0.02/-0.06/+0.02       
+15     1.5    7.5   | -0.05     | +0.05/+0.15/+0.50/-0.15        | -0.05/-0.15/-0.50/+0.15       
+15     3.0    7.5   | -0.03     | +0.03/+0.07/+0.25/-0.07        | -0.03/-0.07/-0.25/+0.07       
+15     5.0    7.5   | -0.01     | +0.01/+0.04/+0.15/-0.04        | -0.01/-0.04/-0.15/+0.04       
+30     1.5    15.0  | -0.10     | +0.10/+0.30/+1.00/-0.30        | -0.10/-0.30/-1.00/+0.30       
+30     3.0    15.0  | -0.05     | +0.05/+0.15/+0.50/-0.15        | -0.05/-0.15/-0.50/+0.15       
+30     5.0    15.0  | -0.03     | +0.03/+0.09/+0.30/-0.09        | -0.03/-0.09/-0.30/+0.09       
+
+READING: columns S / L show the REAL signed funding effect for r = +0.01% / +0.03% / +0.10% / -0.03% per 8h event. The flat model effect is in column flat_dR (always negative). Example: a 30-bar L trade with 1.5% risk at r=+0.10% loses 1.00R to real funding versus 0.10R in the model; the same S trade would GAIN 1.00R.
+STATUS: UNRESOLVED LIMITATION, remains visible. U67-L (longs) is the exposed side: its S3 net R can be overstated when real funding is high. U67-S S3 is conservative in ordinary conditions. No change to frozen rules; a measured-funding scenario (S4) needs the designer's explicit authorization.

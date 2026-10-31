@@ -1,0 +1,32 @@
+STAGE 10 STATUS - AUTHENTICATION OF THE 23 DECISIONS AND V2 SPECIFICATION (2026-10-30). New separately hashed document. Designer's Stage 10 message preserved verbatim (file sha256 0ea850d65cc8e27e2a08d97176ccf305697b255fd26185d3b5bd383ecbea139f). Stage 9 record (sha 5f07d18c...) and Appendix A (sha 82800cad...) preserved unchanged. No registration/engine/evaluator edit, no workflow placement, no cron-job.org change, no dispatch, no U67 tracking, no API fetch; C11 / LONG-M1 / V3 / MicroMAP untouched.
+
+1. AUTHENTICATION OF THE ORIGINAL 23 DECISIONS
+STATUS: NOT AUTHENTICATED. The registrar cannot establish from the file alone whether Appendix A is the designer's final decision or a recommendation (its title says "Recommended"); it reached the registrar through the user as the designer's message. Stage 9 recorded it as received decisions with that caveat; as instructed, they are now treated as UNCONFIRMED. No confirmation inferred from silence or interpretation.
+REQUIRED REPLY (one word, designer's own): CONFIRMED / AMENDED (+ item-by-item corrections) / NOT CONFIRMED.
+Current count: 0 authenticated of 23; 23 relayed, unconfirmed (21 ACCEPTED, 2 REJECTED as written).
+
+2. V2 SPECIFICATION - DECISIONS REQUIRED (all OPEN; the registrar's text below is a PROPOSAL, nothing applied)
+(a) Censored trades. Proposed complete treatment:
+ - Status fixed at the evaluation instant: open position whose symbol last_ts is >= 45 days before the evaluation instant = CENSORED; never recomputed afterwards.
+ - A censored trade keeps its cluster membership and contributes no R to the primary statistic.
+ - Cluster mean = equal-weight mean over the cluster's RESOLVED trades. A cluster with zero resolved trades = CENSORED CLUSTER.
+ - Denominators: the primary N (15 / 30), the minimum-cluster threshold, the bootstrap resampling (20000 draws of cluster means) and the jackknife use NON-CENSORED clusters only; "first N clusters" = the first N non-censored clusters ordered by signal_ts. Censored clusters and censored trades are counted and printed separately; none is silently dropped. Adjacent-merge sensitivity: merged outcome uses resolved trades only.
+ - Checkpoint condition: first committed state in which the first N non-censored clusters exist, are complete, and have no open trades except censored trades. Rate caps (120 / 240 days) unchanged.
+ Designer: ACCEPTED / REJECTED / OPEN + rationale, or amend any bullet.
+(b) Bias guard. Registrar flag: -1R is a fixed stress assumption, NOT a worst-case or conservative bound; a delisted or halted LONG can lose more than 1R. Proposal: (1) censored counts and the -1R sensitivity always printed beside the primary result; (2) primary S3 cluster-mean > 0 with -1R sensitivity <= 0 forces "NOT ESTABLISHED", never PAPER GATE PASSED; (3) a second fixed stress (-2R) printed as informational only, labelled "limited fixed stress test, not a bound"; if the designer prefers no second scenario, -1R is explicitly accepted only as a limited fixed stress test. Designer: decide each of (1), (2), (3).
+(c) Eligibility constants. Option (i): keep engine constants (S 2026-10-28T12:00Z, L 2026-10-30T12:00Z), explicit waiver of "strictly later than freeze" in both v2 registrations, disclosure that no U67 observation or state file exists between the constants and the v2 freeze (verified: no U67 state file in the repository; tracks undeployed). Option (ii): change constants -> new engine hashes -> amend dependent files. Registrar recommends (i). Designer: choose (i) or (ii).
+(d) Versioning. Proposed: v2 registrations with new counters; v2 evaluators (censoring rule + output conditions accepted in the 23 decisions); new tests, logs, manifest with verified hashes; all v1 registrations/evaluators/manifests/reports preserved as history; both tracks start at counter 0 under v2 with no inherited observations or state. Designer: CONFIRM counter-0 rule and plan, or amend.
+
+3. C2 SEQUENCING
+C2 stays REJECTED; G1 open (conditionally closed status withdrawn by the rejection): G1 = OPEN until all 37 original paths and hashes are verified in a new commit. Choose: YES (defer the separate-path upload until v2 is finalized, one upload round; registrar recommendation) or NO (upload the original 37 now, v2 additions later). Status: OPEN, no decision.
+
+4. REMAINING OPEN ITEMS AND BLOCKERS
+O1 authentication of the 23 decisions; O2 (a); O3 (b)(1)(2)(3); O4 (c); O5 (d); O6 C2 sequencing. Every item needs the designer's explicit reply; no further technical work is possible or proposed before them.
+
+5. STATUS AND VERDICTS
+G1: OPEN. G2: OPEN (decisions unauthenticated; v2 specification undecided). Funding: UNVALIDATED.
+U67-S: NOT READY. U67-L: NOT READY. No deployment or live execution authorized.
+
+6. REPLY TEMPLATE FOR THE DESIGNER (one line each)
+AUTH: CONFIRMED | AMENDED | NOT CONFIRMED
+(a) ... (b1) ... (b2) ... (b3) ... (c) (i)|(ii) ... (d) ... C2-SEQ: YES | NO

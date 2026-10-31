@@ -1,0 +1,28 @@
+STAGE 8 STATUS - U67-S / U67-L (2026-10-30). New separately hashed document. All earlier documents preserved unchanged (Stage 4 package commit 7a86d8ca91ee87fc8e9ceb9e037174504fc2a0c6; Stage 5 sha 01314ba8...; Stage 6 sha 4d9ee909...; Stage 7 sha ba3cb26b...). No technical work was added in this stage. No workflow placement, no cron-job.org change, no dispatch, no U67 tracking, no API fetch, no measured funding; registrations, engines, evaluators, thresholds and universe files untouched; C11 / LONG-M1 / V3 / MicroMAP untouched.
+
+1. DESIGNER RESPONSES RECEIVED: 0 of 23.
+Designer messages received through Stage 8 (Stages 4, 5, 6, 7, 8) contain instructions and corrections, but no per-item ACCEPTED / REJECTED / OPEN decision. Nothing inferred, defaulted or recorded on the designer's behalf; no registrar recommendation counted as a decision. Origin evidence for any future response: verbatim text, date relayed by the user, stored unaltered in the next status document.
+Outstanding: ALL 23 - evaluator items (1)-(11), risks R1-R10, C1, C2.
+
+2. THE ONE REPLY NEEDED (copy lines; item definitions are in Stage 5 Part 1)
+(1) ... (2) ... (3) ... (4) ... (5) ... (6) ... (7) ... (8) ... (9) ... (10) ... (11) ... R1 ... R2 ... R3 ... R4 ... R5 ... R6 ... R7 ... R8 ... R9 ... R10 ... C1 ... C2 ...
+Each line: ACCEPTED / REJECTED / OPEN + rationale. A rejection touching a frozen item requires the registration amendment (section 9) and re-hashing.
+
+3. G1 / C2
+G1 = CONDITIONALLY CLOSED, pending C2. Decision requested: C2 ACCEPTED (bundle commit 7a86d8c is G1 evidence -> G1 closed) or C2 REJECTED (registrar commits the 37 files as separate paths in a NEW commit, verifies every path and hash, then G1 closes). Original gate definition unchanged. Status now: no decision.
+
+4. C1
+Convention A (registered names paper_u67_short_v1.yml / paper_u67_long_v1.yml kept, v3 content deployed, file hashes recorded) or Convention B (rename to v3 + registration amendment, new hashes). Status now: no decision; no file renamed, no registration edited.
+
+5. FUNDING CONCLUSION (recorded as instructed)
+- Time-normalised approximation across 8h/4h/1h intervals: the designer states KuCoin's published "8/N" formula supports it. The registrar could NOT retrieve the cited formula page (fetch failed, nothing read) and has not verified this statement independently; it is recorded as designer-stated.
+- Realized rates remain contract- and time-dependent and subject to contract-specific caps/floors.
+- Settlement eligibility at exact entry/exit boundaries is UNRESOLVED (official pages read: only holders at settlement time pay/receive; behaviour exactly at the timestamp not specified, assessment may take up to a minute).
+- The Stage 7 enumeration is a convention-based sensitivity analysis, not evidence of funding charged. Baseline interval for all 67 contracts: UNKNOWN (134 UNKNOWN cells); POWERUSDTM had a documented 1h->4h change on 2026-03-06, current interval UNKNOWN.
+- S3 / S3a / S3b funding-adjusted performance: UNVALIDATED. No performance claim derived.
+
+6. BLOCKERS (plainly)
+B1 G2: 23 of 23 designer decisions missing. B2 G1: C2 decision missing. B3 C1 decision missing. B4 funding limitation R7 needs the designer's own acceptance. Everything else asked of the registrar is complete; no further technical work is proposed.
+
+7. VERDICTS
+U67-S: NOT READY (blockers B1-B4). U67-L: NOT READY (blockers B1-B4). Deployment requires a separate explicit authorization even after all audit gates close.

@@ -1,0 +1,53 @@
+U67-S / U67-L — Recommended G2 Decisions
+
+Evaluator decisions
+
+(1) ACCEPTED — Deterministic paired bootstrap seeds and a single shared draw matrix are reproducible and preserve paired scenario comparisons. Keep the specified seeds unchanged.
+
+(2) ACCEPTED — Git committer timestamp ("%cI") is an auditable, reproducible registration timestamp. It must not be represented as exchange event time.
+
+(3) ACCEPTED — Define cluster completion at "entry_ts + 90 minutes"; apply consistently to both U67 tracks.
+
+(4) ACCEPTED — Use the specified concurrency interval "[entry_ts, exit_ts + 4h)" and the unresolved-position interval "[entry_ts, entry_ts + 30×4h)". Keep the two definitions distinct.
+
+(5) ACCEPTED — Chained adjacent 4-hour merging is a useful sensitivity test. Report it separately from the primary clustering result.
+
+(6) ACCEPTED — Calculate profit factor and drawdown using S3 net R, while explicitly stating that funding-adjusted S3 performance remains UNVALIDATED.
+
+(7) ACCEPTED — Print BTC change only when the registrar supplies both required prices. Do not infer or fetch missing values.
+
+(8) ACCEPTED — Use the highest S3 cluster-mean net R for U67-S/U67-L jackknife selection. Do not compare these jackknife results directly with LONG-M1, whose frozen definition differs.
+
+(9) ACCEPTED — Apply the specified 120-day UC1/UL1 and 240-day UC2/UL2 observation caps after their eligibility boundaries. Treat observed rates as descriptive only, not as a verdict.
+
+(10) ACCEPTED — Keep trigger detection count-only ("with_r=False") before the 15/30-cluster thresholds. Do not expose or calculate R prematurely.
+
+(11) REJECTED — A position with no symbol candle for 45 days cannot be assumed to have hit its stop. Treat it as unresolved/censored in the primary analysis and report the proposed -1R stop-out rule only as a separately labelled sensitivity. This rejection requires the applicable registration amendment and re-hashing before implementation.
+
+Risk register
+
+R1 ACCEPTED — Public exposure of paper-state and R values is an acknowledged limitation. Do not place credentials, private keys, or other secrets in the repository.
+
+R2 ACCEPTED — The fixed turnover-based universe creates selection and survivorship-related bias. Results must be limited to this predefined universe and must not be generalized to the wider market.
+
+R3 ACCEPTED — Shared market-regime exposure means U67-S and U67-L are not independent evidence, even though their engines and records remain isolated.
+
+R4 ACCEPTED — The legacy V3 workflow and its schedule/push behaviour are a known operational risk. Keep V3 untouched and do not reuse or activate that workflow for U67.
+
+R5 ACCEPTED — Real cron dispatch has not been tested. Scheduling reliability must remain unclaimed; no cron setup or dispatch is authorized by this decision.
+
+R6 ACCEPTED — The 53-symbol classification based on absence of non-crypto evidence, alongside 14 ambiguous classifications, is a universe-quality limitation. Preserve the classifications and disclose the uncertainty; do not silently reclassify.
+
+R7 ACCEPTED — The flat funding proxy is not a measurement of realized funding. Keep it frozen as a proxy only; actual funding-adjusted S3/S3a/S3b performance remains UNVALIDATED.
+
+R8 ACCEPTED — The evaluators have not been validated against real U67 observations. Passing synthetic tests does not establish real-data correctness or strategy validity.
+
+R9 ACCEPTED — Main-branch commit collisions have not been tested under actual concurrent U67 operation. Do not claim production-grade concurrency safety.
+
+R10 ACCEPTED — The legacy C11/LONG-M1 push loops have known retry limitations under concurrency. Keep those tracks untouched; do not infer that isolated V3 push-loop tests validate them.
+
+Registration and package decisions
+
+C1 ACCEPTED — Adopt Convention A: retain the registered filenames "paper_u67_short_v1.yml" and "paper_u67_long_v1.yml", with v3 content identified by recorded file hashes. Do not rename files or amend registrations.
+
+C2 REJECTED — The single text-bundle commit does not satisfy the original requirement that all 37 expected files exist at their exact separate repository paths. The registrar must commit the 37 files as separate paths in a new commit, verify every path and hash, and only then close G1.

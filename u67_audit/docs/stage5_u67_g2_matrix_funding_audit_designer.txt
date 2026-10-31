@@ -1,0 +1,62 @@
+STAGE 5 - U67-S / U67-L: G2 DECISION MATRIX, FUNDING ARITHMETIC AUDIT, C1 NAMING (2026-10-30)
+New, separately hashed document. Stage 4 package (commit 7a86d8ca91ee87fc8e9ceb9e037174504fc2a0c6) and its hashes are unchanged; no historical report rewritten. Audit only: nothing deployed, no workflow in .github/workflows, cron-job.org untouched, C11 / LONG-M1 / V3 / MicroMAP untouched.
+STATUS OF DESIGNER RESPONSES: NONE RECEIVED. Every item below is OPEN. "Recommended" is the registrar's advice, NOT a decision. The registrar will commit the completed record only after the designer's actual written responses.
+
+PART 1 - G2 MATRIX. Format per item: TEXT | MEANING | VALIDITY IMPACT | RECOMMENDED | RESPONSE REQUIRED (ACCEPTED / REJECTED / OPEN + rationale)
+
+(1) Bootstrap seeds: fresh numpy default_rng per scenario (S 20261028, L 20261029), one (20000,n) draw matrix, same indices across scenarios. | Deterministic, paired CIs across scenarios. | None on direction; CI reproducible. | ACCEPT | required
+(2) Commit time = git committer date (%cI). | Evaluation instant and the "cluster complete" test use the runner/committer clock, not exchange time. | Small (seconds-minutes); can shift which state is "first satisfying trigger" only at the boundary. | ACCEPT | required
+(3) Cluster complete when commit time >= entry_ts + 90 min. | Same value as MAX_ENTRY_DELAY_MIN; a cluster is counted only after its late-entry window closed. | Prevents counting a cluster that could still gain members; no bias. | ACCEPT | required
+(4) Max concurrent open trades: [entry_ts, exit_ts+4h); UNRESOLVED [entry_ts, entry_ts+30x4h). | Reporting only. | None on verdict. | ACCEPT | required
+(5) Adjacent-merge sensitivity: clusters 4h apart chained, merged = equal-weight mean. | Sensitivity for serial correlation of consecutive candles. | Sensitivity only, not a decision statistic. | ACCEPT | required
+(6) Profit factor and drawdown use S3 net R. | Consistent with the sole decision scenario. | Inherits funding limitation (Part 2). | ACCEPT | required
+(7) BTC change printed only if registrar supplies two prices. | Context line, no statistic. | None. | ACCEPT | required
+(8) Jackknife "largest cluster" = highest S3 CLUSTER-MEAN net R (registered in S and L). LONG-M1 keeps its frozen wording "highest S3 net R sum". | Two tracks use different readings; NOT harmonised. For clusters of unequal size the two can pick different clusters. | Affects only the robustness check (jackknife), not the primary statistic or the UC/UL rejection rule; cross-track comparison of jackknife results is not like-for-like. | ACCEPT as registered; record that LONG-M1 is unchanged and jackknife results must not be compared across tracks | required
+(9) Rate caps: 120 days (UC1/UL1) and 240 days (UC2/UL2) after the eligibility boundary (S 2026-10-28T12:00Z, L 2026-10-30T12:00Z); observed rate reported, no verdict. LONG-M1 caps differ and are unchanged. | A slow signal rate ends in "no verdict", never in a pass. | Protects against indefinite waiting; cannot create a false pass. | ACCEPT | required
+(10) Trigger detection is count-only (with_r=False). | No R computed before 15/30 clusters exist. | Protects against peeking; tested (refusal before trigger, no override). | ACCEPT | required
+(11) UNRESOLVED rule: open position whose symbol has no candle for >=45 days at the evaluation instant counts as a stop-out in all scenarios (gross -1R, exit = stored stop, 30 bars), with a sensitivity excluding it. | Delisted/frozen symbols cannot hide losses. | Conservative (pessimistic) for longs and shorts alike; on a delisting a short could really profit, a long lose more than 1R. | ACCEPT | required
+R1 Public repo exposes state/R values (tracks not blinded). | Anyone can read signals and outcomes, incl. before checkpoints. | Cannot invalidate the paper statistics; weakens any claim of unobserved operation. | ACCEPT (known, not mitigated) | required
+R2 Fixed turnover universe chosen at one date. | Selection / survivorship bias; symbols that rose in turnover recently. | Results describe this universe only. | ACCEPT | required
+R3 Shared regime dependence among S, L, C11, LONG-M1. | Same market regime, overlapping symbols; evidence is not independent. | Never pooled; any "agreement" between tracks is not independent confirmation. | ACCEPT | required
+R4 V3 workflow daily_signal.yml (*/15): single push attempt, no retry. | Can fail or collide on main. | Could delay commits on main; U67 state commits retry on their own. | ACCEPT (V3 out of scope, untouched) | required
+R5 Real cron-job.org dispatch of v3 workflows untested. | First real dispatch happens only after deployment. | Operational. Mitigation proposal: after deployment authorization, observe the first 12 dispatched runs (counts only) before any further step. | ACCEPT with that observation rule | required
+R6 53 of 67 symbols classified crypto by absence-of-non-crypto evidence plus default rule (14 ambiguous confirmed via KuCoin announcements). | Residual risk of a non-crypto/odd instrument. | Small; the universe is frozen. | ACCEPT | required
+R7 S3 funding is a flat assumption (see Part 2). | Not real funding. | Funding-adjusted performance is UNVALIDATED; long side exposed. | ACCEPT as unresolved limitation, kept visible | required
+R8 Evaluators never run on real U67 data. | Possible defects on first real run. | Mitigation: first run uses a throw-away copy of the repo and counts only. | ACCEPT | required
+R9 Collisions with real commits on main (C11, LONG-M1, V3, user) tested only on an isolated branch. | Untested on main. | Operational. | ACCEPT with R5 observation rule | required
+R10 Old push loop (3 attempts, sleep 5) in C11 / LONG-M1 / V3 fails at >=5 simultaneous pushers; v3 loop proven with 8 pushers on an isolated branch only. | Old tracks keep a known threshold; unchanged by instruction. | Low probability; unchanged. | ACCEPT | required
+C1 Workflow naming: registration says paper_u67_short_v1.yml / paper_u67_long_v1.yml; the deployable content is v3. See Part 3. | Name vs content version mismatch. | Documentation only; no strategy effect. | Convention A (Part 3) | required
+C2 Does package commit 7a86d8c, which stores the 37 files as ONE text bundle (u67_audit_bundle.txt, per-file hashes verified from the commit) instead of separate files, satisfy G1? | Zip upload failed; bundle form deviates from "files under u67_audit/". | Evidence integrity is verified (37/37 sections, 36/36 manifest entries). | ACCEPT as G1 evidence; on request, separate files can be added later as a new commit | required
+
+RESPONSE TEMPLATE (copy; one line per item): "(1) ACCEPTED - reason" ... "R7 ACCEPTED - reason" ... "C1 ACCEPTED Convention A" ... "C2 ACCEPTED". OPEN or REJECTED needs a rationale and, if REJECTED, what change is requested (a change to any frozen item needs registration section 9, a new registration, and re-hashing).
+
+PART 2 - FUNDING ARITHMETIC AUDIT (independent re-check of docs/FUNDING_MODEL_REVIEW.txt; analytical only; no measured funding, no engine change)
+A. Engine facts (verified in both engines): cost_fraction = 0.0015 x (1 + exit/entry) + 0.00010 x bars_held x 0.5; net_r_s3 = gross_r - cost_fraction / risk_pct. So funding is ALWAYS a cost, computed on entry notional, bars_held x 0.5 events, no timestamp, no sign, no direction. Per-event rate implied: 0.00010 (0.01% per 8h).
+B. Event count: with events at 00/08/16 UTC and entry at a 4H candle open, a holding of n bars spans 4n hours. n=30 -> exactly 15 events for every entry alignment (verified by enumeration over the six 4H opens); n=6 -> exactly 3; n=15 -> 7 or 8 (the Stage 4 table used 7.5). A position closed by SL/TP inside a bar pays only for events before the exit instant; bars_held is a bar count, so the event count of a short trade can differ by one from bars/2.
+C. Formula check: real funding effect in R = sign x events x r / risk_pct, sign = +1 for short and -1 for long when r > 0 (long pays, short receives), reversed when r < 0. Flat model effect = -0.00005 x n / risk_pct for BOTH sides.
+D. Re-check of the Stage 4 table: all 81 cells (9 rows x 9 values) recomputed independently: 0 arithmetic mismatches (tolerance 0.01R); signs correct (short +, long - for positive funding; reversed for negative). No arithmetic or sign error found. Labelling weakness found: column "ev" showed 7.5 for n=15 (real: 7 or 8; effect +-0.03R at 1.5% risk, r=0.10%); and the document did not show the MODEL ERROR (real minus flat). Corrected view below (30 bars, exactly 15 events):
+ risk  r/8h    | S real  flat   err(real-flat) | L real  flat   err
+ 1.5%  +0.01%  | +0.10  -0.10   +0.20          | -0.10  -0.10   +0.00   (flat is exact only here, long, positive 0.01%)
+ 1.5%  +0.10%  | +1.00  -0.10   +1.10          | -1.00  -0.10   -0.90
+ 1.5%  -0.03%  | -0.30  -0.10   -0.20          | +0.30  -0.10   +0.40
+ 3.0%  +0.01%  | +0.05  -0.05   +0.10          | -0.05  -0.05   +0.00
+ 3.0%  +0.10%  | +0.50  -0.05   +0.55          | -0.50  -0.05   -0.45
+ 3.0%  -0.03%  | -0.15  -0.05   -0.10          | +0.15  -0.05   +0.20
+ (err > 0 = engine too pessimistic; err < 0 = engine too optimistic.) n=15, r=+0.10%, risk 1.5%: L real -0.47 (7 events) / -0.53 (8 events), flat -0.05.
+E. Interpretation: U67-L (long): engine too optimistic whenever real funding > +0.01%/8h (e.g. -0.90R at +0.10%, 30 bars, 1.5% risk); too pessimistic when funding is negative. U67-S (short): engine pessimistic under positive funding, too optimistic under negative funding (squeezes: -0.20R at -0.03%). Sign of the error is regime-dependent and is not known for the actual sample.
+F. NEW CAVEAT from the exchange side (KuCoin announcement "KuCoin Futures to Launch Automatic Funding Fee Settlement Interval Adjustment Mechanism", effective after 2026-08-17 08:00 UTC, USDT/USDC perpetuals): a contract whose funding rate hits its cap/floor moves automatically to HOURLY settlement and later to 4-hourly after 16 consecutive hourly periods at or below 0.025%; individual contracts also had interval changes announced. So "8-hourly events at 00/08/16 UTC" is NOT guaranteed per contract and time; event timestamps cannot be known without measured funding history. The flat per-time rate remains a rough proxy; funding rate per event is quoted per its own interval.
+G. Items intentionally not modelled: funding charged on mark-price notional at each event (not entry notional); funding rate caps per contract; funding changes by the 2026-07 formula revisions.
+H. STATEMENT: funding-adjusted performance (S3, S3a, S3b net R) of U67-S and U67-L remains UNVALIDATED. The limitation stays visible in every evaluator output. No frozen rule, threshold or engine changed. A measured-funding scenario (S4) needs the designer's explicit authorization.
+
+PART 3 - C1 NAMING
+Mismatch: both registrations (section on separate files) name the workflow files paper_u67_short_v1.yml and paper_u67_long_v1.yml; the deployable CONTENT is v3 (v2 plus removal of the `schedule:` trigger; v2 = v1 plus the jittered 6-attempt push loop). In "v1" the number is the registration/file-name version; "v3" is the internal revision of the workflow text.
+Convention A (recommended): keep the registered file names unchanged. At deployment, create .github/workflows/paper_u67_short_v1.yml and paper_u67_long_v1.yml with exactly the v3 content, and record in the deployment record the sha256 of each deployed file (S v3 and L v3 hashes are in PACKAGE_MANIFEST.txt) plus the commit SHA. No frozen registration is edited; the name-to-content link is the recorded hash.
+Convention B: rename to ..._v3.yml and amend the registrations (section 9, new hashes). More changes, more risk; not recommended.
+No file renamed, no registration edited until the designer decides.
+
+PART 4 - GATE STATUS (binary)
+G1 (audit package committed before 5 clusters): CLOSED for both tracks, pending C2 acceptance of the bundle form.
+G2 (formal designer acknowledgment): OPEN for both tracks - 0 of 24 items answered (11 evaluator items, R1-R10, C1, C2).
+Other gates (technical, scheduling design, tests, preflight): closed as documented in Stage 4; funding limitation R7 and untested real dispatch R5/R9 are accepted-or-not by the designer in G2.
+U67-S: NOT READY. U67-L: NOT READY.
+Even after G2 closes: deployment needs a separate explicit authorization.

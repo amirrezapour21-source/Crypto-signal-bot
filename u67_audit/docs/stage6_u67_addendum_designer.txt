@@ -1,0 +1,38 @@
+STAGE 6 ADDENDUM - U67-S / U67-L (2026-10-30). New, separately hashed document. The Stage 5 document (sha256 01314ba896664ddb17e6f8f18f1beadd0f0d13b1bee6786313bad9ef5a7e9a65) and the Stage 4 package (commit 7a86d8ca91ee87fc8e9ceb9e037174504fc2a0c6) are PRESERVED UNCHANGED; this addendum corrects them by reference. Audit only: no deployment, nothing in .github/workflows, cron-job.org untouched, no dispatch, no U67 paper tracking; C11 / LONG-M1 / V3 / MicroMAP untouched.
+
+1. G2 ITEM COUNT - CORRECTION (registrar's counting error)
+Correct total = 23 = 11 evaluator decisions (1)-(11) + 10 risks R1-R10 + 2 configuration/documentation decisions C1-C2. Stage 5 Part 4 said "0 of 24 items"; "24" was wrong and is superseded by 23 everywhere (the Stage 5 Part 1 list itself already held exactly 23 items). Completion counter: 0 of 23 answered.
+
+2. G1 / C2 CONTRADICTION - RESOLVED
+Stage 5 said "G1 CLOSED ... pending C2 acceptance": inconsistent, withdrawn. The frozen gate wording (Stage 4 instruction) required: (a) the complete package assembled under u67_audit/ and committed, (b) every expected file verified to exist in that commit, with exact destination paths. The commit holds all content and every file hash verified from the commit (37/37 sections, 36/36 manifest entries), but the files exist as sections of ONE text bundle, not as separate repository paths; criterion (b) in its literal form is therefore not met.
+RECORDED STATUS: G1 = CONDITIONALLY CLOSED (PENDING C2). Substance met, literal form deviates. The deviation is a designer decision: C2 (counted once, inside the 23 G2 items; it is also the condition for G1). If C2 ACCEPTED -> G1 CLOSED. If C2 REJECTED -> the registrar commits the files as separate paths in a NEW commit (the bundle commit stays as history); G1 stays conditional until that commit is verified. The original gate is not altered.
+
+3. FUNDING BOUNDARY AND EVENT-COUNT AUDIT (analysis only; no engine/evaluator/registration change)
+Official sources read: KuCoin Support "Funding Fees" (kucoin.com/support/26686295987353) and the announcement "Adjustment to Perpetual Contract Funding Fee Settlement Times and Payment Rules".
+VERIFIED: (i) only users who HOLD an open position at the settlement time pay/receive; positions fully closed before settlement pay nothing. (ii) Funding fee = position value x funding rate, position value at the MARK price at settlement time (not entry notional). (iii) Major pairs settle every 8h; most other pairs every 4h; cycle may shorten to 1h in strong premium/discount and revert to 4h (page: "actual times may change", real-time times on the trading page). (iv) For 8h-cycle contracts the announcement gives settlement at 00:00/08:00/16:00 UTC (rollout 2025-06). (v) The automatic hourly/4-hour mechanism (announcement dated 2026-08-17, effective after 2026-08-17 08:00 UTC) applies to all USDT/USDC perpetuals.
+NOT VERIFIABLE from official text: eligibility of a position opened exactly at the timestamp (the page only says a position opened at 00:00:20 "could still be subject" because assessment can take up to a minute) and of a position closed exactly at the timestamp. These boundary treatments are UNRESOLVED.
+IMPORTANT CORRECTION to Stage 5 Part 2 B and D: that part assumed 8-hourly events for all contracts. Per the official page most non-major contracts settle every 4h, so the "15 events" figure holds ONLY for an 8h-cycle contract and only under the convention entry-inclusive/exit-exclusive. Enumeration for a 30-bar window (120 h):
+ interval | entry hour (UTC) | in/in | in/ex | ex/in | ex/ex   (in=timestamp counts, ex=does not; entry/exit)
+ 8h  | 00, 08 or 16 (aligned)   | 16 | 15 | 15 | 14
+ 8h  | 04, 12 or 20 (unaligned) | 15 | 15 | 15 | 15
+ 4h  | any 4H candle open       | 31 | 30 | 30 | 29
+ 1h  | any 4H candle open       | 121 | 120 | 120 | 119
+So the event count of a 30-bar trade is 14-16 (8h), 29-31 (4h) or 119-121 (1h); a trade closed by SL/TP inside a bar pays only for settlements before the exit instant. Effect of one event on R (30 bars, per-event rate r): at risk 1.5%: r=0.10% -> 0.067R, r=0.05% (4h equivalent of 0.10%/8h) -> 0.033R; at risk 3%: half of those. Stage 5 arithmetic (events x r / risk) remains valid; the event counts are boundary-uncertain, the sign logic (long pays / short receives when funding > 0, reversed when < 0) is unchanged. Event times cannot be inferred from candle counts.
+
+4. INTERVAL MECHANISM (limitation, confirmed from the official announcement)
+Automatic move to hourly settlement when a contract's funding rate hits its upper/lower limit; restoration to 4h after 16 consecutive hourly periods with |rate| <= 0.025%. 00:00/08:00/16:00 UTC are NOT guaranteed timestamps for every contract; the interval is contract-specific and time-varying. Any measured funding scenario (S4, only if ever authorized) must record per contract: actual settlement timestamp, interval, rate, and position eligibility (held at the settlement time), with mark-price position value.
+
+5. SCOPE OF THE FUNDING MODEL
+The engine's flat proxy (0.00010 x bars x 0.5, always a cost, entry notional) is frozen and unchanged. S3 / S3a / S3b funding-adjusted performance: UNVALIDATED. U67-L: potentially optimistic when real funding is positive and above the proxy. U67-S: potentially optimistic under negative funding. Actual effect: UNKNOWN without per-contract funding history and exact position timestamps. No S4, no measured funding, no evaluator change.
+
+6. DESIGNER DECISIONS - ACTUAL RESPONSE COUNT
+Received: 0 of 23 item responses. The designer's Stage 6 message accepts Stage 5 only as an audit submission and contains no per-item decisions. Nothing inferred, defaulted or recorded on the designer's behalf. G2 stays OPEN. Outstanding: ALL 23. Item texts, meaning, impact and recommendations are in Stage 5 Part 1, unchanged except the count. Response sheet to complete (one line each: ACCEPTED / REJECTED / OPEN + rationale):
+(1) bootstrap seeds | (2) commit time = committer date | (3) cluster complete at entry+90 min | (4) max concurrent open trades definition | (5) adjacent-merge sensitivity | (6) PF/drawdown on S3 net R | (7) BTC change only if supplied | (8) jackknife cluster-mean reading, LONG-M1 wording unchanged | (9) 120/240-day rate caps | (10) count-only trigger | (11) 45-day UNRESOLVED rule
+R1 public state | R2 fixed universe | R3 shared regime | R4 V3 push without retry | R5 untested real dispatch | R6 53 symbols classification | R7 funding model (see sections 3-5) | R8 evaluators unrun on real data | R9 untested main collisions | R10 old push loop threshold
+C1 naming convention (A: registered names kept, v3 content, hashes recorded; B: rename + registration amendment) | C2 bundle form of the audit package (also the G1 condition, section 2)
+A rejection affecting a frozen item requires the registration amendment (section 9) and re-hashing.
+
+7. GATE STATUS AND VERDICTS (binary)
+U67-S: G1 conditionally closed (pending C2); G2 open (0/23). NOT READY.
+U67-L: G1 conditionally closed (pending C2); G2 open (0/23). NOT READY.
+Even after G2 closes, deployment needs a separate explicit authorization.

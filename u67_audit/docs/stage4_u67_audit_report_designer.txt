@@ -1,0 +1,34 @@
+STAGE 4 REPORT - U67-S / U67-L AUDIT PACKAGE (2026-10-30). Preparation/audit only. Nothing deployed; no workflow in .github/workflows/; cron-job.org untouched; C11, LONG-M1, V3, MicroMAP untouched.
+
+1. PACKAGE COMMIT
+Commit 7a86d8ca91ee87fc8e9ceb9e037174504fc2a0c6 on main ("Add files via upload"), preceded by ee1eec7 (u67_audit/README.txt). Present in the commit: u67_audit/{README.txt, PACKAGE_MANIFEST.txt, G2_ACKNOWLEDGMENT_RECORD.txt, u67_audit_bundle.txt}.
+FORM (deviation, stated openly): a .zip could not be uploaded from the registrar's phone ("can't process that file"), so the 37 package files are committed as ONE text bundle (u67_audit_bundle.txt, sha256 9d05a8f1db07d387...) with per-file headers (path, sha256, byte count). Files are NOT stored as separate paths in the repo.
+
+2. INTEGRITY VERIFICATION (recomputed from the git commit, not from local copies)
+- 3 loose files in the commit == local sources (sha256 equal).
+- All 37 sections of the bundle extracted from the commit: 37/37 section hashes match their headers; all 36 entries of PACKAGE_MANIFEST.txt match the extracted sections (manifest does not list itself). 0 omitted, 0 replaced.
+- Before bundling: 30 packaged copies compared with their source files, 0 mismatches; 5 files generated in the package (funding review, G2 record, preflight records, scheduling design, 67-symbol list; list hash 5123e953...21192 verified).
+Included: both frozen registrations, both engines + diffs, workflows v1/v2 (superseded) and v3 (deployable) as plain files outside .github/workflows, both evaluators, all tests/logs, preflight 1-3 workflows + records, universe snapshot/final, symbol list, manifest, Stage 3 reports, DISCREPANCIES.txt.
+
+3. DISCREPANCIES (details in docs/DISCREPANCIES.txt)
+D1 ERROR in Stage 3: the v2 workflows still contained `schedule: */15`, although the Stage 3 report recommended none. Fixed: v3 = dispatch only (loop and steps otherwise identical); new test "workflow_dispatch only, no schedule trigger". Re-run: S 92 PASS, L 104 PASS, FAILS [].
+D2 four test/log hashes changed after the Stage 3 manifest (superseded; new values in PACKAGE_MANIFEST.txt).
+D3 preflight raw logs / run IDs not saved; commits + pasted summaries recorded.
+D4 deployable file name: registration says paper_u67_*_v1.yml; deployable content is v3 (G2 item C1).
+
+4. FUNDING REVIEW (docs/FUNDING_MODEL_REVIEW.txt)
+Both engines: funding = 0.00010 x bars x 0.5, always a cost, no funding timestamps (real events 00/08/16 UTC, about n/2 per holding), no sign handling. Analytic sensitivity (no trade R used): 30-bar trade, risk 1.5%: real funding +0.10%/8h = -1.00R for L / +1.00R for S versus flat -0.10R; at 3% risk -0.50R; negative funding -0.03% reverses signs. U67-L is the exposed side (S3 may be overstated when funding is high); U67-S flat charge is conservative in ordinary positive funding. UNRESOLVED, kept visible, no rule/threshold changed; measured funding (S4) needs authorization.
+
+5. SCHEDULING (docs/SCHEDULING_DESIGN.txt)
+workflow_dispatch only, no schedule trigger (v3, tested). cron-job.org times unchanged: S :19/:49, L :26/:56, hours 0,4,8,12,16,20 UTC (NOT created). 12 invocations/day/track vs at most 6 effective closed-candle state updates/day (engine idempotent). NOT tested: real cron-job.org dispatch; real main-branch collisions (C11, LONG-M1, V3, user). Tested only: isolated-branch race (8 pushers, all OK, max 4 attempts), concurrency probe (2 success/1 cancelled), guard 3-case test on a GitHub runner.
+
+6. G1 / G2 STATUS
+G1 (audit package committed before 5 clusters; no U67 signals can exist, tracks not deployed): CLOSED, with the bundle-form deviation above.
+G2 (formal designer acknowledgment): OPEN. docs/G2_ACKNOWLEDGMENT_RECORD.txt lists items (1)-(11) [(8) jackknife cluster-mean vs LONG-M1 "sum" wording, not harmonised; (9) 120/240-day caps; (10) count-only trigger; (11) UNRESOLVED 45-day rule], R1-R10, C1-C2 - ALL marked OPEN. No approval has been recorded on the designer's behalf. Required: designer replies per item with ACCEPTED / REJECTED / OPEN (+ rationale); the registrar then commits the filled record.
+
+7. VERDICTS
+U67-S: NOT READY (G2 open; also C1 workflow-name decision).
+U67-L: NOT READY (G2 open; also C1).
+Technical gates are closed. Deployment needs a separate explicit authorization after G2 is genuinely closed.
+
+8. DAILY REPORT 2026-10-30: still pending (registrar sends the two screenshots).

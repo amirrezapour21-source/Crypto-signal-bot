@@ -1,0 +1,101 @@
+STAGE 10 — U67-S / U67-L: DESIGNER DECISION AUTHENTICATION AND V2 SPECIFICATION
+
+The Stage 9 record reports 23/23 designer decisions. However, Appendix A is titled “Recommended G2 Decisions” and reproduces a decision document previously supplied as a recommendation. Its origin alone does not establish independent designer approval. Do not treat these responses as authenticated until the designer explicitly confirms or corrects them.
+
+1. Authenticate the original 23 decisions
+
+Ask the designer to confirm explicitly whether Appendix A represents their own final decisions, rather than recommendations relayed for review.
+
+Require one explicit response:
+
+- CONFIRMED — all 23 decisions in Appendix A are the designer’s final decisions.
+- AMENDED — provide corrected item-by-item decisions and rationale.
+- NOT CONFIRMED — Appendix A remains recommendations, not designer decisions.
+
+Do not infer confirmation from silence, prior discussion, or the registrar’s interpretation. Preserve the original source and any new confirmation separately.
+
+2. Resolve the four V2 specification decisions before implementation
+
+Require explicit ACCEPTED / REJECTED / OPEN plus rationale for each:
+
+(a) Primary treatment of censored trades
+
+Registrar proposal:
+
+- A trade with no symbol candle for 45 days is unresolved/censored, not assumed to have hit its stop.
+- It remains assigned to its original cluster but contributes no R to the primary cluster mean.
+- Cluster mean is calculated from resolved trades only.
+- A cluster with zero resolved trades is labelled CENSORED and excluded from primary N.
+- The checkpoint condition becomes “no open trades except censored trades.”
+
+Designer must confirm or amend this complete treatment. Specify exactly how censored clusters are counted in every denominator, minimum-cluster threshold, bootstrap draw, and checkpoint calculation. Do not silently remove censored observations.
+
+(b) Bias guard
+
+The proposed -1R sensitivity is a fixed stress assumption, not necessarily a conservative loss bound. A delisted or halted LONG position may lose more than 1R.
+
+Require the designer to decide:
+
+- Whether censored-trade counts and the -1R sensitivity must always appear beside primary results.
+- Whether primary S3 cluster-mean > 0 combined with -1R sensitivity <= 0 forces NOT ESTABLISHED, with no PAPER GATE PASSED.
+- Whether an additional harsher stress scenario is required for delisted/ halted positions, or whether -1R is explicitly accepted only as a limited fixed stress test.
+
+Do not describe -1R as a guaranteed worst-case or conservative outcome.
+
+(c) Eligibility constant and freeze exception
+
+Registrar recommends retaining the existing engine constants:
+
+- U67-S: "2026-10-28T12:00Z"
+- U67-L: "2026-10-30T12:00Z"
+
+The v2 registrations would be frozen later, so this requires an explicit, documented waiver of the rule that "ELIGIBLE_FROM" must be strictly later than the registration freeze.
+
+Ask the designer to choose:
+
+- Option (i): retain engine constants, explicitly waive the strict-later-than-freeze clause in both v2 registrations, and disclose that no U67 observations or state files exist between the eligibility constants and the v2 freeze.
+- Option (ii): change engine constants, create new engine hashes, and amend all dependent specifications.
+
+Do not implement either option without the designer’s explicit decision.
+
+(d) V2 versioning and counters
+
+Proposed package:
+
+- New v2 registrations with new registration counters.
+- V2 evaluators reflecting the approved censored-trade rule and accepted output conditions.
+- New tests, test logs, and manifest with verified hashes.
+- Preserve all v1 registrations, evaluators, manifests, and reports unchanged as historical evidence.
+- Both U67 tracks start at counter 0 under their respective v2 registrations, with no inherited observations or state.
+
+Require explicit confirmation of the counter-0 rule and the complete versioning plan.
+
+3. C2 package sequencing
+
+C2 remains REJECTED and G1 remains open pending the required separate-path commit.
+
+Registrar recommends uploading the original 37 files as separate repository paths only once, after the v2 package is finalized. The final commit should contain:
+
+- The original 37 files with unchanged historical hashes.
+- The approved v2 registrations, evaluators, tests, logs, and manifest as additional files.
+- A path-and-hash verification report covering every expected file.
+
+Ask the designer to explicitly choose:
+
+- YES — defer the separate-path upload until the v2 package is finalized.
+- NO — upload the original 37 files now, then upload the v2 additions separately.
+
+Do not close G1 until all 37 original paths and hashes are verified in the new commit.
+
+4. Required Stage 10 report
+
+Report:
+
+- Whether the original 23 decisions were independently authenticated.
+- The explicit decisions and rationale for (a)–(d).
+- The C2 sequencing decision.
+- Any remaining OPEN items and their exact blockers.
+- Separate G1 and G2 status.
+- Separate U67-S and U67-L readiness verdicts.
+
+Hard restrictions remain unchanged: no registration or engine edits, no evaluator implementation, no workflow placement, no cron-job.org changes, no dispatch, no U67 tracking, no API fetch, and no changes to C11, LONG-M1, V3, or MicroMAP until the required decisions are authenticated and the applicable v2 specification is approved. No deployment or live execution is authorized.

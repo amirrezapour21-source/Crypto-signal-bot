@@ -1,0 +1,32 @@
+G2 FORMAL DESIGNER ACKNOWLEDGMENT RECORD - U67-S and U67-L - prepared 2026-10-30 (Stage 4)
+RULE: every item below is OPEN until the designer's own written decision is recorded in the "DESIGNER DECISION" line. The registrar has NOT recorded any approval on the designer's behalf. Registrar notes are evidence, not approval.
+DECISION VALUES: ACCEPTED / REJECTED / OPEN.
+
+A. EVALUATOR CHOICES (script header, covered by evaluator sha256; applies to S and L evaluators alike unless noted)
+(1) Bootstrap: fresh numpy default_rng(seed) per scenario, one (20000,n) integer draw matrix, same indices across scenarios. Seeds: S 20261028, L 20261029. Registrar note: deterministic, paired. DESIGNER DECISION: OPEN
+(2) Commit time = git committer date (%cI). Registrar note: committer date is set by the runner clock, can differ slightly from the true state time. DESIGNER DECISION: OPEN
+(3) Cluster complete when commit time >= entry_ts + 90 min (= MAX_ENTRY_DELAY_MIN). DESIGNER DECISION: OPEN
+(4) Max concurrent open trades: trade occupies [entry_ts, exit_ts+4h); UNRESOLVED [entry_ts, entry_ts+30x4h). Reported only. DESIGNER DECISION: OPEN
+(5) Adjacent-merge sensitivity: clusters whose signal_ts differ by exactly 4 h chained; merged outcome = equal-weight mean. Sensitivity only. DESIGNER DECISION: OPEN
+(6) Profit factor and drawdown use S3 net R. DESIGNER DECISION: OPEN
+(7) BTC change printed only if registrar supplies two prices. DESIGNER DECISION: OPEN
+(8) Jackknife "largest cluster" = cluster with highest S3 CLUSTER-MEAN net R (registered in S section 7 and L registration). LONG-M1 keeps its frozen wording "highest S3 net R sum"; NOT harmonised, NOT changed. Registrar note: two tracks therefore use different readings; this is documented, not resolved. DESIGNER DECISION: OPEN
+(9) Rate caps: UC1/UL1 120 days, UC2/UL2 240 days after eligibility boundary (S 2026-10-28T12:00Z, L 2026-10-30T12:00Z); observed rate reported, no verdict. Registered rule. LONG-M1 caps differ and are unchanged. DESIGNER DECISION: OPEN
+(10) Trigger detection is count-only (with_r=False); no R computed before the trigger holds (script header note 8; tested: refusal before trigger, no override flag). DESIGNER DECISION: OPEN
+(11) UNRESOLVED rule: open position whose symbol has no candle for >=45 days at the evaluation instant is counted as a stop-out in every scenario, with a sensitivity excluding it. Registered rule. DESIGNER DECISION: OPEN
+
+B. RISKS (all remain real; none mitigated unless stated)
+R1 Public repo: state, signals and R values visible to anyone; tracks not blinded. Registrar: not mitigated. DESIGNER DECISION: OPEN
+R2 Fixed turnover universe (67 symbols chosen at one date; selection/survivorship bias). Not mitigated. DESIGNER DECISION: OPEN
+R3 Shared regime dependence: S, L, C11, LONG-M1 trade overlapping symbols and the same market regime; evidence is not independent. Not pooled by rule. DESIGNER DECISION: OPEN
+R4 V3 workflow daily_signal.yml (*/15) has single-attempt push, no retry; can fail or collide on main. Unchanged (V3 not touched). DESIGNER DECISION: OPEN
+R5 Real cron-job.org dispatch of the new workflows untested. DESIGNER DECISION: OPEN
+R6 53 of 67 symbols rest on absence-of-non-crypto evidence plus default-crypto rule (14 ambiguous tickers confirmed crypto via KuCoin announcements). DESIGNER DECISION: OPEN
+R7 S3 funding is a flat assumption (see FUNDING_MODEL_REVIEW.txt): no timestamps, no sign handling; understates long-side cost when real funding is high. Unresolved limitation. DESIGNER DECISION: OPEN
+R8 Evaluators never run on real U67 data. DESIGNER DECISION: OPEN
+R9 Collisions with real commits on main (C11, LONG-M1, V3, user) tested only on an isolated branch. DESIGNER DECISION: OPEN
+R10 Old push loop in C11 / LONG-M1 / V3 fails at >=5 simultaneous pushers (preflight 2); v2/v3 loop proven only on isolated branch with 8 pushers. DESIGNER DECISION: OPEN
+
+C. OTHER ITEMS FOR DECISION
+C1 Workflow files v3 (= v2 loop, no schedule trigger) replace v1/v2 as the deployable files; registration names .github/workflows/paper_u67_*_v1.yml as the deployed filename. Registrar proposes deploying v3 content under the registered filename or amending the filename (section 9). DESIGNER DECISION: OPEN
+C2 Adding the 5-cluster-prior commit of this audit package. DESIGNER DECISION: OPEN

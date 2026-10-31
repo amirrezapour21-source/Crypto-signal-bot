@@ -1,0 +1,5 @@
+PREFLIGHT RECORDS (from run summaries pasted by the registrar; raw run logs live in GitHub Actions, not copied here)
+Preflight 1 (u67_preflight.yml): repo commit 04176e5e13a2def72a8f238ac3a6fd65402d1216. live: PASS (S engine, 67 symbols). guard: red due to harness defect (bash -e stopped harness at the expected exit 1); guard line verified locally (rc1=0, rc2 nonzero, rc3=0). race (old 3-attempt loop, 4 pushers): red/partial. 
+Preflight 2 (u67_preflight2.yml): repo commit c53ac7c. live_l: PASS. concurrency probe: 2 success / 1 cancelled. race (old loop, 5 simultaneous pushers): c11 and u67l FAILED -> root cause fixed-interval retry; guard: red due to same -e harness defect.
+Preflight 3 (u67_preflight3.yml): workflow commit 4846799, run #1, main, 2m27s, SUCCESS. guard 3-case test on runner: GUARD_RESULT PASS. race with v2 jittered loop, 8 simultaneous pushers: all OK, attempts r1=2 r2=1 r3=3 r4=2 r5=2 r6=3 r7=4 r8=2; RACE_FILES_COUNT 8 (expect 8); scratch branch deleted. Repo copy byte-identical to source (sha 18e78536b269).
+Run IDs were not captured; commit SHAs above are the stable references.

@@ -1,0 +1,32 @@
+STAGE 11 RECORD - CONSOLIDATED V2 SPECIFICATION RECEIVED (2026-10-30, relayed by the user ~23:51 Tehran). New separately hashed document. All earlier documents preserved (Stage 9 sha 5f07d18c..., Stage 10 sha 53a22fae...). No registration/engine/evaluator edit, no workflow placement, no cron-job.org change, no dispatch, no U67 tracking, no API fetch; C11 / LONG-M1 / V3 / MicroMAP untouched. Nothing implemented.
+
+1. WHAT WAS RECEIVED AND HOW IT IS RECORDED
+A "Final Consolidated Designer Decisions - Stage 10" text: AUTH NOT CONFIRMED; (a) ACCEPTED; (b1) (b2) (b3) ACCEPTED; (c) ACCEPTED option (i); (d) ACCEPTED; C2-SEQ YES; plus six execution constraints. The text itself says: record as the registrar's decisions, NOT as designer-authenticated responses; no implementation until the designer explicitly confirms. Accordingly it is recorded here ONLY as the working consolidated specification (author not verified by the registrar; adopted as the registrar's working draft, which is what the text instructs). Status of every line: UNCONFIRMED by the designer.
+AUTHENTICATION: Appendix A (the 23 decisions) = NOT CONFIRMED, unchanged. Designer-authenticated decisions: 0 of 23; (a)-(d) and C2-SEQ: 0 of 5 authenticated.
+
+2. WORKING SPECIFICATION AS RECORDED (not applied)
+(a) censored trades: status fixed at the evaluation instant (symbol last candle >= 45 days before it, never recomputed); censored trades stay in their cluster with no R in the primary analysis; cluster mean = equal-weight mean of resolved trades; a cluster with zero resolved trades = CENSORED CLUSTER, excluded from primary N, minimum thresholds, bootstrap and jackknife; first N non-censored clusters by signal_ts; counts of censored trades/clusters always disclosed; adjacent-merge sensitivity on resolved trades with censoring reported; checkpoint = first N non-censored clusters exist, complete, no open trades except censored; caps 120/240 unchanged; identical for S and L.
+(b1) censored counts and -1R sensitivity always beside primary results, -1R labelled a fixed stress assumption, not a bound. (b2) primary S3 cluster-mean > 0 and -1R sensitivity <= 0 -> NOT ESTABLISHED, no PAPER GATE PASSED. (b3) -2R sensitivity informational only, labelled a limited fixed stress test, does not decide a verdict.
+(c) option (i): keep constants S 2026-10-28T12:00Z, L 2026-10-30T12:00Z; v2 registrations document the waiver of "strictly later than freeze" and disclose that no U67 observation or state file exists between the constants and the v2 freeze (to be re-verified from the repository at the v2 freeze time); engine constants and hashes not modified.
+(d) v2 registrations with new counters, v2 evaluators, new tests/logs/manifest; all v1 artifacts preserved; both tracks counter 0 under v2; tracks isolated.
+C2-SEQ YES: one consolidated upload round after v2 is finalized: the original 37 files at exact separate paths with unchanged hashes plus all v2 additions; every path and hash verified in the new commit before G1 closes.
+
+3. GAPS THE REGISTRAR FOUND IN THE SPECIFICATION (need the designer's answer before v2 can be written; proposals marked)
+Q1 Cluster set for the -1R / -2R sensitivities: censored trades become -1R (or -2R) stop-outs, so censored clusters would become ordinary clusters. Proposal: sensitivities use the first N clusters of the FULL signal_ts order (censored clusters included), evaluated at the SAME evaluation instant and state as the primary; they are labelled as using a different cluster set from the primary.
+Q2 Scenarios: proposal: censoring applies identically to S0, S1, S2, S3, S3a, S3b; the b2 guard and the -1R / -2R sensitivities are computed on S3 only (other scenarios printed for transparency).
+Q3 Cost of a stressed censored trade: proposal: as in v1 (stored entry/risk/stop, bars_held 30, each scenario's own cost formula), with gross R = -1 (and -2 for the -2R test).
+Q4 Rejection rule at UC1/UL1 (binding REJECTED if S3 cluster-mean <= 0): proposal: stays on the PRIMARY statistic; the guard b2 only blocks a pass.
+Q5 If fewer than N non-censored clusters ever exist before the rate cap: proposal: the cap rule applies as registered (observed rate reported, no verdict).
+Q6 Hash of the v2 evaluator test for the waiver: none needed; the waiver is documented text only.
+
+4. EXECUTION SEQUENCE (as received) AND CURRENT POSITION
+Step 1 obtain the designer's explicit confirmation of this consolidated specification and the Appendix A authentication status: PENDING (nothing confirmed). Steps 2-4 (v2 package, one consolidated path-level commit, closing G2/G1): NOT STARTED.
+
+5. GATES AND VERDICTS
+G1: OPEN. G2: OPEN. Funding-adjusted S3/S3a/S3b: UNVALIDATED.
+U67-S: NOT READY. U67-L: NOT READY. Deployment requires separate explicit authorization.
+
+6. REPLY TEMPLATE FOR THE DESIGNER
+CONSOLIDATED SPEC: CONFIRMED | AMENDED (list) | NOT CONFIRMED
+APPENDIX A: CONFIRMED | AMENDED | NOT CONFIRMED
+Q1 ... Q2 ... Q3 ... Q4 ... Q5 ... (ACCEPTED / amended text)

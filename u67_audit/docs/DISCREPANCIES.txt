@@ -1,0 +1,6 @@
+DISCREPANCIES FOUND DURING STAGE 4 (none silently replaced; originals kept)
+D1. Stage 3 report (docs/stage3_u67_final_gates_designer.txt, sha a55c51f2...) recommended "NO schedule trigger" but the v2 workflow files it listed STILL CONTAINED `schedule: */15` (inherited from C11). Error caught in Stage 4. v2 files kept as superseded; v3 files (dispatch only, otherwise identical loop/steps) created; test added: "workflow_dispatch only, no schedule trigger".
+D2. Because tests now point to v3, the test files and logs changed after the Stage 3 manifest: test_u67.py, test_u67_result.log, test_u67l.py, test_u67l_result.log have NEW hashes (see PACKAGE_MANIFEST.txt). The earlier SHA256_MANIFEST_U67.txt values for these four files are superseded. Re-run results: S 92 PASS FAILS [], L 104 PASS FAILS [].
+D3. Preflight raw run logs and Actions run IDs were not saved; docs/PREFLIGHT_RECORDS.txt records commit SHAs and the pasted summaries only.
+D4. Stage 3 report names "workflow v2" as deployable; the deployable files are now v3. Registration names the deployed file as .github/workflows/paper_u67_*_v1.yml; see G2 item C1.
+D5. Registration funding wording (labelled assumption, not a bound) is unchanged; real-funding behaviour documented in FUNDING_MODEL_REVIEW.txt.

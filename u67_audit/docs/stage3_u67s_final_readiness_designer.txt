@@ -1,0 +1,118 @@
+U67-S FINAL DEPLOYMENT-READINESS REPORT (for the designer)
+Date: 2026-10-29 (report written ~23:40 Tehran). Paper only. Nothing deployed. cron-job.org untouched. C11, LONG-M1, their files, state, workflows, schedules, tokens: untouched. U67 LONG: NOT STARTED.
+
+DECISION: READY TO DEPLOY (conditional only on the mechanical steps in section 9 and on your acknowledgement of the items in section 8).
+
+=====================================================================
+1. FROZEN ARTIFACTS RE-VERIFIED (independent re-hash, 2026-10-29)
+=====================================================================
+Registration U67_S_REGISTRATION_v1.txt        9efe88d1b07c166be1e4e371e3c2339fc941194b22f8cf03fd5c8d8fe879d8be  (matches)
+Engine crypto_signal_bot_u67_short_v1.py       aa1d7ac050d3db28f8404d39a5fd21e2eaca1ca5172478453cdd7fa193f5689a  (matches; the copy now in the repo root, commit 1f048049c966b3b5d04438f8fea7aa8d7c865f11, has the same hash)
+Production workflow paper_u67_short_v1.yml     7597b7b09cb9ff29032041da1947004f129ce34f9951d233778d9ca4c3aaa7a3  (matches; NOT yet in the repo)
+Engine diff vs C11                             ef69a13d2b63ebc1ec08c2efbe5094b100e99b9eaa402ed2c8fd9fb5d50643ef  (matches)
+Engine tests test_u67.py / log                 47621aaec3ab5e0c75bae34a96983afa7ab1d916fcb5c8b787d0e150393404e5 / d5654e1227fbd7ae12e06d8bfdefee8bea75e33d086fd72a6e02c210cc67bed7 (90 PASS, FAILS [])
+Universe snapshot u67_universe_snapshot.json   3e9f1ba5903c3c73fe44f5c74e3f8aeddb2e046d7daa9cb43851de9e3930cc2a  (repo file matches)
+Universe final u67_universe_final.json         96ca3e68fb1d79847e1e19fa9c3889d3212705860ba94fd81ed2050ed2a8d21b  (repo file matches)
+67-symbol list (newline-joined) sha256         5123e95389eaab880b202b740ce9c7bc54f5a40451e4d40b741ac210e4d21192  (recomputed from the repo file; equals engine SYMS and the registration list, same order, 67/67)
+Selection scripts/workflows in repo            select_u67_universe.py 48f519f2...; reselect_u67_universe.py d0141f56...; select yml 157b943b...; reselect yml 04bf20cb... (all match the recorded hashes)
+LONG-M1 registration                           2ba707dbf6b57c82df38e848230f8fe4606b2a3807619bf8bf13aec792e56ffa (unchanged)
+C11/LONG-M1 engines and workflows: last changed 2026-10-25 and earlier; since then only their own state commits. The only other main commits today: the old V3 bot's signals_log, and my user's two preflight uploads below.
+
+=====================================================================
+2. GATE 1 - DECISION RULE (UC1)
+=====================================================================
+Retained as registered: UC1 binding REJECTED if S3 cluster-mean <= 0 (same as LONG-M1). The C11 review-flag wording was NOT substituted. Rationale: (a) the registration was frozen with this rule; (b) it matches the designer-approved, independently audited LONG-M1 rule; (c) a binding rule removes post-hoc discretion over a track whose data are publicly readable. Consistency check: the engine contains no decision logic (decisions live only in the evaluator); the evaluator implements exactly section 8 (UC1: REJECTED iff S3 cluster-mean <= 0, otherwise continue with no verdict; UC2: REJECTED / NOT ESTABLISHED / PAPER GATE PASSED as registered). Verified by synthetic tests (section 6).
+
+=====================================================================
+3. GATE 2 - 14 AMBIGUOUS TICKERS: VERIFIED
+=====================================================================
+Method: KuCoin's own announcements/pages (kucoin.com), read 2026-10-29, cross-checked against the frozen snapshot (all 14 contracts are in the frozen list). Result: ALL 14 are crypto assets. No symbol fails; the frozen list is preserved, no v2.
+ 4    : KuCoin Futures listing '4USDT Perpetual' (2025-10-08) names contract address 0x0A43fC31a73013089DF59194872Ecae4cAe14444; KuCoin Alpha listing (2026-01-14) shows token '4' on BNB Smart Chain with the SAME address. https://www.kucoin.com/announcement/en-kucoin-futures-new-listing-4usdt-perpetual-contract-with-up-to-50x-leverage ; https://www.kucoin.com/announcement/hk-kucoin-alpha-has-listed-token-rtx-artxguacollectaiavjojo-and-4
+ M    : KuCoin Futures listing 'MUSDT Perpetual' (2025-07-07), underlying MemeCore (M). https://www.kucoin.com/announcement/en-kucoin-futures-new-listing-musdt-perpetual-contract-and-trading-bots  (page does not state chain; identification is by project name only - weakest of the 14, still a crypto project, not an equity)
+ S    : KuCoin price page: S = native token of Sonic (L1), futures SUSDT Perp listed. https://www.kucoin.com/price/S
+ H    : 'Humanity (H) gets listed on KuCoin' (2025-06-23): token of Humanity Protocol, ERC-20, H/USDT. https://www.kucoin.com/tr/announcement/bd-humanity-h-gets-listed-on-kucoin-world-premiere
+ Q    : 'Quack AI (Q) gets listed on KuCoin' (spot 2025-09-02), BSC BEP-20. https://www.kucoin.com/announcement/en-quack-ai-q-gets-listed-on-kucoin-world-premiere
+ MET  : 'KuCoin Will Add Meteora (MET) on Futures, Convert and Fast Trade' (2025-10-23); METUSDT replaces the pre-market perpetual METUSDTM. https://www.kucoin.com/announcement/en-kucoin-will-add-meteora-met-on-futures-convert-and-fast-trade
+ ARC  : 'ARCUSDT Perpetual' (2025-11-25), underlying AI Rig Complex (ARC). https://www.kucoin.com/announcement/en-kucoin-futures-new-listing-arcusdt-perpetual-contract-with-up-to-20x-leverage
+ CAP  : 'World Premiere: Cap (CAP) Listed on KuCoin' (spot 2026-06-26): credit-platform token, ETH-ERC20 with an Etherscan contract; CAPUSDT perpetual (2026-06-30). https://www.kucoin.com/announcement/in-world-premiere-cap-cap-listed-on-kucoin
+ APR  : 'APRUSDT Perpetual' (2025-10-23), underlying aPriori (APR). https://www.kucoin.com/announcement/en-kucoin-futures-new-listing-aprusdt-perpetual-contract-with-up-to-50x-leverage
+ WET  : 'WETUSDT Perpetual' (2025-12-09), underlying Humidifi (WET). https://www.kucoin.com/announcement/en-kucoin-futures-new-listing-wetusdt-perpetual-contract-with-up-to-20x-leverage
+ BEAT : 'Audiera (KBEAT) gets listed on KuCoin' (2025-11-01), later ticker-changed to BEAT; BSC BEP-20 token of the Audiera project. https://www.kucoin.com/announcement/en-audiera-kbeat-gets-listed-on-kucoin-world-premiere ; https://www.kucoin.com/announcement/en-kucoin-has-completed-the-ticker-change-of-audiera-kbeat-to-beat-160626
+ CLO  : 'CLOUSDT Perpetual' (2025-10-14), underlying Yei Finance (CLO) (not CL = crude oil, which is a different contract CLUSDT). https://www.kucoin.com/announcement/bd-kucoin-futures-new-listing-clousdt-perpetual-contract-with-up-to-50x-leverage
+ ZBT  : 'ZBTUSDT Perpetual' (2025-10-17), underlying ZEROBASE (ZBT). https://www.kucoin.com/announcement/en-kucoin-futures-new-listing-zbtusdt-perpetual-contract-with-up-to-50x-leverage
+ JCT  : 'Janction (JCT) gets listed on KuCoin' (spot 2025-11-10), BSC BEP-20, JCT/USDT. https://www.kucoin.com/announcement/en-janction-jct-gets-listed-on-kucoin-world-premiere
+Also checked: the 2026-10-27 stock-index announcement (PYPL, GEV, NET, PANW, TXN) contains none of the 67. Limits: the pages for M, APR, ARC, WET, ZBT, CLO, MET describe the underlying by project name and USDT-perpetual terms rather than quoting 'this is a crypto token'; the pages (fetched by an automatic summariser) were not exhaustively read line by line. The contract/listing metadata API could not be reached from the registrar's environment, so the check is announcement-based, not API-based. The remaining 53 symbols (not named as ambiguous) keep the registered evidence basis (no non-crypto evidence + default rule).
+
+=====================================================================
+4. GATE 3 - LONG-M1 "SUM" WORDING (documentation only)
+=====================================================================
+LONG-M1 (frozen, unchanged) section 7: largest cluster = "the cluster with the highest S3 net R sum". U67-S registered the cluster-mean reading (the cluster with the highest S3 cluster-mean net R, ties to the earlier signal_ts). Conflict: a trade-level SUM can rank a many-trade cluster first while its mean is not the largest; the two readings can pick different clusters, and so different jackknife results. LONG-M1 is NOT changed. For LONG-M1 the planned evaluator rule is the cluster-mean reading (consistent with its primary statistic, the equal-weight cluster-mean, where a cluster's contribution to the statistic is its mean). If you want the 'sum' reading for LONG-M1, say so before LONG-M1 reaches UC2 (UC1 uses the jackknife only descriptively). No LONG-M1 evaluator has been built; none is needed before cluster 15.
+
+=====================================================================
+5. GATE 5 - OPERATIONAL GAPS: ISOLATED PREFLIGHT (real GitHub runner, live KuCoin)
+=====================================================================
+Run: workflow 'U67 Preflight (one-shot, isolated)' run #1, workflow_dispatch, commit 04176e5e13a2def72a8f238ac3a6fd65402d1216 (main), started ~2026-10-29 19:43Z, total 4m28s. Workflow file only on main, no schedule. It wrote no production state and nothing to main; the scratch branch (u67-preflight-scratch) was created and then deleted (verified: only origin/main exists afterwards; main HEAD contains only my user's two upload commits 1f04804 and 04176e5). Run URL/ID: I have no read access to the Actions API; the run number is #1 in that workflow (screenshots on file with the user).
+ A) Live KuCoin + engine (job 'live', PASS, 4m13s):
+    - Engine hash verified in-runner, then two full engine runs on an isolated temp state (U67_STATE_FILE in runner temp).
+    - Run 1: SYMBOLS_OK 67/67, FAILED 0, RUN_STATUS OK, exit 0, 268 requests (67 x 4 chunks), all HTTP 200, 96.1 s, latency p50 0.188 s / p95 0.300 s / max 0.478 s. New state: baseline_done 67/67, signals 0, missed 0, open 0, closed 0, errors 0, created_at 2026-10-29T19:43:07.229333Z, eligible_from 2026-10-29T19:43:07.229370Z, last_ts of every symbol = 2026-10-29T12:00:00Z (the last completed 4H candle at that time: correct).
+    - Run 2 (20 s later): 67/67 OK, 268 requests, all 200, 95.2 s, no new signal/missed; created_at and eligible_from identical to run 1; baseline 67/67 (state continuity and idempotence PASS; first run did not replay history).
+    - Rate limit: KuCoin returns headers gw-ratelimit-limit 2000 per window (window about 30 s, reset values 29976 and 3959 ms); remaining 1997 after the first call, 1949 at run 2 start. A U67-S run needs 268 requests in ~96 s, well below the limit. Burst test: 40 back-to-back requests without pause: 40 x HTTP 200, max latency 0.324 s, remaining 1871. No 429 or retry-after was observed. Note C11 and LONG-M1 (132 requests each) run from the same GitHub IP pool at different minutes (:05/:35 and :12/:42; U67-S proposed :19/:49), so windows do not overlap.
+ B) Guard test (job 'guard'): the job turned red ONLY because GitHub runs steps with 'bash -e', which stopped my test harness after the expected failing case; the log shows the exact production guard line behaved correctly: case A (no history, no file) exit 0; case B (file present) exit 0; case C (file in history, missing) printed STATE_FILE_MISSING_BUT_IN_HISTORY and exited 1. The production workflow is not affected (the guard is its own step). A re-run was not done (harness defect only; evidence is in the log).
+ C) Concurrent commit/rebase (job 'race', 4 parallel jobs pushing to the scratch branch at the same epoch with the production loop 'pull --rebase + push, 3 attempts, sleep 5'): race(c11) OK, race(longm1) OK, race(u67) OK; race(signal) FAILED as designed: it uses the OLD V3 bot's pattern (single attempt, no retry). Conclusion: the production retry loop absorbs 4-way simultaneous contention; the old V3 bot's workflow (daily_signal.yml, every 15 minutes, edited today 22:12 Tehran) has NO retry and can fail when it collides (it is not part of any track and is not touched). Also seen: other workflows with schedules exist (check_signals.yml etc.); under real operation the dispatch minutes are staggered so a 4-way simultaneous collision is not expected.
+ D) NOT tested (cannot be tested safely without altering cron-job.org or production):
+    - the real cron-job.org dispatch of the NEW workflow (job creation, token scope for the new workflow file, and delay between the cron time and the run start). The preflight was started by hand, so its queue latency is not representative; the 'verify' job output with the queue timing was not reviewed.
+    - collision behaviour against REAL commits to main from C11, LONG-M1 and the old V3 bot (proven only on an isolated branch, with the same loop).
+    - behaviour after more than 3 failed push attempts (the workflow fails with PUSH_FAILED_AFTER_3_ATTEMPTS and the state change is retried at the next run; the state file would be committed later, nothing is lost because the engine re-derives from candles; this is an inference from the engine design, not a run).
+    - the DEGRADED path with live data (tested synthetically only, in the 90-test suite).
+    - behaviour of a real gap in a live symbol.
+
+=====================================================================
+6. GATE 6 - EVALUATOR (built, hashed, tested on synthetic data only)
+=====================================================================
+evaluate_u67.py          e94c8ebe86da7305dd866077ed8ed145d0c5f1ce5c19ab0c1428af8e55f5b32d
+test_evaluator.py        41b0103fe638ba9dd34b40f48975717789797ac3ddafb8c65ce600366e3bd461 (re-hashed 2026-10-29 after the run; unchanged)
+test_evaluator_result.log 966973b33a95a7e00328865add722d22199454b23117987f358f33d11cb6906b  (all PASS, FAILS [])
+Properties: read-only (git show/log only); 'scan' mode prints counts only; 'evaluate' refuses to run (exit 3) unless the trigger holds in git history, and always evaluates the FIRST committed state that satisfies the trigger (evaluation instant = its commit time; the registrar's time is irrelevant); deterministic (byte-identical reruns; fixed seed 20261028; no clock use).
+Tests (synthetic data, independent recomputation in plain loops): S0/S3/S3a/S3b/S1/S2 cluster means; bootstrap CI (20000 draws, seed 20261028) and P(mean>0); jackknife (largest cluster by S3 cluster-mean, best month by S3 sum of cluster outcomes, ties to the earlier); first-15 selection (later clusters excluded); trigger blocked by an open trade, not blocked once UNRESOLVED; UNRESOLVED boundary: 44d23h not, exactly 45d yes; UNRESOLVED counted as -1R stop, exit=stop, bars 30, each scenario's own cost, with the sensitivity excluding it; created_at mismatch labelled DEFECT; entries before eligibility are ignored; adjacent-merge chaining; UC1 rule; UC2 outcomes (PAPER GATE PASSED / REJECTED / NOT ESTABLISHED); determinism; refusal when the trigger is false.
+Evaluator choices NOT spelled out in the registration (declared in the script header, covered by its sha256; any change = section 9): (1) a fresh numpy default_rng(20261028) per scenario, one integer draw matrix of shape (20000, n) per scenario (identical resample indices across scenarios); (2) commit time = git committer date; (3) a cluster is complete when commit time >= entry_ts + 90 minutes; (4) max concurrent open trades counted with each trade occupying [entry_ts, exit_ts + 4h); (5) adjacent-merge groups chain clusters whose signal_ts differ by exactly 4 h, merged outcome = equal-weight mean of all trades in the chain; (6) profit factor and drawdown use S3 net R; (7) BTC change is printed only if the registrar supplies the two prices. PLEASE ACKNOWLEDGE (1)-(7).
+Not covered: the evaluator has never run on a real U67-S state (none exists); the first real run happens only at the cluster-15 trigger. Its sha256 must be recorded in the repo before 5 clusters exist (step 9.3).
+
+=====================================================================
+7. GATE 7 - PUBLIC EXPOSURE
+=====================================================================
+The repository is public. Publicly readable: universe snapshot and final selection files; the engine; (after deployment) u67_short_paper_state.json with every signal, entry and, for closed trades, gross_r, net_r and net_r_s3 (the engine stores them at close). Checked today on the live C11 state: closed records contain net_r and gross_r (11 closed trades visible); the LONG-M1 state has 0 closed. Consequence: blinding of R values is procedural only (nobody is to compute or read closed-trade R before a checkpoint); anyone can read them. The U67-S report/log lines drop R figures (registration section 10). Paper-only rule holds: no key or order code exists in any file. No merge/pooling with C11, LONG-M1, V3 or MicroMAP is performed.
+
+=====================================================================
+8. UNRESOLVED RISKS / ITEMS FOR YOUR ACKNOWLEDGEMENT
+=====================================================================
+R1. 53 of the 67 symbols (not among the 14) rest on 'no non-crypto evidence + default-crypto rule' (registered, disclosed). Positive evidence now exists for the 14 named plus 12 earlier.
+R2. M is identified by project name only (page states no chain); CAP/4 have contract addresses. Not a failure.
+R3. Real dispatch timing, real-main collisions, token scope for the new workflow file: untested until deployment (section 5D). Mitigation: first-hour post-deployment check (9.6).
+R4. The old V3 bot workflow (daily_signal.yml) has no push retry and shares main. Not part of any track.
+R5. Evaluator implementation choices (section 6) need your acknowledgement; evaluator untested on real data.
+R6. Public closed-trade R values (section 7).
+R7. Preflight leftovers on main: the preflight workflow file (workflow_dispatch only, no schedule) and the engine file in the repo root (the FINAL engine; inert without a workflow). Say whether you want the preflight workflow removed after deployment; it does no harm and has no schedule.
+R8. GitHub scheduled runs are best-effort; the production workflow keeps the */15 schedule (as C11/LONG-M1); the delay filter (90 min) protects entries. Observed here: nothing contradicting this.
+R9. All decisions are about a 67-symbol universe fixed on one day's turnover (favours currently active names), same-regime dependence with C11/LONG-M1 (registered).
+
+=====================================================================
+9. DEPLOYMENT STEPS (mechanical; to be done only after your 'go')
+=====================================================================
+9.1 Add .github/workflows/paper_u67_short_v1.yml (sha256 7597b7b0...); the file already existing engine in the root is final.
+9.2 (Optional) manual first run of that workflow to create u67_short_paper_state.json; its created_at then defines the earliest eligible entry (eligible_from = max(2026-10-28T12:00Z, created_at)). The first run records no history and no replay.
+9.3 Add evaluate_u67.py, test_evaluator.py, test_evaluator_result.log to the repo and record the sha256 in a committed text file (before 5 clusters exist).
+9.4 Create cron-job.org job 'u67-s-dispatch' with minutes 19 and 49 of hours 0,4,8,12,16,20 UTC using the same fine-grained token (never displayed; expires 2027-01-19); the dispatch URL must name paper_u67_short_v1.yml. U67 LONG jobs later at 26/56 only after the LONG track is started.
+9.5 Add U67-S to the daily counts-only report from the next day.
+9.6 First day checks (counts only): runs green, 67/67 symbols OK, no PUSH_FAILED_AFTER_3_ATTEMPTS, no DEGRADED, state committed.
+Daily consolidated verification of C11 and LONG-M1 continues unchanged; the daily report of 2026-10-29 is pending (waiting for the user's screenshots).
+
+=====================================================================
+10. DAILY CONSOLIDATED VERIFICATION 2026-10-29 (counts only, read-only; replaces a separate monitoring_status_11)
+=====================================================================
+Read at 2026-10-29 ~20:14Z from origin/main (HEAD def202b, 20:13:20Z). Inputs: the user's Actions screenshots (C11 and LONG-M1, top runs all green, durations about 1m00s-1m12s, scheduled and cron-job.org-dispatched runs visible) plus my read-only fetch of both state files. No R value was read or computed; no manual run of a live track was triggered.
+Candidate 11 (SHORT, 33 symbols): symbols 33/33 OK (baseline 33/33); last candle processed 2026-10-29T16:00Z (state commit 3fb5f56, 20:06:29Z, about 6.5 min after the candle closed); errors 0; signals 18 (was 9 on 10-28), closed 12 (was 9), open 6 (was 0), missed 4 (unchanged: 3 ENTRY_DELAY_EXCEEDED, 1 SYMBOL_ALREADY_OPEN, all before 10-22).
+  ESCALATION (new-signal rule): 9 new signals in 3 new strict clusters: signal candle 2026-10-28T20:00Z (5 signals), 2026-10-29T00:00Z (1), 2026-10-29T16:00Z (3). Strict post-B clusters: 6 of the 15 needed for the first checkpoint (3 on 10-21 plus these 3; the 10-18 HBAR cluster is pre-B and stays separate). Adjacent-candle sensitivity (counts only): 10-28T20:00 and 10-29T00:00 are adjacent 4H candles. Open positions are on 6 symbols (3 entered 2026-10-29T00:00Z or earlier, 3 at 2026-10-29T20:00Z). The first checkpoint is NOT triggered (6/15; no open-outcome review). No action is requested; these are counts, not evidence of an edge.
+LONG-M1 (LONG, 33 symbols): symbols 33/33 OK; last candle 2026-10-29T16:00Z (state commit def202b, 20:13:20Z); errors 0; signals 0, open 0, closed 0, missed 0 (eligible_from 2026-10-25T16:42:31Z, unchanged).
+Health: no PUSH_FAILED_AFTER_3_ATTEMPTS visible in the screenshots (all runs green); state commits are linear on main (interleaved with the old V3 bot's signals_log commits and the user's two uploads of 22:53/23:01 Tehran for the preflight). I cannot read the run logs, so a silent rebase retry inside a green run would not be visible to me.
+Public-repo warning (standing): both state files are publicly readable, including the closed trades' R fields; blinding is procedural only and nobody should read or compute closed-trade R before the checkpoint.
+U67-S is not yet part of the daily report (not deployed).

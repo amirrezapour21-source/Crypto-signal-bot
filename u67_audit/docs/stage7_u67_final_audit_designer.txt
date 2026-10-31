@@ -1,0 +1,230 @@
+STAGE 7 - U67-S / U67-L: FINAL PRE-DECISION AUDIT (2026-10-30). New separately hashed document; Stage 4 package (commit 7a86d8ca91ee87fc8e9ceb9e037174504fc2a0c6), Stage 5 (sha 01314ba8...) and Stage 6 (sha 4d9ee909...) are preserved unchanged. Audit only: no deployment, no workflow placement, no cron-job.org change, no dispatch, no U67 tracking, no measured funding, C11 / LONG-M1 / V3 / MicroMAP untouched.
+
+1. INDEPENDENT CALCULATION RESULTS
+Script and log are appended below (Appendices A-B); sha256: script a9186c73ccb6f9301eb4e00ef2c6d52fbeebe7e605b68ef585eeca62e2d5ee74; log b62f26a9d92c1086e1c78b5c15aaef72ef2b334c8777d28bb7cc5fa91bb38df2. The script uses explicit second-resolution timestamp SETS over a 10-day horizon (not formulas) and does not import the engines.
+- 30 bars = 120 h: PASS.
+- Event counts (all six 4H entry hours, four conventions in/in, in/ex, ex/in, ex/ex): 8h aligned entry (00/08/16): 16/15/15/14; 8h unaligned entry (04/12/20): 15/15/15/15; 4h: 31/30/30/29; 1h: 121/120/120/119. All 18 combinations match the Stage 6 table: 0 discrepancies.
+- Rate normalisation: 0.10%/8h = 0.05%/4h = 0.0125%/1h under a time-proportional equivalence (an assumption, not data); total over 120 h identical (1.50%). One-event R impact: 8h event 0.10%: 0.0667R (1.5% risk) / 0.0333R (3%); 4h event 0.05%: 0.0333R / 0.0167R; 1h event 0.0125%: 0.0083R / 0.0042R.
+- Early SL/TP exits: an exit inside a bar pays only settlements before the exit instant (examples in the log: exit 60 s after entry at 04:00 -> 0 events; at 00:00 -> 1). Positions closed 1 s before / exactly at / 1 s after a settlement: 1 / 1 or 2 / 2 events depending on whether an exit at the timestamp counts (UNRESOLVED, official text silent).
+- Stage 5 spot checks: L real -1.00R / -0.50R (0.10%/8h, 30 bars, 1.5% / 3% risk), flat -0.10R / -0.05R: PASS.
+DISCREPANCY (registrar's own test, not a result): the first run of the script FAILED one assertion because my expected value was wrong (I asserted 0 events for an entry-inclusive position closed 1 s before settlement; correct is 1 because the entry instant at 00:00 counts under that convention). I corrected the expectation and re-ran: 27 PASS, FAILS []. Both logs are preserved (first-run log sha 3cae31a117866d5547dfb953bc3f8f7ab6c7b6607580d3e6fa3dab0a2819e94c). The enumeration is analysis of conventions; it is NOT actual funding history.
+
+2. CONTRACT MAPPING (Appendix C; sha256 c902f07e4f8c13b861a79a629be42ce33df87d1f230e48ce9260c0712b3f7d2e)
+Source: only the committed snapshot u67_universe_snapshot.json (KuCoin contracts/active, request end 2026-10-28T05:26:57Z, raw sha recorded in the file). No new network call (the registrar's sandbox cannot reach the exchange API).
+Coverage: 67 of 67 symbols found in the snapshot, all quote = settle = USDT, isInverse False, not quanto, type FFWCSX (perpetual), status Open -> all 67 are USDT-settled perpetuals, so the cited interval mechanism applies to all 67 (per the announcement: all USDT/USDC perpetuals, effective after 2026-08-17 08:00 UTC).
+UNKNOWN: baseline settlement interval for every one of the 67 (snapshot did not keep fundingRateGranularity / funding rate fields) and any per-contract exceptions: 134 UNKNOWN cells (67 baseline + 67 exception). General documentation (not per-contract): major pairs settle every 8h, most other pairs every 4h, 1h in strong premium/discount; which of the 67 are "major" is UNKNOWN.
+KNOWN EXCEPTION found: POWERUSDTM is in the universe; KuCoin announced POWERUSDT funding interval 1h -> 4h effective 2026-03-06 08:00 UTC (official announcement read). Its current interval after the 2026-08 automatic mechanism is UNKNOWN. Other interval-change announcements exist for other tickers (BP, ALPINE, ESPORTS appear in search titles); none of those tickers is in the 67 (checked by symbol).
+To close the UNKNOWN cells a read-only fetch of contracts/active with fundingRateGranularity (and later funding history) would be needed: this requires the designer's explicit authorization (it is an external connection); NOT done.
+
+3. FUNDING MODEL CONCLUSION
+The flat proxy (0.00010 x bars x 0.5, always a cost, entry notional) stays frozen. It cannot validate realized net R: no actual settlement timestamps, no per-contract interval, no funding rates, no mark-price notionals (KuCoin charges position value at the mark price at settlement time x rate), no position eligibility (held at settlement). S3 / S3a / S3b funding-adjusted performance: UNVALIDATED. No hypothetical S4 numbers are presented as performance; all numbers above are sensitivities of a formula.
+
+4. G1 / G2 STATUS AND RESPONSE COLLECTION
+G1: CONDITIONALLY CLOSED, pending C2. G2: OPEN, 0 of 23 responses. The designer's Stage 7 message contains no per-item decisions; no response is inferred, defaulted or recorded on the designer's behalf; no recommendation was converted into an approval. Evidence of origin for future responses: the registrar will record the designer's reply text verbatim with the date it was relayed by the user. EXACT 23-ITEM RESPONSE SHEET (reply one line per item: ACCEPTED / REJECTED / OPEN + rationale; item definitions in Stage 5 Part 1):
+(1) bootstrap seeds | (2) commit time = committer date | (3) cluster complete at entry+90 min | (4) max concurrent open trades | (5) adjacent-merge sensitivity | (6) PF/drawdown on S3 net R | (7) BTC change only if supplied | (8) jackknife cluster-mean reading (LONG-M1 wording unchanged) | (9) 120/240-day rate caps | (10) count-only trigger | (11) 45-day UNRESOLVED rule
+R1 public state | R2 fixed universe | R3 shared regime | R4 V3 push without retry | R5 untested real dispatch | R6 53-symbol classification | R7 funding model (this document, sections 1-3) | R8 evaluators unrun on real data | R9 untested main collisions | R10 old push-loop threshold
+C1 naming (A: registered names kept, v3 content, hashes recorded / B: rename + registration amendment) | C2 bundle form of the audit package
+Optional separate request for the designer (NOT part of the 23): authorize a read-only fetch of contract metadata (fundingRateGranularity) to fill the 134 UNKNOWN cells.
+
+5. VERDICTS
+U67-S: G1 conditionally closed (C2); G2 open 0/23; funding validation limited as above. NOT READY.
+U67-L: G1 conditionally closed (C2); G2 open 0/23; funding exposure highest on the long side. NOT READY.
+Deployment requires a separate explicit authorization even after G2 closes.
+
+===== APPENDIX A: stage7_funding_enum.py =====
+#!/usr/bin/env python3
+# Stage 7 independent re-computation of funding-settlement event counts (analysis only; no engine/evaluator import).
+# Uses explicit integer-second timestamp SETS (not formulas) for settlement times over a 10-day horizon starting 2026-01-05T00:00Z (arbitrary Monday).
+import itertools, sys
+H=3600; BAR=4*H; DAY=24*H
+T0=0                      # 2026-01-05T00:00:00Z as relative second 0
+HORIZON=10*DAY
+fails=[]
+def check(c,msg):
+    print(("PASS " if c else "FAIL ")+msg)
+    if not c: fails.append(msg)
+def stamps(interval_h, phase_h=0):
+    return {t for t in range(phase_h*H, HORIZON, interval_h*H)}
+def count(S, entry, exit_, e_incl, x_incl):
+    n=0
+    for t in S:
+        a = t>=entry if e_incl else t>entry
+        b = t<=exit_ if x_incl else t<exit_
+        if a and b: n+=1
+    return n
+CONV=[("in/in",True,True),("in/ex",True,False),("ex/in",False,True),("ex/ex",False,False)]
+check(30*BAR==120*H,"30 bars x 4h = 120 hours")
+EXPECT={ (8,"aligned"):(16,15,15,14),(8,"unaligned"):(15,15,15,15),(4,"any"):(31,30,30,29),(1,"any"):(121,120,120,119)}
+for ih in (8,4,1):
+    S=stamps(ih)
+    for hour in (0,4,8,12,16,20):
+        entry=2*DAY+hour*H; exit_=entry+30*BAR
+        got=tuple(count(S,entry,exit_,e,x) for _,e,x in CONV)
+        if ih==8: key=(8,"aligned" if hour%8==0 else "unaligned")
+        else: key=(ih,"any")
+        check(got==EXPECT[key],"interval %dh entry hour %02d: counts in/in,in/ex,ex/in,ex/ex = %s expected %s"%(ih,hour,got,EXPECT[key]))
+# early SL/TP exits: exit inside bar k (k bars started, exit after f seconds of the last bar)
+print("\nEarly exits, 8h interval, entry 00:00 (aligned) and 04:00, convention in/ex (entry counts, exit instant does not):")
+S8=stamps(8)
+for hour in (0,4):
+    entry=2*DAY+hour*H
+    for k,f in ((1,60),(2,BAR-1),(3,1),(6,BAR//2),(15,BAR-1),(30,BAR//2),(30,BAR)):
+        exit_=entry+(k-1)*BAR+f
+        print("  entry %02d:00 exit after bar %d +%ds: events %d"%(hour,k,f,count(S8,entry,exit_,True,False)))
+# a position closed immediately before / at / after a settlement
+t=2*DAY+8*H
+for lab,ex in (("1s before",t-1),("exactly at",t),("1s after",t+1)):
+    c=[count(S8,2*DAY,ex,True,x) for x in (False,True)]
+    print("  entry 2026-01-07T00:00 closed %s the 08:00 settlement: events (exit excl/incl) = %s"%(lab,c))
+check(count(S8,2*DAY,t-1,True,False)==1 and count(S8,2*DAY,t+1,True,False)==2,"closed 1s before 08:00 settlement pays only the entry-instant event; 1s after pays 2 (00:00 entry-inclusive + 08:00)")
+# rate normalisation: r8 per 8h expressed per event for 4h and 1h interval (time-proportional assumption, NOT data)
+print("\nRate normalisation (time-proportional equivalence; an assumption, not funding history):")
+r8=0.0010
+r4,r1=r8*4/8,r8*1/8
+check(abs(r4-0.0005)<1e-12 and abs(r1-0.000125)<1e-12,"0.10%%/8h = %.4f%%/4h = %.5f%%/1h"%(r4*100,r1*100))
+check(abs(15*r8-30*r4)<1e-12 and abs(15*r8-120*r1)<1e-12,"total over 120h identical: 15x0.10%% = 30x0.05%% = 120x0.0125%% = 1.50%%")
+print("\nOne-event R impact (event rate / risk%):")
+for rp in (0.015,0.03):
+    for lab,r in (("0.10%/8h",r8),("0.05%/4h",r4),("0.0125%/1h",r1),("0.01%/8h",0.0001)):
+        print("  risk %.1f%%  event rate %-10s -> %.4f R"%(rp*100,lab,r/rp))
+check(abs(r8/0.015-0.0667)<1e-3 and abs(r8/0.03-0.0333)<1e-3,"one 8h event at 0.10%: 0.0667R (1.5% risk), 0.0333R (3%)")
+check(abs(r4/0.015-0.0333)<1e-3 and abs(r4/0.03-0.0167)<1e-3,"one 4h event at 0.05%: 0.0333R (1.5%), 0.0167R (3%)")
+# Stage 5/6 table spot checks: 30 bars, 15 events
+for rp,expL in ((0.015,-1.0),(0.03,-0.5)):
+    check(abs(-15*r8/rp-expL)<1e-9,"L real funding +0.10%%/8h, 30 bars, risk %.1f%%: %.2fR"%(rp*100,expL))
+check(abs(-0.00005*30/0.015+0.10)<1e-9 and abs(-0.00005*30/0.03+0.05)<1e-9,"flat engine charge 30 bars: -0.10R (1.5%), -0.05R (3%)")
+print("\nFAILS:",fails); sys.exit(1 if fails else 0)
+
+===== APPENDIX B: stage7_funding_enum_result.log =====
+PASS 30 bars x 4h = 120 hours
+PASS interval 8h entry hour 00: counts in/in,in/ex,ex/in,ex/ex = (16, 15, 15, 14) expected (16, 15, 15, 14)
+PASS interval 8h entry hour 04: counts in/in,in/ex,ex/in,ex/ex = (15, 15, 15, 15) expected (15, 15, 15, 15)
+PASS interval 8h entry hour 08: counts in/in,in/ex,ex/in,ex/ex = (16, 15, 15, 14) expected (16, 15, 15, 14)
+PASS interval 8h entry hour 12: counts in/in,in/ex,ex/in,ex/ex = (15, 15, 15, 15) expected (15, 15, 15, 15)
+PASS interval 8h entry hour 16: counts in/in,in/ex,ex/in,ex/ex = (16, 15, 15, 14) expected (16, 15, 15, 14)
+PASS interval 8h entry hour 20: counts in/in,in/ex,ex/in,ex/ex = (15, 15, 15, 15) expected (15, 15, 15, 15)
+PASS interval 4h entry hour 00: counts in/in,in/ex,ex/in,ex/ex = (31, 30, 30, 29) expected (31, 30, 30, 29)
+PASS interval 4h entry hour 04: counts in/in,in/ex,ex/in,ex/ex = (31, 30, 30, 29) expected (31, 30, 30, 29)
+PASS interval 4h entry hour 08: counts in/in,in/ex,ex/in,ex/ex = (31, 30, 30, 29) expected (31, 30, 30, 29)
+PASS interval 4h entry hour 12: counts in/in,in/ex,ex/in,ex/ex = (31, 30, 30, 29) expected (31, 30, 30, 29)
+PASS interval 4h entry hour 16: counts in/in,in/ex,ex/in,ex/ex = (31, 30, 30, 29) expected (31, 30, 30, 29)
+PASS interval 4h entry hour 20: counts in/in,in/ex,ex/in,ex/ex = (31, 30, 30, 29) expected (31, 30, 30, 29)
+PASS interval 1h entry hour 00: counts in/in,in/ex,ex/in,ex/ex = (121, 120, 120, 119) expected (121, 120, 120, 119)
+PASS interval 1h entry hour 04: counts in/in,in/ex,ex/in,ex/ex = (121, 120, 120, 119) expected (121, 120, 120, 119)
+PASS interval 1h entry hour 08: counts in/in,in/ex,ex/in,ex/ex = (121, 120, 120, 119) expected (121, 120, 120, 119)
+PASS interval 1h entry hour 12: counts in/in,in/ex,ex/in,ex/ex = (121, 120, 120, 119) expected (121, 120, 120, 119)
+PASS interval 1h entry hour 16: counts in/in,in/ex,ex/in,ex/ex = (121, 120, 120, 119) expected (121, 120, 120, 119)
+PASS interval 1h entry hour 20: counts in/in,in/ex,ex/in,ex/ex = (121, 120, 120, 119) expected (121, 120, 120, 119)
+
+Early exits, 8h interval, entry 00:00 (aligned) and 04:00, convention in/ex (entry counts, exit instant does not):
+  entry 00:00 exit after bar 1 +60s: events 1
+  entry 00:00 exit after bar 2 +14399s: events 1
+  entry 00:00 exit after bar 3 +1s: events 2
+  entry 00:00 exit after bar 6 +7200s: events 3
+  entry 00:00 exit after bar 15 +14399s: events 8
+  entry 00:00 exit after bar 30 +7200s: events 15
+  entry 00:00 exit after bar 30 +14400s: events 15
+  entry 04:00 exit after bar 1 +60s: events 0
+  entry 04:00 exit after bar 2 +14399s: events 1
+  entry 04:00 exit after bar 3 +1s: events 1
+  entry 04:00 exit after bar 6 +7200s: events 3
+  entry 04:00 exit after bar 15 +14399s: events 7
+  entry 04:00 exit after bar 30 +7200s: events 15
+  entry 04:00 exit after bar 30 +14400s: events 15
+  entry 2026-01-07T00:00 closed 1s before the 08:00 settlement: events (exit excl/incl) = [1, 1]
+  entry 2026-01-07T00:00 closed exactly at the 08:00 settlement: events (exit excl/incl) = [1, 2]
+  entry 2026-01-07T00:00 closed 1s after the 08:00 settlement: events (exit excl/incl) = [2, 2]
+PASS closed 1s before 08:00 settlement pays only the entry-instant event; 1s after pays 2 (00:00 entry-inclusive + 08:00)
+
+Rate normalisation (time-proportional equivalence; an assumption, not funding history):
+PASS 0.10%/8h = 0.0500%/4h = 0.01250%/1h
+PASS total over 120h identical: 15x0.10%% = 30x0.05%% = 120x0.0125%% = 1.50%%
+
+One-event R impact (event rate / risk%):
+  risk 1.5%  event rate 0.10%/8h   -> 0.0667 R
+  risk 1.5%  event rate 0.05%/4h   -> 0.0333 R
+  risk 1.5%  event rate 0.0125%/1h -> 0.0083 R
+  risk 1.5%  event rate 0.01%/8h   -> 0.0067 R
+  risk 3.0%  event rate 0.10%/8h   -> 0.0333 R
+  risk 3.0%  event rate 0.05%/4h   -> 0.0167 R
+  risk 3.0%  event rate 0.0125%/1h -> 0.0042 R
+  risk 3.0%  event rate 0.01%/8h   -> 0.0033 R
+PASS one 8h event at 0.10%: 0.0667R (1.5% risk), 0.0333R (3%)
+PASS one 4h event at 0.05%: 0.0333R (1.5%), 0.0167R (3%)
+PASS L real funding +0.10%/8h, 30 bars, risk 1.5%: -1.00R
+PASS L real funding +0.10%/8h, 30 bars, risk 3.0%: -0.50R
+PASS flat engine charge 30 bars: -0.10R (1.5%), -0.05R (3%)
+
+FAILS: []
+
+===== APPENDIX C: stage7_u67_contract_mapping.txt =====
+U67 CONTRACT MAPPING (Stage 7) - read-only, derived ONLY from the committed snapshot u67_universe_snapshot.json (KuCoin contracts/active, request end 2026-10-28T05:26:57.612392+00:00, snapshot raw sha 6176f7deb0c7...). No new network call. The snapshot did not keep fundingRateGranularity / fundingFeeRate fields, so baseline interval and exceptions are UNKNOWN for every contract; nothing inferred.
+
+symbol|contract_id_in_snapshot|quote|settle|isInverse|isQuanto|type|status|firstOpen_utc|interval_mechanism_applies|baseline_interval|exceptions
+ZECUSDTM|ZECUSDTM|USDT|USDT|False|False|FFWCSX|Open|2021-01-15|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+IRYSUSDTM|IRYSUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-26|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+EVAAUSDTM|EVAAUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-03|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+HYPEUSDTM|HYPEUSDTM|USDT|USDT|False|False|FFWCSX|Open|2024-12-20|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+KCSUSDTM|KCSUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-01-27|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ASTERUSDTM|ASTERUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-19|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+TIAUSDTM|TIAUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-11-01|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+USELESSUSDTM|USELESSUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-07-14|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+QUSDTM|QUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-02|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+XMRUSDTM|XMRUSDTM|USDT|USDT|False|False|FFWCSX|Open|2021-04-14|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+PENGUUSDTM|PENGUUSDTM|USDT|USDT|False|False|FFWCSX|Open|2024-12-17|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+SOONUSDTM|SOONUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-05-23|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+LIGHTUSDTM|LIGHTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-27|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+AINUSDTM|AINUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-07-10|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ENAUSDTM|ENAUSDTM|USDT|USDT|False|False|FFWCSX|Open|2024-04-02|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+PUMPUSDTM|PUMPUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-07-14|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+TAOUSDTM|TAOUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-12-27|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+LDOUSDTM|LDOUSDTM|USDT|USDT|False|False|FFWCSX|Open|2022-08-04|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+NIGHTUSDTM|NIGHTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-12-09|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+GRAMUSDTM|GRAMUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-06-17|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+1000BONKUSDTM|1000BONKUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-11-24|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ICNTUSDTM|ICNTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-07-03|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+CAKEUSDTM|CAKEUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-11-03|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+XANUSDTM|XANUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-29|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+WLDUSDTM|WLDUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-07-24|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+METUSDTM|METUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-11|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ARCUSDTM|ARCUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-25|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+SUSDTM|SUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-01-21|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+APRUSDTM|APRUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-23|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ZEREBROUSDTM|ZEREBROUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-01-02|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ZORAUSDTM|ZORAUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-07-25|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+QNTUSDTM|QNTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-03-08|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+MUSDTM|MUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-07-07|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+CRVUSDTM|CRVUSDTM|USDT|USDT|False|False|FFWCSX|Open|2021-02-25|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+0GUSDTM|0GUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-18|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ZBTUSDTM|ZBTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-17|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+JCTUSDTM|JCTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-10|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+FETUSDTM|FETUSDTM|USDT|USDT|False|False|FFWCSX|Open|2023-02-14|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ONDOUSDTM|ONDOUSDTM|USDT|USDT|False|False|FFWCSX|Open|2024-01-24|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+CLOUSDTM|CLOUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-14|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+DOODUSDTM|DOODUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-05-09|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+BTWUSDTM|BTWUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-06-05|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+MYXUSDTM|MYXUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-06-18|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+MOODENGUSDTM|MOODENGUSDTM|USDT|USDT|False|False|FFWCSX|Open|2024-10-04|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+HEMIUSDTM|HEMIUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-08-29|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+BEATUSDTM|BEATUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-12|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+AVNTUSDTM|AVNTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-09|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+CAPUSDTM|CAPUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-06-28|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ZKPUSDTM|ZKPUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-12-19|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+ALLOUSDTM|ALLOUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-11|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+AKEUSDTM|AKEUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-08-21|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+DASHUSDTM|DASHUSDTM|USDT|USDT|False|False|FFWCSX|Open|2021-01-15|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+HUSDTM|HUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-06-25|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+WETUSDTM|WETUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-12-09|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+4USDTM|4USDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-08|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+PIEVERSEUSDTM|PIEVERSEUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-14|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+KGENUSDTM|KGENUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-10-07|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+VIRTUALUSDTM|VIRTUALUSDTM|USDT|USDT|False|False|FFWCSX|Open|2024-12-04|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+POWERUSDTM|POWERUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-12-06|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+CASHCATUSDTM|CASHCATUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-08-25|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+AEONUSDTM|AEONUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-07-28|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+CHIPUSDTM|CHIPUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-04-16|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+LONGXIAUSDTM|LONGXIAUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-08-27|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+GENIUSUSDTM|GENIUSUSDTM|USDT|USDT|False|False|FFWCSX|Open|2026-04-16|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+TRUSTUSDTM|TRUSTUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-05|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+FOLKSUSDTM|FOLKSUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-11-06|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN
+EDENUSDTM|EDENUSDTM|USDT|USDT|False|False|FFWCSX|Open|2025-09-30|YES (USDT-settled perpetual)|UNKNOWN|UNKNOWN

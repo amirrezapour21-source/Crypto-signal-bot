@@ -1,0 +1,26 @@
+STAGE 12 RECORD - FINAL CONSOLIDATION RECEIVED (2026-10-30, relayed by the user ~23:56 Tehran). New separately hashed document; Stage 11 (sha 8609f8fa...) and all earlier documents preserved. No registration/engine/evaluator edit, no workflow placement, no cron-job.org change, no dispatch, no API fetch, no U67 tracking; C11 / LONG-M1 / V3 / MicroMAP untouched. Nothing implemented.
+
+1. RECEIVED
+Section A (consolidated specification) and B (Appendix A authentication) were sent as the unanswered option lists "CONFIRMED / AMENDED / NOT CONFIRMED": NO option selected. Recorded: A = NO ANSWER, B = NO ANSWER. Not inferred. Appendix A authentication status stays NOT CONFIRMED (last explicit status); consolidated specification stays UNCONFIRMED.
+Sections C (Q1-Q6), D, E were sent with "ACCEPTED" and wording; F restates the boundary. Recorded verbatim in substance below as the working specification, authored/authenticated by: not verified (relayed by the user as the designer's message; the text calls Q1-Q6 "the registrar's recommended defaults").
+
+2. WORKING SPECIFICATION - CLOSED GAPS (recorded, not applied)
+Q1 sensitivities use the exact same selected N-cluster cohort and evaluation snapshot as the primary; within them censored trades get gross R = -1 (-1R test) and -2 (-2R test); no other cluster set, no extended window. NOTE: this REPLACES the registrar's earlier proposal (full signal_ts order incl. censored clusters).
+Q2 censoring applies to S0, S1, S2, S3, S3a, S3b; b2 guard and -1R/-2R sensitivities on S3 only; others informational.
+Q3 v1 cost formulas and stored entry/risk/stop, 30 bars held; only gross R changes (-1 / -2); cost model unchanged.
+Q4 binding UC1/UL1 rejection stays on the primary S3 cluster-mean <= 0; b2 only restricts passing.
+Q5 cap rule unchanged: observed rate, no verdict if N is not reached.
+Q6 the v2 package audit verifies that both v2 registrations contain the exact approved waiver, the eligibility constants (S 2026-10-28T12:00Z, L 2026-10-30T12:00Z) and the disclosure, and that engine constants and hashes are unchanged (engine sha S aa1d7ac0..., L 2197368b...).
+D v2 registrations/evaluators/tests/logs/manifest only after confirmation; v1 unchanged; counter 0; tracks isolated.
+E original 37 files uploaded once, after v2, in ONE consolidated commit; every original and new path and hash verified; then G1 closes.
+
+3. REGISTRAR NOTE ON Q1 (disclosure, not reopening a settled item)
+Under Q1, a CENSORED CLUSTER (zero resolved trades) is outside the N-cohort, so neither the -1R/-2R sensitivities nor the b2 guard can see it; it appears only as a disclosed count. A fully censored cluster (e.g. a delisted symbol alone in its signal candle) therefore cannot lower any sensitivity. The v2 text will state this limitation explicitly next to the censored-cluster count; no rule is added unless the designer asks.
+
+4. STATE OF THE EXECUTION SEQUENCE
+Step 1 (explicit confirmation of the consolidated specification and Appendix A status): NOT COMPLETE - A and B unanswered. Steps 2-4 (v2 package, single path-level commit, closing G2 and G1): NOT STARTED; per the designer's own sequence, v2 is prepared only after confirmation.
+REQUIRED NOW (two words from the designer): A = CONFIRMED | AMENDED | NOT CONFIRMED; B = CONFIRMED | AMENDED | NOT CONFIRMED.
+
+5. GATES AND VERDICTS
+G1 OPEN. G2 OPEN. Funding-adjusted S3/S3a/S3b UNVALIDATED.
+U67-S: NOT READY. U67-L: NOT READY. Deployment requires separate explicit authorization.

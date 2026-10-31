@@ -1,0 +1,7 @@
+SCHEDULING DESIGN (Stage 4, item 5) - design only, NOT deployed, NOT tested with real cron-job.org dispatch
+- Workflows v2: workflow_dispatch ONLY. No `schedule:` trigger (verified by test in tests/test_u67*.py).
+- cron-job.org (NOT created, NOT modified): U67-S minutes 19 and 49; U67-L minutes 26 and 56; hours 0,4,8,12,16,20 UTC.
+- 12 workflow invocations per day per track (6 hours x 2 minutes). Effective closed-candle state updates: at most 6 per day (one per 4H candle). The second invocation of each hour is a retry/redundancy; engine is idempotent.
+- Concurrency group per track, cancel-in-progress false: tested on GitHub (3 simultaneous dispatches: 2 success, 1 cancelled, no state loss).
+- Push retry: v2 loop (6 attempts, jitter 2-9 s). Preflight 3 (isolated branch): 8 simultaneous pushers all succeeded (max 4 attempts).
+NOT TESTED: a real cron-job.org dispatch of the new workflows; a collision with real commits on main from C11, LONG-M1, V3 or the user. C11 / LONG-M1 / V3 keep the old retry logic (R10).
