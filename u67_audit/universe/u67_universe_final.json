@@ -1,0 +1,1217 @@
+{
+ "crypto_channel_evidence": {
+  "AEONUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "BASEDUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "BILLUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "BLENDUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "CHIPUSDTM": "KuCoin new listing 'Pre-Market Trading' announcement",
+  "CTRUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "EDGEUSDTM": "KuCoin new listing 'Pre-Market Trading' announcement",
+  "FOLKSUSDTM": "KuCoin new listing 'Up to 50x Leverage' announcement",
+  "GENIUSUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "LABUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "OUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "POWERUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "PROSUSDTM": "KuCoin new listing 'Up to 20x Leverage' announcement",
+  "SPXUSDTM": "SPX6900 token listed on KuCoin (crypto), not an equity index",
+  "TRUSTUSDTM": "KuCoin new listing 'Up to 50x Leverage' announcement"
+ },
+ "decision_log": [
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 1,
+   "symbol": "ZECUSDTM",
+   "turnoverOf24h": 95647832.6312
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 2,
+   "symbol": "IRYSUSDTM",
+   "turnoverOf24h": 38486952.4078
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 3,
+   "symbol": "EVAAUSDTM",
+   "turnoverOf24h": 33377599.8488
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 4,
+   "symbol": "HYPEUSDTM",
+   "turnoverOf24h": 29494587.845
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 5,
+   "symbol": "KCSUSDTM",
+   "turnoverOf24h": 29071914.7632
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 6,
+   "symbol": "ASTERUSDTM",
+   "turnoverOf24h": 27321190.89314
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 7,
+   "symbol": "TIAUSDTM",
+   "turnoverOf24h": 26757840.2844
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 8,
+   "symbol": "USELESSUSDTM",
+   "turnoverOf24h": 25318655.201
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 588,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 9,
+   "symbol": "QUSDTM",
+   "turnoverOf24h": 24469172.286
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 10,
+   "symbol": "XMRUSDTM",
+   "turnoverOf24h": 22446608.1064
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 11,
+   "symbol": "PENGUUSDTM",
+   "turnoverOf24h": 20529298.50828
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 12,
+   "symbol": "SOONUSDTM",
+   "turnoverOf24h": 20108627.4978
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 13,
+   "symbol": "LIGHTUSDTM",
+   "turnoverOf24h": 19187786.42584
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 585,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 14,
+   "symbol": "AINUSDTM",
+   "turnoverOf24h": 18968064.7316
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 15,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "PAXGUSDTM",
+   "turnoverOf24h": 17456630.15624
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 16,
+   "symbol": "ENAUSDTM",
+   "turnoverOf24h": 16498191.92462
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 17,
+   "symbol": "PUMPUSDTM",
+   "turnoverOf24h": 15977192.86
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 18,
+   "symbol": "TAOUSDTM",
+   "turnoverOf24h": 15322457.6644
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 19,
+   "symbol": "LDOUSDTM",
+   "turnoverOf24h": 14231663.75454
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 20,
+   "symbol": "NIGHTUSDTM",
+   "turnoverOf24h": 12575441.8332
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 21,
+   "symbol": "GRAMUSDTM",
+   "turnoverOf24h": 12393244.115
+  },
+  {
+   "action": "EXCLUDED",
+   "evidence": "KuCoin TradFi stock contract (Tesla)",
+   "rank": 22,
+   "reason": "NON_CRYPTO_EVIDENCED",
+   "symbol": "TSLAUSDTM",
+   "turnoverOf24h": 12364105.6572
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 23,
+   "symbol": "1000BONKUSDTM",
+   "turnoverOf24h": 12347796.238
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 24,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "MUUSDTM",
+   "turnoverOf24h": 12282641.453
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 25,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "SNDKUSDTM",
+   "turnoverOf24h": 12132247.382
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 26,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "SOXLUSDTM",
+   "turnoverOf24h": 11786126.4986
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 27,
+   "symbol": "ICNTUSDTM",
+   "turnoverOf24h": 11236622.5674
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 28,
+   "symbol": "CAKEUSDTM",
+   "turnoverOf24h": 9226767.1306
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 29,
+   "symbol": "XANUSDTM",
+   "turnoverOf24h": 8870549.73276
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 30,
+   "symbol": "WLDUSDTM",
+   "turnoverOf24h": 8320216.9044
+  },
+  {
+   "action": "REJECTED",
+   "candle": {
+    "completed": 167,
+    "contiguous_ok": false,
+    "detail": "INSUFFICIENT_CANDLES:167",
+    "eligible": false,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 31,
+   "reason": "CANDLE_RULE:INSUFFICIENT_CANDLES:167",
+   "symbol": "CTUSDTM",
+   "turnoverOf24h": 8115250.5664
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 32,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "SPCXUSDTM",
+   "turnoverOf24h": 7872064.5524
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 33,
+   "symbol": "METUSDTM",
+   "turnoverOf24h": 7564918.917
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 34,
+   "symbol": "ARCUSDTM",
+   "turnoverOf24h": 7453158.84596
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 35,
+   "symbol": "SUSDTM",
+   "turnoverOf24h": 6992963.96478
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 36,
+   "symbol": "APRUSDTM",
+   "turnoverOf24h": 6536018.5152
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 37,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "SKHYNIXUSDTM",
+   "turnoverOf24h": 6079535.18524
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 38,
+   "symbol": "ZEREBROUSDTM",
+   "turnoverOf24h": 5673146.068144
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 39,
+   "symbol": "ZORAUSDTM",
+   "turnoverOf24h": 5346313.0752
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 588,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 40,
+   "symbol": "QNTUSDTM",
+   "turnoverOf24h": 5310186.3148
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 41,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "CRCLUSDTM",
+   "turnoverOf24h": 5288586.9066
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 42,
+   "symbol": "MUSDTM",
+   "turnoverOf24h": 4864410.028
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 43,
+   "symbol": "CRVUSDTM",
+   "turnoverOf24h": 4293942.738
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 44,
+   "symbol": "0GUSDTM",
+   "turnoverOf24h": 4108294.54926
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 45,
+   "symbol": "ZBTUSDTM",
+   "turnoverOf24h": 4041401.3214
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 46,
+   "symbol": "JCTUSDTM",
+   "turnoverOf24h": 3985073.1644
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 47,
+   "symbol": "FETUSDTM",
+   "turnoverOf24h": 3891626.066
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 48,
+   "symbol": "ONDOUSDTM",
+   "turnoverOf24h": 3810320.714
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 49,
+   "symbol": "CLOUSDTM",
+   "turnoverOf24h": 3767494.1162
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 50,
+   "symbol": "DOODUSDTM",
+   "turnoverOf24h": 3760957.192
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 51,
+   "symbol": "BTWUSDTM",
+   "turnoverOf24h": 3717907.35804
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 52,
+   "symbol": "MYXUSDTM",
+   "turnoverOf24h": 3709670.9146
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 53,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "SOXSUSDTM",
+   "turnoverOf24h": 3632840.376
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 54,
+   "symbol": "MOODENGUSDTM",
+   "turnoverOf24h": 3590556.817
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 55,
+   "symbol": "HEMIUSDTM",
+   "turnoverOf24h": 3546835.6264
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 56,
+   "symbol": "BEATUSDTM",
+   "turnoverOf24h": 3507880.4552
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 57,
+   "symbol": "AVNTUSDTM",
+   "turnoverOf24h": 3409008.1278
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 58,
+   "symbol": "CAPUSDTM",
+   "turnoverOf24h": 3369547.14
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 59,
+   "symbol": "ZKPUSDTM",
+   "turnoverOf24h": 3244087.9982
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 60,
+   "symbol": "ALLOUSDTM",
+   "turnoverOf24h": 3242120.40602
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 61,
+   "symbol": "AKEUSDTM",
+   "turnoverOf24h": 3222361.308
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 62,
+   "symbol": "DASHUSDTM",
+   "turnoverOf24h": 3205960.7644
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 63,
+   "symbol": "HUSDTM",
+   "turnoverOf24h": 3193826.6758
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 64,
+   "symbol": "WETUSDTM",
+   "turnoverOf24h": 3190002.9814
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 65,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "XAGUSDTM",
+   "turnoverOf24h": 3090841.953
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 66,
+   "symbol": "4USDTM",
+   "turnoverOf24h": 2914734.3498
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 67,
+   "symbol": "PIEVERSEUSDTM",
+   "turnoverOf24h": 2872046.6256
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "snapshot_run_2026-10-28T05:28Z"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 68,
+   "symbol": "KGENUSDTM",
+   "turnoverOf24h": 2831397.5906
+  },
+  {
+   "action": "EXCLUDED",
+   "rank": 69,
+   "reason": "DESIGNER_EXCLUDED_NON_CRYPTO_OR_UNVERIFIED",
+   "symbol": "XAUTUSDTM",
+   "turnoverOf24h": 2830379.73006
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:37.652663+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 70,
+   "symbol": "VIRTUALUSDTM",
+   "turnoverOf24h": 2744111.6188
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:38.942945+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "KuCoin new listing 'Up to 20x Leverage' announcement",
+   "rank": 71,
+   "symbol": "POWERUSDTM",
+   "turnoverOf24h": 2707833.8658
+  },
+  {
+   "action": "REJECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:40.067081+00:00",
+    "completed": 36,
+    "contiguous_ok": false,
+    "detail": "INSUFFICIENT_CANDLES:36",
+    "eligible": false,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 72,
+   "reason": "CANDLE_RULE:INSUFFICIENT_CANDLES:36",
+   "symbol": "AXISUSDTM",
+   "turnoverOf24h": 2685686.9716
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:41.220847+00:00",
+    "completed": 383,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 73,
+   "symbol": "CASHCATUSDTM",
+   "turnoverOf24h": 2628761.784
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:42.493913+00:00",
+    "completed": 553,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "KuCoin new listing 'Up to 20x Leverage' announcement",
+   "rank": 74,
+   "symbol": "AEONUSDTM",
+   "turnoverOf24h": 2580802.243
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:43.842958+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "KuCoin new listing 'Pre-Market Trading' announcement",
+   "rank": 75,
+   "symbol": "CHIPUSDTM",
+   "turnoverOf24h": 2486280.502
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:45.007232+00:00",
+    "completed": 371,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 76,
+   "symbol": "LONGXIAUSDTM",
+   "turnoverOf24h": 2482179.1838
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:46.195425+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "KuCoin new listing 'Up to 20x Leverage' announcement",
+   "rank": 77,
+   "symbol": "GENIUSUSDTM",
+   "turnoverOf24h": 2472838.31914
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:47.392835+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "KuCoin new listing 'Up to 50x Leverage' announcement",
+   "rank": 78,
+   "symbol": "TRUSTUSDTM",
+   "turnoverOf24h": 2411677.3544
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:48.586737+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "KuCoin new listing 'Up to 50x Leverage' announcement",
+   "rank": 79,
+   "symbol": "FOLKSUSDTM",
+   "turnoverOf24h": 2394916.836
+  },
+  {
+   "action": "SELECTED",
+   "candle": {
+    "checked_utc": "2026-10-28T05:48:49.799574+00:00",
+    "completed": 589,
+    "contiguous_ok": true,
+    "detail": "OK",
+    "eligible": true,
+    "source": "reselect_run"
+   },
+   "crypto_evidence": "default: no evidence of non-crypto underlying",
+   "rank": 80,
+   "symbol": "EDENUSDTM",
+   "turnoverOf24h": 2349446.32488
+  }
+ ],
+ "designer_excluded": [
+  "PAXGUSDTM",
+  "XAUTUSDTM",
+  "XAGUSDTM",
+  "MUUSDTM",
+  "SNDKUSDTM",
+  "SKHYNIXUSDTM",
+  "CRCLUSDTM",
+  "SOXLUSDTM",
+  "SOXSUSDTM",
+  "SPCXUSDTM"
+ ],
+ "max_rank_considered": 100,
+ "new_candle_checks": 11,
+ "non_crypto_evidenced": {
+  "AGPUUSDTM": "2026-09-24 stock index announcement (Axe Compute stock)",
+  "AMATUSDTM": "2026-06-08 stock index announcement (Applied Materials)",
+  "APLDUSDTM": "2026-05-22 stock index announcement (Applied Digital)",
+  "APPUSDTM": "2026-10-12 stock index announcement (Applovin)",
+  "ASTSUSDTM": "2026-05-22 stock index announcement (AST SpaceMobile)",
+  "AXTIUSDTM": "2026-06-08 stock index announcement (AXT Inc.)",
+  "BEUSDTM": "2026-05-22 stock index announcement (Bloom Energy)",
+  "BXUSDTM": "2026-06-08 stock index announcement (Blackstone)",
+  "BZUSDTM": "KuCoin announcement 2026-03-31: BZUSDT & NATGASUSDT (Brent / natural gas)",
+  "CIENUSDTM": "2026-06-24 stock index announcement (Ciena)",
+  "CLUSDTM": "KuCoin Futures new listing CLUSDT (crude oil perpetual)",
+  "CRDOUSDTM": "2026-06-08 stock index announcement (Credo)",
+  "CRWDUSDTM": "2026-06-08 stock index announcement (CrowdStrike)",
+  "CSOPSAMSUNG2LUSDTM": "2026-09-24 stock index announcement (CSOP Samsung 2x product)",
+  "CSOPSKHYNIX2LUSDTM": "2026-09-24 stock index announcement (CSOP SK Hynix 2x product)",
+  "CYPHUSDTM": "2026-09-24 stock index announcement (Cypherpunk Technologies stock)",
+  "FWDIUSDTM": "2026-10-21 stock index announcement (Forward Industries)",
+  "GEVUSDTM": "2026-10-27 stock index announcement (GE Vernova)",
+  "GSUSDTM": "2026-10-21 stock index announcement (Goldman Sachs)",
+  "HANMIUSDTM": "2026-08-19 stock index announcement (HANMI Semiconductor)",
+  "IWMUSDTM": "2026-06-08 stock index announcement (iShares Russell 2000 ETF)",
+  "KLACUSDTM": "2026-06-24 stock index announcement (KLA)",
+  "KORUUSDTM": "2026-06-24 stock index announcement (Direxion 3X South Korea ETF)",
+  "KOUSDTM": "2026-08-19 stock index announcement (Coca-Cola)",
+  "LITEUSDTM": "KuCoin announcement 2026-05-08: LITEUSDT Stock Index Perpetual",
+  "LRCXUSDTM": "2026-06-24 stock index announcement (Lam Research)",
+  "LYTEUSDTM": "2026-08-19 stock index announcement (Roundhill Photonics & Optics ETF)",
+  "MRNAUSDTM": "2026-10-12 stock index announcement (Moderna)",
+  "MSTUUSDTM": "2026-10-21 stock index announcement (2x Long MSTR ETF)",
+  "NETUSDTM": "2026-10-27 stock index announcement (Cloudflare)",
+  "PANWUSDTM": "2026-10-27 stock index announcement (Palo Alto Networks)",
+  "PYPLUSDTM": "2026-10-27 stock index announcement (PayPal)",
+  "SAMSUNGEMUSDTM": "2026-08-19 stock index announcement (Samsung Electro-Mechanics)",
+  "SKUUUSDTM": "2026-10-12 stock index announcement (2x Long SK Hynix ETF)",
+  "SMCIUSDTM": "2026-06-24 stock index announcement (Super Micro Computer)",
+  "SOFIUSDTM": "2026-10-12 stock index announcement (SoFi)",
+  "SONYUSDTM": "2026-06-24 stock index announcement (Sony)",
+  "TMFUSDTM": "2026-10-12 stock index announcement (ICE US Treasury 20+ Year Bond Index)",
+  "TSLAUSDTM": "KuCoin TradFi stock contract (Tesla)",
+  "TXNUSDTM": "2026-10-27 stock index announcement (Texas Instruments)",
+  "URNMUSDTM": "2026-10-21 stock index announcement (Sprott Uranium Miners ETF)",
+  "USDEXUSDTM": "2026-10-21 stock index announcement (StablecoinX Inc. stock)",
+  "VRTUSDTM": "2026-05-22 stock index announcement (Vertiv)"
+ },
+ "purpose": "U67 final universe (option B), re-selected from the recorded snapshot",
+ "reselect_finished_utc": "2026-10-28T05:48:49.799611+00:00",
+ "rule": "static prefilter + ranking from recorded snapshot; designer exclusions; evidenced non-crypto exclusions; engine candle rule (>=250 completed, last 250 contiguous)",
+ "selected_symbols": [
+  "ZECUSDTM",
+  "IRYSUSDTM",
+  "EVAAUSDTM",
+  "HYPEUSDTM",
+  "KCSUSDTM",
+  "ASTERUSDTM",
+  "TIAUSDTM",
+  "USELESSUSDTM",
+  "QUSDTM",
+  "XMRUSDTM",
+  "PENGUUSDTM",
+  "SOONUSDTM",
+  "LIGHTUSDTM",
+  "AINUSDTM",
+  "ENAUSDTM",
+  "PUMPUSDTM",
+  "TAOUSDTM",
+  "LDOUSDTM",
+  "NIGHTUSDTM",
+  "GRAMUSDTM",
+  "1000BONKUSDTM",
+  "ICNTUSDTM",
+  "CAKEUSDTM",
+  "XANUSDTM",
+  "WLDUSDTM",
+  "METUSDTM",
+  "ARCUSDTM",
+  "SUSDTM",
+  "APRUSDTM",
+  "ZEREBROUSDTM",
+  "ZORAUSDTM",
+  "QNTUSDTM",
+  "MUSDTM",
+  "CRVUSDTM",
+  "0GUSDTM",
+  "ZBTUSDTM",
+  "JCTUSDTM",
+  "FETUSDTM",
+  "ONDOUSDTM",
+  "CLOUSDTM",
+  "DOODUSDTM",
+  "BTWUSDTM",
+  "MYXUSDTM",
+  "MOODENGUSDTM",
+  "HEMIUSDTM",
+  "BEATUSDTM",
+  "AVNTUSDTM",
+  "CAPUSDTM",
+  "ZKPUSDTM",
+  "ALLOUSDTM",
+  "AKEUSDTM",
+  "DASHUSDTM",
+  "HUSDTM",
+  "WETUSDTM",
+  "4USDTM",
+  "PIEVERSEUSDTM",
+  "KGENUSDTM",
+  "VIRTUALUSDTM",
+  "POWERUSDTM",
+  "CASHCATUSDTM",
+  "AEONUSDTM",
+  "CHIPUSDTM",
+  "LONGXIAUSDTM",
+  "GENIUSUSDTM",
+  "TRUSTUSDTM",
+  "FOLKSUSDTM",
+  "EDENUSDTM"
+ ],
+ "selected_symbols_sha256": "5123e95389eaab880b202b740ce9c7bc54f5a40451e4d40b741ac210e4d21192",
+ "shortfall": false,
+ "snapshot_file": "u67_universe_snapshot.json",
+ "snapshot_file_sha256": "3e9f1ba5903c3c73fe44f5c74e3f8aeddb2e046d7daa9cb43851de9e3930cc2a",
+ "snapshot_raw_response_sha256": "6176f7deb0c78c08eeca342a3dfdd185e84d6cee4e943e0c1dba559dbf9d0f02",
+ "snapshot_request_end_utc": "2026-10-28T05:26:57.612392+00:00",
+ "snapshot_request_start_utc": "2026-10-28T05:26:56.667457+00:00",
+ "stopped": null
+}
