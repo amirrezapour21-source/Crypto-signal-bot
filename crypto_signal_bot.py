@@ -1,4 +1,3 @@
-
 """
 Crypto Signal Bot — Signal + Price Alerts
 KuCoin Spot data. Paper tracking only; no real orders.
