@@ -1,6 +1,6 @@
 """
-Crypto Signal Bot — Signal + Price Alerts
-KuCoin Spot data. Paper tracking only; no real orders.
+Crypto Signal Bot — Institutional LVAR Strategy v2 (Liquidity Sweep & Value Area Rejection)
+KuCoin Spot & Futures structure. Paper tracking only; no real orders.
 """
 
 import html
@@ -17,7 +17,6 @@ import pandas as pd
 import requests
 
 KUCOIN_BASE = "https://api.kucoin.com"
-COINGECKO_BASE = "https://api.coingecko.com"
 
 SCAN_TOP_N_COINS = 40
 REQUEST_DELAY_SECONDS = 0.25
@@ -26,12 +25,17 @@ MAX_RETRIES = 3
 
 MIN_RR = 2.0
 MIN_SL_DISTANCE_PCT = 0.005
-STOP_ATR_BUFFER = 0.20
-PULLBACK_EMA_TOLERANCE_ATR = 0.35
+STOP_ATR_BUFFER = 0.40
 MAX_ENTRY_DEVIATION_PCT = 0.015
 MIN_4H_CANDLES = 70
 MIN_DAILY_CANDLES = 35
 MIN_15M_CANDLES = 60
+PROFILE_15M_FETCH = 230          # about 57 hours of 15m candles (covers the whole previous UTC day)
+MIN_PREV_DAY_15M_BARS = 80       # previous UTC day must have at least 80 of 96 bars
+VOLUME_AVG_BARS = 20
+VOLUME_CONFIRM_MULT = 1.2
+REJECTION_CLOSE_FRACTION = 0.40  # close must sit in the lower 40% (SHORT) / upper 40% (LONG) of the sweep candle
+STRATEGY_VERSION = "LVAR-v2"
 MAX_SIGNALS_PER_RUN = 2
 TIMEOUT_DAYS = 10
 PENDING_MAX_15M_BARS = 4
@@ -45,7 +49,7 @@ LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.json"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "CryptoSignalBot/1.2"})
+SESSION.headers.update({"User-Agent": "CryptoSignalBot/LVAR-Pro"})
 
 
 def utc_now():
@@ -86,29 +90,30 @@ def safe_get_json(url: str, params: Optional[dict] = None) -> Optional[dict]:
 
 
 def get_top_coins(limit: int) -> list:
-    payload = safe_get_json(f"{COINGECKO_BASE}/coins/markets", {
-        "vs_currency": "usd", "order": "market_cap_desc",
-        "per_page": min(max(int(limit), 1), 250), "page": 1, "sparkline": "false",
-    })
-    if not isinstance(payload, list):
+    payload = safe_get_json(f"{KUCOIN_BASE}/api/v1/market/allTickers")
+    if not payload or payload.get("code") != "200000":
         return []
-    coins, seen = [], set()
-    for coin in payload:
-        if not isinstance(coin, dict):
+    
+    data = payload.get("data", {}).get("ticker", [])
+    coins = []
+    for item in data:
+        symbol_raw = item.get("symbol", "")
+        if not symbol_raw.endswith("-USDT"):
             continue
-        symbol = str(coin.get("symbol", "")).upper().strip()
-        coin_id = str(coin.get("id", "")).strip()
-        price = coin.get("current_price") or 0
-        change = coin.get("price_change_percentage_24h") or 0
-        if not symbol.isalnum() or not coin_id:
+        symbol = symbol_raw.replace("-USDT", "")
+        vol_value = float(item.get("volValue", 0) or 0)
+        
+        if symbol in ["USDT", "USDC", "FDUSD", "TUSD", "DAI"]:
             continue
-        if 0.97 <= float(price or 0) <= 1.03 and abs(float(change or 0)) < 0.5:
-            continue
-        pair = f"{symbol}-USDT"
-        if pair not in seen:
-            seen.add(pair)
-            coins.append({"symbol": symbol, "pair": pair, "coin_id": coin_id})
-    return coins
+            
+        coins.append({
+            "symbol": symbol,
+            "pair": symbol_raw,
+            "volume": vol_value
+        })
+    
+    coins = sorted(coins, key=lambda x: x["volume"], reverse=True)
+    return coins[:limit]
 
 
 def get_kucoin_candles(pair: str, candle_type: str, limit: int,
@@ -118,7 +123,6 @@ def get_kucoin_candles(pair: str, candle_type: str, limit: int,
         raise ValueError(f"Unsupported candle type: {candle_type}")
     now = int(time.time())
     interval = intervals[candle_type]
-    # KuCoin returns at most its endpoint window; use explicit start for monitor catch-up.
     start_at = int(start_at) if start_at is not None else now - (int(limit) + 3) * interval
     payload = safe_get_json(f"{KUCOIN_BASE}/api/v1/market/candles", {
         "symbol": pair, "type": candle_type, "startAt": start_at, "endAt": now,
@@ -157,10 +161,6 @@ def get_live_price(pair: str) -> Optional[float]:
         return None
 
 
-def ema(series: pd.Series, period: int) -> pd.Series:
-    return series.ewm(span=period, adjust=False, min_periods=period).mean()
-
-
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     prev_close = df["close"].shift(1)
     tr = pd.concat([df["high"] - df["low"], (df["high"] - prev_close).abs(),
@@ -168,111 +168,125 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
 
 
-def classify_trend(df: pd.DataFrame) -> str:
-    if df is None or len(df) < 55:
-        return "choppy"
-    close = df["close"]
-    e20, e50 = ema(close, 20), ema(close, 50)
-    if pd.isna(e20.iloc[-1]) or pd.isna(e50.iloc[-1]):
-        return "choppy"
-    highs, lows = df.high.to_numpy(), df.low.to_numpy()
-    pivot_highs, pivot_lows = [], []
-    for i in range(2, len(df) - 2):
-        wh, wl = highs[i-2:i+3], lows[i-2:i+3]
-        if highs[i] == np.max(wh) and np.sum(wh == highs[i]) == 1:
-            pivot_highs.append((i, highs[i]))
-        if lows[i] == np.min(wl) and np.sum(wl == lows[i]) == 1:
-            pivot_lows.append((i, lows[i]))
-    if len(pivot_highs) < 2 or len(pivot_lows) < 2:
-        return "choppy"
-    hh = pivot_highs[-1][1] > pivot_highs[-2][1]
-    hl = pivot_lows[-1][1] > pivot_lows[-2][1]
-    lh = pivot_highs[-1][1] < pivot_highs[-2][1]
-    ll = pivot_lows[-1][1] < pivot_lows[-2][1]
-    if e20.iloc[-1] > e50.iloc[-1] and close.iloc[-1] > e50.iloc[-1] and hh and hl:
-        return "up"
-    if e20.iloc[-1] < e50.iloc[-1] and close.iloc[-1] < e50.iloc[-1] and lh and ll:
-        return "down"
-    return "choppy"
+def calculate_volume_profile(df: pd.DataFrame, bins: int = 30) -> dict:
+    """محاسبه‌ی پویای محدوده ارزش (VAH, VAL) و نقطه کنترل حجم (POC)"""
+    if df is None or len(df) < bins:
+        return {"poc": 0, "vah": 0, "val": 0}
+    
+    price_min, price_max = df["low"].min(), df["high"].max()
+    if price_min == price_max:
+        return {"poc": price_min, "vah": price_max, "val": price_min}
+    
+    typical = (df["high"] + df["low"] + df["close"]) / 3.0
+    hist, bin_edges = np.histogram(typical, bins=bins, range=(float(price_min), float(price_max)), weights=df["volume"])
+    poc_idx = np.argmax(hist)
+    poc = (bin_edges[poc_idx] + bin_edges[poc_idx + 1]) / 2
+    
+    total_vol = np.sum(hist)
+    if total_vol <= 0:
+        return {"poc": poc, "vah": price_max, "val": price_min}
+    
+    target_vol = total_vol * 0.70
+    current_vol = hist[poc_idx]
+    left, right = poc_idx, poc_idx
+    
+    while current_vol < target_vol:
+        added = False
+        if left > 0:
+            left -= 1
+            current_vol += hist[left]
+            added = True
+        if right < len(hist) - 1:
+            right += 1
+            current_vol += hist[right]
+            added = True
+        if not added:
+            break
+            
+    val = bin_edges[left]
+    vah = bin_edges[right + 1]
+    return {"poc": float(poc), "vah": float(vah), "val": float(val)}
 
 
-def recent_swing(df: pd.DataFrame, direction: str, lookback: int = 12) -> Optional[float]:
-    recent = df.iloc[-lookback - 1:-1]
-    if recent.empty:
-        return None
-    return float(recent.low.min() if direction == "LONG" else recent.high.max())
+def previous_day_window(m15: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """15m candles of the previous completed UTC day (the reference session). None if incomplete."""
+    day_start = int(utc_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    prev = m15[(m15["time"] >= day_start - 86400) & (m15["time"] < day_start)]
+    return prev if len(prev) >= MIN_PREV_DAY_15M_BARS else None
 
 
 def detect_setup(pair: str, symbol: str) -> Optional[dict]:
-    daily = get_kucoin_candles(pair, "1day", 100)
-    time.sleep(REQUEST_DELAY_SECONDS)
-    h4 = get_kucoin_candles(pair, "4hour", 120)
-    time.sleep(REQUEST_DELAY_SECONDS)
-    m15 = get_kucoin_candles(pair, "15min", 100)
-    if daily is None or len(daily) < MIN_DAILY_CANDLES:
-        return None
-    if h4 is None or len(h4) < MIN_4H_CANDLES:
-        return None
+    m15 = get_kucoin_candles(pair, "15min", PROFILE_15M_FETCH)
     if m15 is None or len(m15) < MIN_15M_CANDLES:
         return None
-    daily_trend, h4_trend = classify_trend(daily), classify_trend(h4)
-    if daily_trend not in ("up", "down") or daily_trend != h4_trend:
+
+    # Reference levels come ONLY from the previous completed UTC day (never from the signal candle's own window).
+    prev_day = previous_day_window(m15)
+    if prev_day is None:
         return None
-    direction = "LONG" if h4_trend == "up" else "SHORT"
-    close = m15.close
-    e20, e50, atr15 = ema(close, 20), ema(close, 50), atr(m15, 14)
-    if any(pd.isna(x) for x in (e20.iloc[-1], e20.iloc[-2], e50.iloc[-1], atr15.iloc[-1])):
+    vp = calculate_volume_profile(prev_day)
+    vah, val, poc = vp["vah"], vp["val"], vp["poc"]
+    if not (vah > poc > val > 0):
         return None
-    last, prev, a = m15.iloc[-1], m15.iloc[-2], float(atr15.iloc[-1])
-    if a <= 0 or not np.isfinite(a):
+    pdh, pdl = float(prev_day["high"].max()), float(prev_day["low"].min())
+
+    last = m15.iloc[-1]
+    atr_val = float(atr(m15, 14).iloc[-1])
+    if atr_val <= 0 or not np.isfinite(atr_val):
         return None
-    tolerance = a * PULLBACK_EMA_TOLERANCE_ATR
-    if direction == "LONG":
-        touched_zone = (float(last.low) <= float(e20.iloc[-1]) + tolerance or
-                        float(prev.low) <= float(e20.iloc[-2]) + tolerance)
-        confirmed = (last.close > last.open and last.close > e20.iloc[-1] and
-                     last.close > prev.high and last.close > e50.iloc[-1])
+    candle_range = float(last.high) - float(last.low)
+    if candle_range <= 0:
+        return None
+
+    # Absorption volume: last candle vs the mean of the previous 20 candles.
+    avg_vol = m15["volume"].iloc[-VOLUME_AVG_BARS - 1:-1].mean()
+    if not (avg_vol > 0 and last.volume >= avg_vol * VOLUME_CONFIRM_MULT):
+        return None
+
+    direction = None
+    swept_level = None
+    close_pos = (float(last.close) - float(last.low)) / candle_range   # 0 = at the low, 1 = at the high
+    # SHORT: the candle pierced a level above (PDH or VAH) and CLOSED back below that same level, bearish, close in lower part.
+    swept_up = [lv for lv in (pdh, vah) if float(last.high) > lv and float(last.close) < lv]
+    if swept_up and last.close < last.open and close_pos <= REJECTION_CLOSE_FRACTION:
+        direction, swept_level = "SHORT", max(swept_up)
     else:
-        touched_zone = (float(last.high) >= float(e20.iloc[-1]) - tolerance or
-                        float(prev.high) >= float(e20.iloc[-2]) - tolerance)
-        confirmed = (last.close < last.open and last.close < e20.iloc[-1] and
-                     last.close < prev.low and last.close < e50.iloc[-1])
-    if not touched_zone or not confirmed:
+        # LONG: pierced a level below (PDL or VAL) and CLOSED back above that same level, bullish, close in upper part.
+        swept_down = [lv for lv in (pdl, val) if float(last.low) < lv and float(last.close) > lv]
+        if swept_down and last.close > last.open and close_pos >= 1 - REJECTION_CLOSE_FRACTION:
+            direction, swept_level = "LONG", min(swept_down)
+    if not direction:
         return None
-    setup_close = float(last.close)
+
     live_price = get_live_price(pair)
-    if live_price is None:
+    if live_price is None or abs(live_price - float(last.close)) / float(last.close) > MAX_ENTRY_DEVIATION_PCT:
         return None
-    if abs(live_price - setup_close) / setup_close > MAX_ENTRY_DEVIATION_PCT:
-        logging.info("%s rejected: live price too far from setup close", pair)
-        return None
+
     entry = live_price
-    swing = recent_swing(m15, direction, 12)
-    if swing is None:
-        return None
     if direction == "LONG":
-        sl = min(swing, float(last.low)) - STOP_ATR_BUFFER * a
+        sl = float(last.low) - STOP_ATR_BUFFER * atr_val            # beyond the sweep wick
         risk = entry - sl
-        if risk <= 0:
-            return None
-        tp1, tp2 = entry + MIN_RR * risk, entry + 3.0 * risk
+        tp1, tp2, tp3 = poc, vah, vah + (vah - val)
+        targets_ok = entry < tp1 < tp2
     else:
-        sl = max(swing, float(last.high)) + STOP_ATR_BUFFER * a
+        sl = float(last.high) + STOP_ATR_BUFFER * atr_val           # beyond the sweep wick
         risk = sl - entry
-        if risk <= 0:
-            return None
-        tp1, tp2 = entry - MIN_RR * risk, entry - 3.0 * risk
+        tp1, tp2, tp3 = poc, val, val - (vah - val)
+        targets_ok = entry > tp1 > tp2
+    if risk <= 0 or not targets_ok:
+        return None
     if entry <= 0 or abs(entry - sl) / entry < MIN_SL_DISTANCE_PCT:
         return None
     rr = abs(tp1 - entry) / abs(entry - sl)
     if not np.isfinite(rr) or rr < MIN_RR:
         return None
+
     return {
         "symbol": symbol, "pair": pair, "direction": direction, "entry": entry,
-        "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
-        "strategy_type": "Daily + 4H Trend / 15m Pullback",
-        "daily_trend": daily_trend, "h4_trend": h4_trend,
-        "setup_close": setup_close, "setup_high": float(last.high),
+        "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3, "rr": rr,
+        "strategy_type": "Liquidity Sweep & Value Area Rejection (LVAR)",
+        "strategy_version": STRATEGY_VERSION, "swept_level": float(swept_level),
+        "setup_close": float(last.close), "setup_high": float(last.high),
         "setup_low": float(last.low), "setup_candle_time": int(last.time),
         "live_price": live_price, "signal_time": utc_now().isoformat(),
     }
@@ -332,10 +346,10 @@ def format_signal(signal: dict) -> str:
         f"📈 <b>Strategy:</b> {html.escape(signal['strategy_type'])}", "",
         f"📍 <b>Entry:</b> <code>{fmt_price(signal['entry'])}</code>",
         f"🛑 <b>Stop Loss:</b> <code>{fmt_price(signal['sl'])}</code>", "",
-        "🎯 <b>Take Profit:</b>", f"TP1 → <code>{fmt_price(signal['tp1'])}</code>",
+        "🎯 <b>Take Profit:</b>", f"TP1 (POC) → <code>{fmt_price(signal['tp1'])}</code>",
         f"TP2 → <code>{fmt_price(signal['tp2'])}</code>", "",
         f"⚖️ <b>Risk/Reward:</b> 1:{signal['rr']:.2f}",
-        "⚠️ <b>Risk Level:</b> MEDIUM", "", "🏦 <b>Exchange:</b> CoinGecko",
+        "⚠️ <b>Risk Level:</b> INSTITUTIONAL", "", "🏦 <b>Exchange:</b> KuCoin Spot",
     ])
 
 
@@ -361,12 +375,11 @@ def send_telegram_message(message: str) -> bool:
 
 
 def candle_hits_level(candle: dict, level: float, direction: str, kind: str) -> bool:
-    """Return whether a completed OHLC candle touched a level."""
     if kind == "entry":
         return candle["low"] <= level if direction == "LONG" else candle["high"] >= level
     if kind == "sl":
         return candle["low"] <= level if direction == "LONG" else candle["high"] >= level
-    if kind in {"tp1", "tp2"}:
+    if kind in {"tp1", "tp2", "tp3"}:
         return candle["high"] >= level if direction == "LONG" else candle["low"] <= level
     raise ValueError("Unknown level kind")
 
@@ -376,12 +389,10 @@ def pending_candle_count(record: dict, candle_time: int) -> int:
     if setup_time <= 0:
         signal_dt = parse_time(record.get("signal_time"))
         setup_time = int(signal_dt.timestamp()) if signal_dt else candle_time
-    # Only completed candles strictly after the setup candle count toward expiry.
     return max(0, (int(candle_time) - setup_time) // MONITOR_INTERVAL_SECONDS)
 
 
 def _notify_and_mark(record: dict, message: str, updates: dict) -> None:
-    """Persist state transitions even if Telegram is unavailable; no repeated alerts."""
     sent = send_telegram_message(message)
     record.update(updates)
     record["last_notification_sent"] = bool(sent)
@@ -428,7 +439,6 @@ def monitor_signals(records: list) -> bool:
             sig_dt = parse_time(record.get("signal_time"))
             setup_time = int(sig_dt.timestamp()) if sig_dt else int(now.timestamp()) - MONITOR_INTERVAL_SECONDS
         last_processed = int(record.get("last_monitor_candle_time") or setup_time)
-        # KuCoin candle endpoint has a finite range; retrieve enough bars to bridge ordinary outages.
         fetch_start = max(setup_time, last_processed - 2 * MONITOR_INTERVAL_SECONDS)
         candles = get_kucoin_candles(pair, MONITOR_CANDLE_TYPE, MONITOR_FETCH_LIMIT, start_at=fetch_start)
         if candles is None or candles.empty:
@@ -445,7 +455,6 @@ def monitor_signals(records: list) -> bool:
                 break
 
             if current_status == "ENTRY_PENDING":
-                # Setup invalidation: a completed close through the setup candle's opposite edge.
                 setup_low = record.get("setup_low")
                 setup_high = record.get("setup_high")
                 invalid = False
@@ -466,14 +475,14 @@ def monitor_signals(records: list) -> bool:
                     message = (f"➕ <b>ENTRY EXECUTED — {symbol}/USDT</b>\n\n"
                         f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
                         f"{'🟢' if direction == 'LONG' else '🔴'} <b>{direction} ACTIVE</b>\n\n"
-                        f"🎯 TP1: <code>{fmt_price(tp1)}</code>\n"
+                        f"🎯 TP1 (POC): <code>{fmt_price(tp1)}</code>\n"
                         f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
                         f"🛑 SL: <code>{fmt_price(sl)}</code>")
                     _notify_and_mark(record, message, {"status": "OPEN", "entered": True,
                         "entry_time": datetime.fromtimestamp(candle_time + MONITOR_INTERVAL_SECONDS, timezone.utc).isoformat(),
                         "last_monitor_candle_time": candle_time})
                     changed = True
-                    current_status = "OPEN"
+                    continue   # entry candle itself is not used for exit checks (entry is effective at its close)
                 else:
                     if bars_waited >= PENDING_MAX_15M_BARS:
                         msg = (f"⌛ <b>سفارش منقضی شد (Limit پر نشد): "
@@ -487,22 +496,32 @@ def monitor_signals(records: list) -> bool:
                     changed = True
                     continue
 
-            # OHLC-based exit handling. If SL and TP are both touched in one bar, SL wins.
             sl_hit = candle_hits_level(candle, sl, direction, "sl")
             tp2_hit = candle_hits_level(candle, tp2, direction, "tp2")
             tp1_hit = candle_hits_level(candle, tp1, direction, "tp1")
+            
             if sl_hit:
-                loss_pct = abs(entry - sl) / entry * 100 if entry else 0.0
-                message = (f"🛑 <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
-                    f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
-                    f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
-                    f"🛑 SL: <code>{fmt_price(sl)}</code> ❌\n\n"
-                    f"📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n🔴 <b>TRADE CLOSED</b>")
-                _notify_and_mark(record, message, {"status": "CLOSED_SL", "closed_time":
-                    datetime.fromtimestamp(candle_time + MONITOR_INTERVAL_SECONDS, timezone.utc).isoformat(),
-                    "result": "SL", "last_monitor_candle_time": candle_time})
+                if current_status == "TP1_HIT":
+                    message = (f"🛡️ <b>BREAK-EVEN STOP HIT — {symbol}/USDT</b>\n\n"
+                        f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
+                        f"📍 Entry: <code>{fmt_price(entry)}</code> (Protected)\n\n"
+                        "پوزیشن در نقطه سر به سر بسته شد.")
+                    _notify_and_mark(record, message, {"status": "CLOSED_BE", "closed_time":
+                        datetime.fromtimestamp(candle_time + MONITOR_INTERVAL_SECONDS, timezone.utc).isoformat(),
+                        "result": "BREAKEVEN", "last_monitor_candle_time": candle_time})
+                else:
+                    loss_pct = abs(entry - sl) / entry * 100 if entry else 0.0
+                    message = (f"🛑 <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
+                        f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
+                        f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
+                        f"🛑 SL: <code>{fmt_price(sl)}</code> ❌\n\n"
+                        f"📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n🔴 <b>TRADE CLOSED</b>")
+                    _notify_and_mark(record, message, {"status": "CLOSED_SL", "closed_time":
+                        datetime.fromtimestamp(candle_time + MONITOR_INTERVAL_SECONDS, timezone.utc).isoformat(),
+                        "result": "SL", "last_monitor_candle_time": candle_time})
                 changed = True
                 break
+                
             if tp2_hit:
                 movement_pct = abs(tp2 - entry) / entry * 100 if entry else 0.0
                 final_rr = abs(tp2 - entry) / abs(entry - sl) if entry != sl else 0
@@ -516,29 +535,32 @@ def monitor_signals(records: list) -> bool:
                     "result": "TP2", "last_monitor_candle_time": candle_time})
                 changed = True
                 break
+                
             if current_status == "OPEN" and tp1_hit:
-                message = (f"🎯 <b>TAKE PROFIT 1 HIT — {symbol}/USDT</b>\n\n"
+                record["sl"] = entry # انتقال حد ضرر به نقطه ورود پس از تاچ شدن TP1
+                message = (f"🎯 <b>TAKE PROFIT 1 HIT (POC) — {symbol}/USDT</b>\n\n"
                     f"{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅\n"
-                    f"💹 Current: <code>{fmt_price(tp1)}</code>\n\n"
-                    "Monitoring continues for TP2 and SL.")
+                    f"🛡️ <b>SL Moved to Break-Even:</b> <code>{fmt_price(entry)}</code>\n\n"
+                    "Monitoring continues for TP2.")
                 _notify_and_mark(record, message, {"status": "TP1_HIT", "tp1_time":
                     datetime.fromtimestamp(candle_time + MONITOR_INTERVAL_SECONDS, timezone.utc).isoformat(),
                     "last_monitor_candle_time": candle_time})
                 changed = True
                 continue
+                
             record["last_monitor_candle_time"] = candle_time
             changed = True
     return changed
 
 
 def main() -> None:
-    logging.info("Signal scanner started.")
+    logging.info("LVAR Signal scanner started.")
     records = load_log()
     if monitor_signals(records):
         save_log(records)
     coins = get_top_coins(SCAN_TOP_N_COINS)
     if not coins:
-        logging.error("Coin universe unavailable. Check CoinGecko connectivity/rate limits.")
+        logging.error("Coin universe unavailable. Check KuCoin connectivity.")
         return
     checked_pairs, emitted = set(), 0
     for coin in coins:
@@ -564,9 +586,10 @@ def main() -> None:
             record = {
                 "id": f"{pair}_{int(time.time())}", "symbol": signal["symbol"],
                 "pair": signal["pair"], "direction": signal["direction"],
-                "strategy_type": signal["strategy_type"], "entry": signal["entry"],
+                "strategy_type": signal["strategy_type"], "strategy_version": signal["strategy_version"],
+                "swept_level": signal["swept_level"], "entry": signal["entry"],
                 "sl": signal["sl"], "tp1": signal["tp1"], "tp2": signal["tp2"],
-                "rr": signal["rr"], "signal_time": signal["signal_time"],
+                "tp3": signal["tp3"], "rr": signal["rr"], "signal_time": signal["signal_time"],
                 "setup_candle_time": signal["setup_candle_time"],
                 "setup_high": signal["setup_high"], "setup_low": signal["setup_low"],
                 "status": "ENTRY_PENDING", "entered": False, "entry_time": None,
@@ -576,7 +599,7 @@ def main() -> None:
             records.append(record)
             save_log(records)
             emitted += 1
-            logging.info("Signal sent: %s %s RR=%.2f", pair, signal["direction"], signal["rr"])
+            logging.info("LVAR Signal sent: %s %s RR=%.2f", pair, signal["direction"], signal["rr"])
         except Exception:
             logging.exception("Unexpected scan error for %s", pair)
         time.sleep(REQUEST_DELAY_SECONDS)
