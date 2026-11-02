@@ -50,5 +50,30 @@
     "result": "SL",
     "last_monitor_candle_time": 1793597400,
     "last_notification_sent": true
+  },
+  {
+    "id": "PONS-USDT_1793608262",
+    "symbol": "PONS",
+    "pair": "PONS-USDT",
+    "direction": "LONG",
+    "strategy_type": "Liquidity Sweep & Value Area Rejection (LVAR)",
+    "strategy_version": "LVAR-v2",
+    "swept_level": 0.2305,
+    "entry": 0.2315,
+    "sl": 0.22958555726221214,
+    "tp1": 0.24065000000000003,
+    "tp2": 0.24500000000000002,
+    "tp3": 0.25370000000000004,
+    "rr": 4.77945870064141,
+    "signal_time": "2026-11-02T08:31:02.247278+00:00",
+    "setup_candle_time": 1793607300,
+    "setup_high": 0.2315,
+    "setup_low": 0.2304,
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null,
+    "last_monitor_candle_time": 1793607300
   }
 ]
