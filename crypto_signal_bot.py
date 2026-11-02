@@ -37,6 +37,7 @@ MIN_24H_TURNOVER_USDT = 5_000_000  # minimum 24h turnover (USDT) for a pair to b
 REJECTION_CLOSE_FRACTION = 0.40  # close must sit in the lower 40% (SHORT) / upper 40% (LONG) of the sweep candle
 STRATEGY_VERSION = "LVAR-v3.3"           # reversal mode (sweep & rejection) - unchanged rules
 TREND_VERSION = "LVAR-TREND-v1"          # trend-continuation mode (breakout of the previous-day levels with the 4H trend)
+TREND_ENABLED = False                    # backtest (180d, 29 coins): no edge -> trend mode switched OFF; code kept for later research
 TREND_TP1_R = 1.0                        # TP1 = 1R (stop moves to break-even), TP2 = 2R
 TREND_TP2_R = 2.0
 SWING_PIVOT_BARS = 3                    # 4H swing high/low = highest/lowest of 3 bars on each side
@@ -307,7 +308,7 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
         swept_down = [lv for lv in (pdl, val) if float(last.low) < lv and float(last.close) > lv]
         if swept_down and last.close > last.open and close_pos >= 1 - REJECTION_CLOSE_FRACTION:
             direction, swept_level = "LONG", min(swept_down)
-    if not direction and len(m15) >= 3:
+    if not direction and TREND_ENABLED and len(m15) >= 3:
         # TREND mode: a fresh close THROUGH a previous-day level (the candle before it was still on the other side),
         # bearish/bullish body, close in the extreme 40%, same volume confirmation, and the 4H trend must agree (checked below).
         prev_close = float(m15.iloc[-2].close)
