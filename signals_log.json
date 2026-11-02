@@ -69,11 +69,12 @@
     "setup_candle_time": 1793607300,
     "setup_high": 0.2315,
     "setup_low": 0.2304,
-    "status": "ENTRY_PENDING",
-    "entered": false,
-    "entry_time": null,
+    "status": "OPEN",
+    "entered": true,
+    "entry_time": "2026-11-02T08:45:00+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793607300
+    "last_monitor_candle_time": 1793608200,
+    "last_notification_sent": true
   }
 ]
