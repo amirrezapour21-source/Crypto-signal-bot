@@ -48,7 +48,7 @@
     "entry_time": "2026-11-02T02:45:00+00:00",
     "closed_time": null,
     "result": null,
-    "last_monitor_candle_time": 1793592000,
+    "last_monitor_candle_time": 1793592900,
     "last_notification_sent": true
   }
 ]
