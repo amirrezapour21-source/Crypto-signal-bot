@@ -1,5 +1,5 @@
 """
-Crypto Signal Bot — Institutional LVAR Strategy v3.2 (Liquidity Sweep & Value Area Rejection)
+Crypto Signal Bot — Institutional LVAR Strategy v4.1 (Liquidity Sweep & Value Area Rejection + Trend Continuation, S/R-aware)
 KuCoin Spot. Paper tracking only; no real orders.
 """
 
@@ -35,7 +35,13 @@ VOLUME_AVG_BARS = 20
 VOLUME_CONFIRM_MULT = 2.5
 MIN_24H_TURNOVER_USDT = 5_000_000  # minimum 24h turnover (USDT) for a pair to be scanned
 REJECTION_CLOSE_FRACTION = 0.40  # close must sit in the lower 40% (SHORT) / upper 40% (LONG) of the sweep candle
-STRATEGY_VERSION = "LVAR-v3.2"
+STRATEGY_VERSION = "LVAR-v3.3"           # reversal mode (sweep & rejection) - unchanged rules
+TREND_VERSION = "LVAR-TREND-v1"          # trend-continuation mode (breakout of the previous-day levels with the 4H trend)
+TREND_TP1_R = 1.0                        # TP1 = 1R (stop moves to break-even), TP2 = 2R
+TREND_TP2_R = 2.0
+SWING_PIVOT_BARS = 3                    # 4H swing high/low = highest/lowest of 3 bars on each side
+SR_OBSTACLE_TOL_PCT = 0.001              # a level within 0.1% of the target still counts as blocking
+TREND_MAX_RISK_PCT = 0.03                # trend signals with a stop farther than 3% from entry are skipped
 SESSION_START_UTC = 7             # London + New York hours only: new signals are scanned between 07:00 and 20:00 UTC
 SESSION_END_UTC = 20
 H4_TREND_FETCH = 120
@@ -235,6 +241,29 @@ def previous_day_window(m15: pd.DataFrame) -> Optional[pd.DataFrame]:
     return prev if len(prev) >= MIN_PREV_DAY_15M_BARS else None
 
 
+def swing_levels_4h(h4: pd.DataFrame) -> list:
+    """4H swing highs and lows (support/resistance) from closed candles; only confirmed pivots (needs bars on both sides)."""
+    k = SWING_PIVOT_BARS
+    highs, lows = h4["high"].to_numpy(), h4["low"].to_numpy()
+    levels = []
+    for i in range(k, len(h4) - k):
+        if highs[i] == highs[i - k:i + k + 1].max():
+            levels.append(float(highs[i]))
+        if lows[i] == lows[i - k:i + k + 1].min():
+            levels.append(float(lows[i]))
+    return levels
+
+
+def blocking_level(direction: str, entry: float, target: float, levels: list) -> Optional[float]:
+    """First support/resistance level that lies between the entry and the target (None if the path is clear)."""
+    tol = target * SR_OBSTACLE_TOL_PCT
+    if direction == "LONG":
+        between = [lv for lv in levels if entry < lv < target + tol]
+        return min(between) if between else None
+    between = [lv for lv in levels if target - tol < lv < entry]
+    return max(between) if between else None
+
+
 def detect_setup(pair: str, symbol: str) -> Optional[dict]:
     m15 = get_kucoin_candles(pair, "15min", PROFILE_15M_FETCH)
     if m15 is None or len(m15) < MIN_15M_CANDLES:
@@ -267,6 +296,7 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
 
     direction = None
     swept_level = None
+    mode = "REVERSAL"
     close_pos = (float(last.close) - float(last.low)) / candle_range   # 0 = at the low, 1 = at the high
     # SHORT: the candle pierced a level above (PDH or VAH) and CLOSED back below that same level, bearish, close in lower part.
     swept_up = [lv for lv in (pdh, vah) if float(last.high) > lv and float(last.close) < lv]
@@ -277,6 +307,18 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
         swept_down = [lv for lv in (pdl, val) if float(last.low) < lv and float(last.close) > lv]
         if swept_down and last.close > last.open and close_pos >= 1 - REJECTION_CLOSE_FRACTION:
             direction, swept_level = "LONG", min(swept_down)
+    if not direction and len(m15) >= 3:
+        # TREND mode: a fresh close THROUGH a previous-day level (the candle before it was still on the other side),
+        # bearish/bullish body, close in the extreme 40%, same volume confirmation, and the 4H trend must agree (checked below).
+        prev_close = float(m15.iloc[-2].close)
+        if last.close < last.open and close_pos <= REJECTION_CLOSE_FRACTION:
+            broke_down = [lv for lv in (pdl, val) if prev_close >= lv and float(last.close) < lv]
+            if broke_down:
+                direction, swept_level, mode = "SHORT", min(broke_down), "TREND"
+        elif last.close > last.open and close_pos >= 1 - REJECTION_CLOSE_FRACTION:
+            broke_up = [lv for lv in (pdh, vah) if prev_close <= lv and float(last.close) > lv]
+            if broke_up:
+                direction, swept_level, mode = "LONG", max(broke_up), "TREND"
     if not direction:
         return None
 
@@ -298,29 +340,54 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
         return None
 
     entry = live_price
-    if direction == "LONG":
-        sl = float(last.low) - STOP_ATR_BUFFER * atr_val            # beyond the sweep wick
-        risk = entry - sl
-        tp1, tp2, tp3 = poc, vah, vah + (vah - val)
-        targets_ok = entry < tp1 < tp2
+    if mode == "TREND":
+        if direction == "LONG":
+            sl = float(last.low) - STOP_ATR_BUFFER * atr_val
+            risk = entry - sl
+            tp1, tp2 = entry + TREND_TP1_R * risk, entry + TREND_TP2_R * risk
+        else:
+            sl = float(last.high) + STOP_ATR_BUFFER * atr_val
+            risk = sl - entry
+            tp1, tp2 = entry - TREND_TP1_R * risk, entry - TREND_TP2_R * risk
+        tp3 = tp2
+        if risk <= 0 or entry <= 0 or tp1 <= 0 or tp2 <= 0:
+            return None
+        if not (MIN_SL_DISTANCE_PCT <= risk / entry <= TREND_MAX_RISK_PCT):
+            return None
+        rr = TREND_TP2_R
+        # S/R clearance: no previous-day level or 4H swing level between entry and TP2 (the broken level itself is behind entry).
+        if blocking_level(direction, entry, tp2, [pdh, pdl, vah, val, poc] + swing_levels_4h(h4)) is not None:
+            return None
     else:
-        sl = float(last.high) + STOP_ATR_BUFFER * atr_val           # beyond the sweep wick
-        risk = sl - entry
-        tp1, tp2, tp3 = poc, val, val - (vah - val)
-        targets_ok = entry > tp1 > tp2
-    if risk <= 0 or not targets_ok:
-        return None
-    if entry <= 0 or abs(entry - sl) / entry < MIN_SL_DISTANCE_PCT:
-        return None
-    rr = abs(tp1 - entry) / abs(entry - sl)
-    if not np.isfinite(rr) or rr < MIN_RR:
-        return None
+        if direction == "LONG":
+            sl = float(last.low) - STOP_ATR_BUFFER * atr_val            # beyond the sweep wick
+            risk = entry - sl
+            tp1, tp2, tp3 = poc, vah, vah + (vah - val)
+            targets_ok = entry < tp1 < tp2
+        else:
+            sl = float(last.high) + STOP_ATR_BUFFER * atr_val           # beyond the sweep wick
+            risk = sl - entry
+            tp1, tp2, tp3 = poc, val, val - (vah - val)
+            targets_ok = entry > tp1 > tp2
+        if risk <= 0 or not targets_ok:
+            return None
+        if entry <= 0 or abs(entry - sl) / entry < MIN_SL_DISTANCE_PCT:
+            return None
+        rr = abs(tp1 - entry) / abs(entry - sl)
+        if not np.isfinite(rr) or rr < MIN_RR:
+            return None
+        # S/R clearance for the first target: no 4H swing level or previous-day extreme between entry and TP1.
+        if blocking_level(direction, entry, tp1, [pdh, pdl] + swing_levels_4h(h4)) is not None:
+            return None
 
     return {
         "symbol": symbol, "pair": pair, "direction": direction, "entry": entry,
         "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3, "rr": rr,
-        "strategy_type": "Liquidity Sweep & Value Area Rejection (LVAR)",
-        "strategy_version": STRATEGY_VERSION, "swept_level": float(swept_level),
+        "strategy_type": ("LVAR Trend Continuation (Breakout)" if mode == "TREND"
+                          else "Liquidity Sweep & Value Area Rejection (LVAR)"),
+        "strategy_version": TREND_VERSION if mode == "TREND" else STRATEGY_VERSION,
+        "mode": mode, "tp1_label": "1R" if mode == "TREND" else "POC",
+        "swept_level": float(swept_level),
         "setup_close": float(last.close), "setup_high": float(last.high),
         "setup_low": float(last.low), "setup_candle_time": int(last.time),
         "live_price": live_price, "signal_time": utc_now().isoformat(),
@@ -390,7 +457,7 @@ def format_signal(signal: dict) -> str:
         f"📈 <b>Strategy:</b> {html.escape(signal['strategy_type'])}", "",
         f"📍 <b>Entry:</b> <code>{fmt_price(signal['entry'])}</code>",
         f"🛑 <b>Stop Loss:</b> <code>{fmt_price(signal['sl'])}</code>", "",
-        "🎯 <b>Take Profit:</b>", f"TP1 (POC) → <code>{fmt_price(signal['tp1'])}</code>",
+        "🎯 <b>Take Profit:</b>", f"TP1 ({signal.get('tp1_label', 'POC')}) → <code>{fmt_price(signal['tp1'])}</code>",
         f"TP2 → <code>{fmt_price(signal['tp2'])}</code>", "",
         f"⚖️ <b>Risk/Reward:</b> 1:{signal['rr']:.2f}",
         "⚠️ <b>Risk Level:</b> INSTITUTIONAL", "", "🏦 <b>Exchange:</b> KuCoin Spot",
@@ -465,6 +532,7 @@ def monitor_signals(records: list) -> bool:
             continue
         if direction not in {"LONG", "SHORT"}:
             continue
+        tp1_label = html.escape(str(record.get("tp1_label") or "POC"))
 
         status = record["status"]
         if status in {"OPEN", "TP1_HIT"}:
@@ -520,7 +588,7 @@ def monitor_signals(records: list) -> bool:
                     message = (f"➕ <b>ENTRY EXECUTED — {symbol}/USDT</b>\n\n"
                         f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
                         f"{'🟢' if direction == 'LONG' else '🔴'} <b>{direction} ACTIVE</b>\n\n"
-                        f"🎯 TP1 (POC): <code>{fmt_price(tp1)}</code>\n"
+                        f"🎯 TP1 ({tp1_label}): <code>{fmt_price(tp1)}</code>\n"
                         f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
                         f"🛑 SL: <code>{fmt_price(sl)}</code>")
                     _notify_and_mark(record, message, {"status": "OPEN", "entered": True,
@@ -585,7 +653,7 @@ def monitor_signals(records: list) -> bool:
                 record.setdefault("initial_sl", sl)
                 record["sl"] = entry # انتقال حد ضرر به نقطه ورود پس از تاچ شدن TP1
                 active_sl = entry    # applies immediately to the next candles of this same run
-                message = (f"🎯 <b>TAKE PROFIT 1 HIT (POC) — {symbol}/USDT</b>\n\n"
+                message = (f"🎯 <b>TAKE PROFIT 1 HIT ({tp1_label}) — {symbol}/USDT</b>\n\n"
                     f"{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅\n"
                     f"🛡️ <b>SL Moved to Break-Even:</b> <code>{fmt_price(entry)}</code>\n\n"
                     "Monitoring continues for TP2.")
@@ -647,6 +715,7 @@ def main() -> None:
                 "id": f"{pair}_{int(time.time())}", "symbol": signal["symbol"],
                 "pair": signal["pair"], "direction": signal["direction"],
                 "strategy_type": signal["strategy_type"], "strategy_version": signal["strategy_version"],
+                "mode": signal["mode"], "tp1_label": signal["tp1_label"],
                 "swept_level": signal["swept_level"], "entry": signal["entry"],
                 "sl": signal["sl"], "initial_sl": signal["sl"], "tp1": signal["tp1"], "tp2": signal["tp2"],
                 "tp3": signal["tp3"], "rr": signal["rr"], "signal_time": signal["signal_time"],
