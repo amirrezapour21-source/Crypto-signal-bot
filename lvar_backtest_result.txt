@@ -1,42 +1,67 @@
+STUDY 1: THE LIVE BOT (reversal mode only; trend mode is disabled in the bot)
 LVAR BACKTEST (measurement only; no parameter was tuned on this data)
 period: 2026-05-03 -> 2026-11-02 (180 days), coins with data: 29
 Biases: universe = TODAY's liquid list (survivorship/look-ahead); entry = open of the candle after the signal;
 flat fees (0.2% round trip net, 0.4% stress); no gaps/slippage; SL assumed filled exactly at the stop.
 
 ALL
-  r_gross                          n= 121  win%= 19.8  avgR=-0.078  totalR=   -9.43  PF=0.85  maxDD=17.0
-  r_net                            n= 121  win%= 19.8  avgR=-0.269  totalR=  -32.53  PF=0.6  maxDD=34.56
-  r_stress                         n= 121  win%= 19.8  avgR=-0.460  totalR=  -55.62  PF=0.45  maxDD=54.96
+  r_gross                          n=  12  win%= 16.7  avgR=+0.070  totalR=   +0.84  PF=1.09  maxDD=8.0
+  r_net                            n=  12  win%= 16.7  avgR=-0.189  totalR=   -2.27  PF=0.81  maxDD=10.29
+  r_stress                         n=  12  win%= 16.7  avgR=-0.449  totalR=   -5.39  PF=0.63  maxDD=12.58
 
-REVERSAL LONG (r_net)              n=   3  win%= 33.3  avgR=+1.658  totalR=   +4.97  PF=3.04  maxDD=1.08
-REVERSAL SHORT (r_net)             n=   6  win%=  0.0  avgR=-1.120  totalR=   -6.72  PF=0.0  maxDD=6.5
-TREND LONG (r_net)                 n=  51  win%= 25.5  avgR=-0.148  totalR=   -7.55  PF=0.76  maxDD=8.67
-TREND SHORT (r_net)                n=  61  win%= 16.4  avgR=-0.381  totalR=  -23.23  PF=0.44  maxDD=24.91
+REVERSAL LONG (r_net)              n=   6  win%= 16.7  avgR=+0.362  totalR=   +2.17  PF=1.41  maxDD=3.79
+REVERSAL SHORT (r_net)             n=   6  win%= 16.7  avgR=-0.740  totalR=   -4.44  PF=0.32  maxDD=6.5
+TREND LONG (r_net)                 n=0
+TREND SHORT (r_net)                n=0
 
 MODE REVERSAL
-  r_gross                          n=   9  win%= 11.1  avgR=+0.063  totalR=   +0.57  PF=1.08  maxDD=7.0
-  r_net                            n=   9  win%= 11.1  avgR=-0.194  totalR=   -1.74  PF=0.81  maxDD=8.94
-  r_stress                         n=   9  win%= 11.1  avgR=-0.451  totalR=   -4.06  PF=0.64  maxDD=10.89
+  r_gross                          n=  12  win%= 16.7  avgR=+0.070  totalR=   +0.84  PF=1.09  maxDD=8.0
+  r_net                            n=  12  win%= 16.7  avgR=-0.189  totalR=   -2.27  PF=0.81  maxDD=10.29
+  r_stress                         n=  12  win%= 16.7  avgR=-0.449  totalR=   -5.39  PF=0.63  maxDD=12.58
 
-MODE TREND
-  r_gross                          n= 112  win%= 20.5  avgR=-0.089  totalR=  -10.00  PF=0.82  maxDD=12.0
-  r_net                            n= 112  win%= 20.5  avgR=-0.275  totalR=  -30.78  PF=0.58  maxDD=30.95
-  r_stress                         n= 112  win%= 20.5  avgR=-0.460  totalR=  -51.57  PF=0.43  maxDD=50.91
+MODE TREND: n=0
 
-REVERSAL first half (r_net)        n=   4  win%=  0.0  avgR=-0.987  totalR=   -3.95  PF=0.0  maxDD=3.73
-REVERSAL second half (r_net)       n=   5  win%= 20.0  avgR=+0.441  totalR=   +2.20  PF=1.42  maxDD=3.83
-TREND first half (r_net)           n=  56  win%= 21.4  avgR=-0.225  totalR=  -12.61  PF=0.63  maxDD=16.57
-TREND second half (r_net)          n=  56  win%= 19.6  avgR=-0.325  totalR=  -18.18  PF=0.53  maxDD=17.87
+REVERSAL first half (r_net)        n=   6  win%= 16.7  avgR=-0.707  totalR=   -4.24  PF=0.33  maxDD=5.12
+REVERSAL second half (r_net)       n=   6  win%= 16.7  avgR=+0.328  totalR=   +1.97  PF=1.36  maxDD=3.79
+TREND first half (r_net)           n=0
+TREND second half (r_net)          n=0
 
-month 2026-05 (r_net)              n=  23  win%= 17.4  avgR=-0.259  totalR=   -5.96  PF=0.56  maxDD=6.13
-month 2026-06 (r_net)              n=  29  win%= 17.2  avgR=-0.387  totalR=  -11.22  PF=0.44  maxDD=13.4
-month 2026-07 (r_net)              n=  22  win%= 22.7  avgR=-0.335  totalR=   -7.37  PF=0.56  maxDD=11.64
-month 2026-08 (r_net)              n=  22  win%= 18.2  avgR=-0.329  totalR=   -7.24  PF=0.51  maxDD=7.45
-month 2026-09 (r_net)              n=  12  win%= 25.0  avgR=+0.245  totalR=   +2.94  PF=1.36  maxDD=4.18
-month 2026-10 (r_net)              n=  12  win%= 25.0  avgR=-0.190  totalR=   -2.28  PF=0.7  maxDD=4.8
-month 2026-11 (r_net)              n=   1  win%=  0.0  avgR=-1.387  totalR=   -1.39  PF=0.0  maxDD=0.0
+month 2026-05 (r_net)              n=   2  win%= 50.0  avgR=+0.438  totalR=   +0.88  PF=1.74  maxDD=0.0
+month 2026-06 (r_net)              n=   3  win%=  0.0  avgR=-1.245  totalR=   -3.73  PF=0.0  maxDD=2.57
+month 2026-07 (r_net)              n=   2  win%=  0.0  avgR=-1.385  totalR=   -2.77  PF=0.0  maxDD=1.39
+month 2026-08 (r_net)              n=   3  win%=  0.0  avgR=-1.263  totalR=   -3.79  PF=0.0  maxDD=2.42
+month 2026-09 (r_net)              n=   2  win%= 50.0  avgR=+3.573  totalR=   +7.15  PF=27.56  maxDD=0.27
 
-top 3 coins by net R: BNB-USDT +3.2, LINK-USDT +2.4, PEPE-USDT +2.3 | total -32.5
-exits: BE=34, SL=63, TP2=24
-median risk pct: 1.21
-signal days: 80 of 180; trades/day avg 0.67
+top 3 coins by net R: PEPE-USDT +6.7, SUI-USDT -0.3, ENA-USDT -1.1 | total -2.3
+exits: BE=1, SL=9, TP2=2
+median risk pct: 0.84
+signal days: 12 of 180; trades/day avg 0.07
+====================================================================================================
+STUDY 2: VALUE-AREA RE-ENTRY ROTATION (hypothesis fixed in advance; nothing tuned)
+Rule: close outside the previous-day VA, then 2 consecutive 15m closes back inside -> trade to the opposite VA edge.
+Stop beyond the 8-bar excursion extreme +/-0.4 ATR; RR>=1.5; risk 0.5-3%; session 07-20 UTC; entry = next candle open;
+entry candle exits use its close only; SL checked before TP; 10-day timeout. Same biases as STUDY 1.
+
+A: all trades (r_net)              n=1659  win%= 30.0  avgR=-0.137  totalR= -226.87  PF=0.84  maxDD=258.89
+A: all trades (r_gross)            n=1659  win%= 30.0  avgR=+0.065  totalR= +107.08  PF=1.09  maxDD=55.21
+A first half (r_net)               n= 829  win%= 30.5  avgR=-0.111  totalR=  -92.40  PF=0.87  maxDD=133.09
+A second half (r_net)              n= 830  win%= 29.4  avgR=-0.162  totalR= -134.46  PF=0.81  maxDD=133.14
+
+B: only WITH the 4H trend (r_net)  n= 676  win%= 29.3  avgR=-0.176  totalR= -118.89  PF=0.79  maxDD=163.55
+B: with trend (r_gross)            n= 676  win%= 29.3  avgR=+0.034  totalR=  +23.11  PF=1.05  maxDD=74.87
+B first half (r_net)               n= 334  win%= 28.1  avgR=-0.244  totalR=  -81.41  PF=0.72  maxDD=105.04
+B second half (r_net)              n= 342  win%= 30.4  avgR=-0.110  totalR=  -37.49  PF=0.87  maxDD=59.7
+C: AGAINST the 4H trend / no trend (r_net) n= 983  win%= 30.4  avgR=-0.110  totalR= -107.97  PF=0.87  maxDD=127.47
+
+A LONG (r_net)                     n= 859  win%= 27.0  avgR=-0.192  totalR= -165.18  PF=0.78  maxDD=182.85
+A SHORT (r_net)                    n= 800  win%= 33.1  avgR=-0.077  totalR=  -61.68  PF=0.9  maxDD=133.23
+month 2026-05 (A r_net)            n= 284  win%= 34.2  avgR=+0.019  totalR=   +5.50  PF=1.02  maxDD=26.64
+month 2026-06 (A r_net)            n= 296  win%= 28.4  avgR=-0.185  totalR=  -54.78  PF=0.78  maxDD=85.77
+month 2026-07 (A r_net)            n= 275  win%= 28.7  avgR=-0.169  totalR=  -46.47  PF=0.81  maxDD=52.67
+month 2026-08 (A r_net)            n= 247  win%= 28.3  avgR=-0.277  totalR=  -68.34  PF=0.68  maxDD=70.4
+month 2026-09 (A r_net)            n= 259  win%= 29.3  avgR=-0.067  totalR=  -17.32  PF=0.92  maxDD=50.04
+month 2026-10 (A r_net)            n= 281  win%= 31.3  avgR=-0.117  totalR=  -32.81  PF=0.86  maxDD=45.02
+month 2026-11 (A r_net)            n=  17  win%= 17.6  avgR=-0.744  totalR=  -12.65  PF=0.29  maxDD=12.42
+top 3 coins by net R: ENA-USDT +25.0, AAVE-USDT +16.5, DOGE-USDT +8.6 | total -226.9
+exits: SL=1162, TP2=497
+median risk pct: 1.05
