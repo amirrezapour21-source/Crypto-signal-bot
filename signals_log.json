@@ -1,1 +1,27 @@
-[]
+[
+  {
+    "id": "AXIS-USDT_1793583946",
+    "symbol": "AXIS",
+    "pair": "AXIS-USDT",
+    "direction": "LONG",
+    "strategy_type": "Liquidity Sweep & Value Area Rejection (LVAR)",
+    "strategy_version": "LVAR-v2",
+    "swept_level": 0.12738,
+    "entry": 0.1281,
+    "sl": 0.12591797077130895,
+    "tp1": 0.13321666666666668,
+    "tp2": 0.13905333333333333,
+    "tp3": 0.15072666666666668,
+    "rr": 2.3449120659745155,
+    "signal_time": "2026-11-02T01:45:46.668693+00:00",
+    "setup_candle_time": 1793583000,
+    "setup_high": 0.1292,
+    "setup_low": 0.1268,
+    "status": "ENTRY_PENDING",
+    "entered": false,
+    "entry_time": null,
+    "closed_time": null,
+    "result": null,
+    "last_monitor_candle_time": 1793583000
+  }
+]
