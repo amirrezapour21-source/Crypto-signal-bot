@@ -1,6 +1,6 @@
 """
-Crypto Signal Bot — Institutional LVAR Strategy v2 (Liquidity Sweep & Value Area Rejection)
-KuCoin Spot & Futures structure. Paper tracking only; no real orders.
+Crypto Signal Bot — Institutional LVAR Strategy v3.2 (Liquidity Sweep & Value Area Rejection)
+KuCoin Spot. Paper tracking only; no real orders.
 """
 
 import html
@@ -18,7 +18,7 @@ import requests
 
 KUCOIN_BASE = "https://api.kucoin.com"
 
-SCAN_TOP_N_COINS = 40
+SCAN_TOP_N_COINS = 50          # top 50 USDT pairs by 24h turnover (liquid coins only)
 REQUEST_DELAY_SECONDS = 0.25
 REQUEST_TIMEOUT_SECONDS = 15
 MAX_RETRIES = 3
@@ -27,21 +27,27 @@ MIN_RR = 2.0
 MIN_SL_DISTANCE_PCT = 0.005
 STOP_ATR_BUFFER = 0.40
 MAX_ENTRY_DEVIATION_PCT = 0.015
-MIN_4H_CANDLES = 70
-MIN_DAILY_CANDLES = 35
+MAX_SETUP_AGE_SECONDS = 3 * 900   # the sweep candle must have closed within the last 45 minutes
 MIN_15M_CANDLES = 60
 PROFILE_15M_FETCH = 230          # about 57 hours of 15m candles (covers the whole previous UTC day)
 MIN_PREV_DAY_15M_BARS = 80       # previous UTC day must have at least 80 of 96 bars
 VOLUME_AVG_BARS = 20
-VOLUME_CONFIRM_MULT = 1.2
+VOLUME_CONFIRM_MULT = 2.5
+MIN_24H_TURNOVER_USDT = 5_000_000  # minimum 24h turnover (USDT) for a pair to be scanned
 REJECTION_CLOSE_FRACTION = 0.40  # close must sit in the lower 40% (SHORT) / upper 40% (LONG) of the sweep candle
-STRATEGY_VERSION = "LVAR-v2"
+STRATEGY_VERSION = "LVAR-v3.2"
+SESSION_START_UTC = 7             # London + New York hours only: new signals are scanned between 07:00 and 20:00 UTC
+SESSION_END_UTC = 20
+H4_TREND_FETCH = 120
+H4_EMA_FAST, H4_EMA_SLOW = 20, 50
+EXCLUDED_BASES = {"USDT", "USDC", "FDUSD", "TUSD", "DAI", "USDE", "USD1", "PYUSD", "USDD", "BUSD", "EURT", "XAUT", "PAXG"}
+EXCLUDED_SUFFIXES = ("3L", "3S", "5L", "5S", "UP", "DOWN", "BULL", "BEAR")
 MAX_SIGNALS_PER_RUN = 2
 TIMEOUT_DAYS = 10
 PENDING_MAX_15M_BARS = 4
 MONITOR_CANDLE_TYPE = "15min"
 MONITOR_INTERVAL_SECONDS = 15 * 60
-MONITOR_FETCH_LIMIT = 250
+MONITOR_FETCH_LIMIT = 1500
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -91,19 +97,29 @@ def safe_get_json(url: str, params: Optional[dict] = None) -> Optional[dict]:
 
 def get_top_coins(limit: int) -> list:
     payload = safe_get_json(f"{KUCOIN_BASE}/api/v1/market/allTickers")
-    if not payload or payload.get("code") != "200000":
+    if not isinstance(payload, dict) or payload.get("code") != "200000":
         return []
-    
-    data = payload.get("data", {}).get("ticker", [])
+    data_block = payload.get("data")
+    data = data_block.get("ticker", []) if isinstance(data_block, dict) else []
+    if not isinstance(data, list):
+        return []
     coins = []
     for item in data:
-        symbol_raw = item.get("symbol", "")
+        if not isinstance(item, dict):
+            continue
+        symbol_raw = str(item.get("symbol") or "")
         if not symbol_raw.endswith("-USDT"):
             continue
-        symbol = symbol_raw.replace("-USDT", "")
-        vol_value = float(item.get("volValue", 0) or 0)
-        
-        if symbol in ["USDT", "USDC", "FDUSD", "TUSD", "DAI"]:
+        symbol = symbol_raw[:-len("-USDT")]
+        try:
+            vol_value = float(item.get("volValue") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(vol_value):
+            continue
+        if not symbol or symbol in EXCLUDED_BASES or symbol.endswith(EXCLUDED_SUFFIXES):
+            continue
+        if vol_value < MIN_24H_TURNOVER_USDT:
             continue
             
         coins.append({
@@ -127,7 +143,7 @@ def get_kucoin_candles(pair: str, candle_type: str, limit: int,
     payload = safe_get_json(f"{KUCOIN_BASE}/api/v1/market/candles", {
         "symbol": pair, "type": candle_type, "startAt": start_at, "endAt": now,
     })
-    if not payload or payload.get("code") != "200000":
+    if not isinstance(payload, dict) or payload.get("code") != "200000":
         return None
     raw = payload.get("data")
     if not isinstance(raw, list) or not raw:
@@ -152,7 +168,7 @@ def get_kucoin_candles(pair: str, candle_type: str, limit: int,
 
 def get_live_price(pair: str) -> Optional[float]:
     payload = safe_get_json(f"{KUCOIN_BASE}/api/v1/market/orderbook/level1", {"symbol": pair})
-    if not payload or payload.get("code") != "200000":
+    if not isinstance(payload, dict) or payload.get("code") != "200000":
         return None
     try:
         price = float(payload["data"]["price"])
@@ -166,6 +182,10 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     tr = pd.concat([df["high"] - df["low"], (df["high"] - prev_close).abs(),
                     (df["low"] - prev_close).abs()], axis=1).max(axis=1)
     return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False, min_periods=period).mean()
 
 
 def calculate_volume_profile(df: pd.DataFrame, bins: int = 30) -> dict:
@@ -231,6 +251,8 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
     pdh, pdl = float(prev_day["high"].max()), float(prev_day["low"].min())
 
     last = m15.iloc[-1]
+    if int(utc_now().timestamp()) - (int(last.time) + MONITOR_INTERVAL_SECONDS) > MAX_SETUP_AGE_SECONDS:
+        return None   # stale last candle (illiquid pair / data gap): never signal on old data
     atr_val = float(atr(m15, 14).iloc[-1])
     if atr_val <= 0 or not np.isfinite(atr_val):
         return None
@@ -256,6 +278,19 @@ def detect_setup(pair: str, symbol: str) -> Optional[dict]:
         if swept_down and last.close > last.open and close_pos >= 1 - REJECTION_CLOSE_FRACTION:
             direction, swept_level = "LONG", min(swept_down)
     if not direction:
+        return None
+
+    # 4H trend filter: trade only with the 4H trend (EMA20 vs EMA50 and the last closed 4H candle vs EMA50).
+    h4 = get_kucoin_candles(pair, "4hour", H4_TREND_FETCH)
+    if h4 is None or len(h4) < H4_EMA_SLOW + 5:
+        return None
+    h4_fast, h4_slow = ema(h4["close"], H4_EMA_FAST).iloc[-1], ema(h4["close"], H4_EMA_SLOW).iloc[-1]
+    h4_close = float(h4["close"].iloc[-1])
+    if pd.isna(h4_fast) or pd.isna(h4_slow):
+        return None
+    if direction == "LONG" and not (h4_fast > h4_slow and h4_close > h4_slow):
+        return None
+    if direction == "SHORT" and not (h4_fast < h4_slow and h4_close < h4_slow):
         return None
 
     live_price = get_live_price(pair)
@@ -300,7 +335,11 @@ def load_log() -> list:
             data = json.load(handle)
         return data if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError):
-        logging.error("Signal log is unreadable.")
+        logging.error("Signal log is unreadable; keeping a .corrupt copy and starting fresh.")
+        try:
+            os.replace(LOG_PATH, LOG_PATH.with_suffix(LOG_PATH.suffix + ".corrupt"))
+        except OSError:
+            pass
         return []
 
 
@@ -323,6 +362,11 @@ def has_open_duplicate(records: list, pair: str, direction: str) -> bool:
     return any(r.get("pair", f"{r.get('symbol', '')}-USDT") == pair and
                r.get("direction") == direction and r.get("status") in open_statuses
                for r in records if isinstance(r, dict))
+
+
+def has_same_setup(records: list, pair: str, setup_time: int) -> bool:
+    return any(isinstance(r, dict) and r.get("pair") == pair and r.get("setup_candle_time") == setup_time
+               for r in records)
 
 
 def fmt_price(value: float) -> str:
@@ -413,7 +457,8 @@ def monitor_signals(records: list) -> bool:
         symbol = html.escape(str(record.get("symbol", pair.replace("-USDT", ""))))
         direction = record.get("direction")
         try:
-            entry, sl = float(record["entry"]), float(record["sl"])
+            entry, active_sl = float(record["entry"]), float(record["sl"])
+            sl = float(record.get("initial_sl") or active_sl)   # original stop (for loss % and final R:R)
             tp1, tp2 = float(record["tp1"]), float(record["tp2"])
         except (KeyError, TypeError, ValueError):
             logging.warning("Invalid levels in signal record: %s", pair)
@@ -496,7 +541,7 @@ def monitor_signals(records: list) -> bool:
                     changed = True
                     continue
 
-            sl_hit = candle_hits_level(candle, sl, direction, "sl")
+            sl_hit = candle_hits_level(candle, active_sl, direction, "sl")
             tp2_hit = candle_hits_level(candle, tp2, direction, "tp2")
             tp1_hit = candle_hits_level(candle, tp1, direction, "tp1")
             
@@ -524,7 +569,7 @@ def monitor_signals(records: list) -> bool:
                 
             if tp2_hit:
                 movement_pct = abs(tp2 - entry) / entry * 100 if entry else 0.0
-                final_rr = abs(tp2 - entry) / abs(entry - sl) if entry != sl else 0
+                final_rr = abs(tp2 - entry) / abs(entry - sl) if entry != sl else 0.0
                 message = (f"🏆 <b>TP2 HIT — {symbol}/USDT</b>\n\n"
                     f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
                     "✅ TP1 + TP2 hit\n\n"
@@ -537,7 +582,9 @@ def monitor_signals(records: list) -> bool:
                 break
                 
             if current_status == "OPEN" and tp1_hit:
+                record.setdefault("initial_sl", sl)
                 record["sl"] = entry # انتقال حد ضرر به نقطه ورود پس از تاچ شدن TP1
+                active_sl = entry    # applies immediately to the next candles of this same run
                 message = (f"🎯 <b>TAKE PROFIT 1 HIT (POC) — {symbol}/USDT</b>\n\n"
                     f"{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅\n"
                     f"🛡️ <b>SL Moved to Break-Even:</b> <code>{fmt_price(entry)}</code>\n\n"
@@ -556,8 +603,17 @@ def monitor_signals(records: list) -> bool:
 def main() -> None:
     logging.info("LVAR Signal scanner started.")
     records = load_log()
-    if monitor_signals(records):
+    try:
+        changed = monitor_signals(records)
+    except Exception:
+        logging.exception("Monitoring error (state saved as-is; scan continues).")
+        changed = True
+    if changed:
         save_log(records)
+    hour = utc_now().hour
+    if not (SESSION_START_UTC <= hour < SESSION_END_UTC):
+        logging.info("Outside the %02d:00-%02d:00 UTC trading session: monitoring only, no new scan.", SESSION_START_UTC, SESSION_END_UTC)
+        return
     coins = get_top_coins(SCAN_TOP_N_COINS)
     if not coins:
         logging.error("Coin universe unavailable. Check KuCoin connectivity.")
@@ -575,6 +631,10 @@ def main() -> None:
             if not signal:
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
+            if has_same_setup(records, pair, signal["setup_candle_time"]):
+                logging.info("%s skipped: this setup candle was already signalled", pair)
+                time.sleep(REQUEST_DELAY_SECONDS)
+                continue
             if has_open_duplicate(records, pair, signal["direction"]):
                 logging.info("%s skipped: duplicate open signal", pair)
                 time.sleep(REQUEST_DELAY_SECONDS)
@@ -588,7 +648,7 @@ def main() -> None:
                 "pair": signal["pair"], "direction": signal["direction"],
                 "strategy_type": signal["strategy_type"], "strategy_version": signal["strategy_version"],
                 "swept_level": signal["swept_level"], "entry": signal["entry"],
-                "sl": signal["sl"], "tp1": signal["tp1"], "tp2": signal["tp2"],
+                "sl": signal["sl"], "initial_sl": signal["sl"], "tp1": signal["tp1"], "tp2": signal["tp2"],
                 "tp3": signal["tp3"], "rr": signal["rr"], "signal_time": signal["signal_time"],
                 "setup_candle_time": signal["setup_candle_time"],
                 "setup_high": signal["setup_high"], "setup_low": signal["setup_low"],
