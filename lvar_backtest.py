@@ -69,16 +69,13 @@ def simulate_trade(df15: pd.DataFrame, i: int, sig: dict):
     d, entry, sl0, tp1, tp2 = sig["direction"], sig["entry"], sig["sl"], sig["tp1"], sig["tp2"]
     n = len(df15)
     e = i + 1
-    c = df15.iloc[e]
-    if d == "LONG" and float(c.close) < sig["setup_low"]:
-        return None                                   # invalidated before entry
-    if d == "SHORT" and float(c.close) > sig["setup_high"]:
-        return None
     risk = abs(entry - sl0)
     status, active_sl, result, exit_bar = "OPEN", sl0, None, None
-    for k in range(e + 1, n):
+    for k in range(e, n):
         row = df15.iloc[k]
         hi, lo = float(row.high), float(row.low)
+        if k == e:                       # entry candle: only its CLOSE is certainly after the entry (same rule as the bot)
+            hi = lo = float(row.close)
         sl_hit = lo <= active_sl if d == "LONG" else hi >= active_sl
         tp2_hit = hi >= tp2 if d == "LONG" else lo <= tp2
         tp1_hit = hi >= tp1 if d == "LONG" else lo <= tp1
@@ -220,6 +217,156 @@ def report(trades: list, meta: dict) -> str:
     return "\n".join(L)
 
 
+# =====================================================================================================================
+# STUDY 2 (new hypothesis, fixed in advance, NOT tuned): "VALUE-AREA RE-ENTRY ROTATION" (the classic 80% rule)
+#   price CLOSES outside the previous day's value area, then two consecutive 15m closes back INSIDE it
+#   -> trade the rotation to the opposite edge of the value area.
+#   SHORT (from above VAH): bar i-2 closed above VAH, bars i-1 and i closed inside [VAL, VAH]; target = VAL.
+#   LONG  (from below VAL): mirrored; target = VAH.
+#   Stop beyond the excursion extreme (highest high / lowest low of the last 8 bars) +/- 0.4 ATR14.
+#   Filters: RR >= 1.5, stop distance 0.5%..3%, session 07-20 UTC. Variant B adds the 4H trend gate (EMA20/EMA50 as in the bot).
+# =====================================================================================================================
+VA_LOOKBACK = 8
+VA_MIN_RR = 1.5
+VA_MAX_RISK = 0.03
+
+
+def day_levels(df15: pd.DataFrame) -> dict:
+    """UTC-day start -> (vah, val, poc) from the PREVIOUS completed day (same completeness rules as the bot)."""
+    out = {}
+    t = df15["time"].to_numpy()
+    first_day = int(t[0]) // 86400 * 86400 + 86400
+    last_day = int(t[-1]) // 86400 * 86400
+    for day in range(first_day + 86400, last_day + 1, 86400):
+        prev = df15[(df15.time >= day - 86400) & (df15.time < day)]
+        if len(prev) < M.MIN_PREV_DAY_15M_BARS:
+            continue
+        if int(prev.time.min()) > day - 86400 + 3600 or int(prev.time.max()) < day - 3600 - 900:
+            continue
+        vp = M.calculate_volume_profile(prev)
+        if vp["vah"] > vp["poc"] > vp["val"] > 0:
+            out[day] = (vp["vah"], vp["val"], vp["poc"])
+    return out
+
+
+def h4_trend_series(df4: pd.DataFrame):
+    f, sl_ = M.ema(df4["close"], M.H4_EMA_FAST), M.ema(df4["close"], M.H4_EMA_SLOW)
+    return df4["time"].to_numpy() + 14400, f.to_numpy(), sl_.to_numpy(), df4["close"].to_numpy()
+
+
+def h4_state(ser, t: int):
+    closes_at, f, s_, c = ser
+    k = int(np.searchsorted(closes_at, t - 2, side="right")) - 1
+    if k < M.H4_EMA_SLOW + 5 or np.isnan(f[k]) or np.isnan(s_[k]):
+        return None
+    if f[k] > s_[k] and c[k] > s_[k]:
+        return "up"
+    if f[k] < s_[k] and c[k] < s_[k]:
+        return "down"
+    return None
+
+
+def run_va_pair(pair: str, rank: int, df15: pd.DataFrame, df4: pd.DataFrame) -> list:
+    if len(df15) < 400 or len(df4) < 60:
+        return []
+    lv = day_levels(df15)
+    ser = h4_trend_series(df4)
+    atr_s = M.atr(df15, 14).to_numpy()
+    o, h, l, c = (df15[k].to_numpy() for k in ("open", "high", "low", "close"))
+    t = df15["time"].to_numpy()
+    t0 = int(t[0]) + WARMUP_DAYS * 86400
+    busy = {"LONG": -1, "SHORT": -1}
+    out = []
+    for i in range(VA_LOOKBACK + 2, len(df15) - 2):
+        if int(t[i]) < t0:
+            continue
+        day = int(t[i]) // 86400 * 86400
+        if day not in lv:
+            continue
+        hour = ((int(t[i]) + 900 + 60) % 86400) // 3600
+        if not (M.SESSION_START_UTC <= hour < M.SESSION_END_UTC):
+            continue
+        vah, val, poc = lv[day]
+        a = atr_s[i]
+        if not np.isfinite(a) or a <= 0:
+            continue
+        side = None
+        if c[i - 2] > vah and val <= c[i - 1] <= vah and val <= c[i] <= vah:
+            side = "SHORT"
+        elif c[i - 2] < val and val <= c[i - 1] <= vah and val <= c[i] <= vah:
+            side = "LONG"
+        if side is None or i <= busy[side]:
+            continue
+        entry = float(o[i + 1])
+        if side == "SHORT":
+            sl = float(h[i - VA_LOOKBACK + 1:i + 1].max()) + M.STOP_ATR_BUFFER * a
+            target, risk = val, sl - entry
+            ok = target < entry < sl
+        else:
+            sl = float(l[i - VA_LOOKBACK + 1:i + 1].min()) - M.STOP_ATR_BUFFER * a
+            target, risk = vah, entry - sl
+            ok = sl < entry < target
+        if not ok or risk <= 0 or not (M.MIN_SL_DISTANCE_PCT <= risk / entry <= VA_MAX_RISK):
+            continue
+        if abs(target - entry) / risk < VA_MIN_RR:
+            continue
+        sig = {"direction": side, "entry": entry, "sl": sl, "tp1": target, "tp2": target,
+               "setup_low": 0.0, "setup_high": 0.0}
+        tr = simulate_trade(df15, i, sig)
+        if tr is None:
+            continue
+        busy[side] = i + 1 + tr["bars"]
+        trend = h4_state(ser, int(t[i]) + 900)
+        out.append({"pair": pair, "rank": rank, "mode": "VA_ROTATION", "direction": side,
+                    "signal_time": int(t[i]) + 900, "trend": trend,
+                    "with_trend": (side == "SHORT" and trend == "down") or (side == "LONG" and trend == "up"), **tr})
+    return out
+
+
+def va_report(trades: list, meta: dict) -> str:
+    L = ["", "=" * 100, "STUDY 2: VALUE-AREA RE-ENTRY ROTATION (hypothesis fixed in advance; nothing tuned)",
+         "Rule: close outside the previous-day VA, then 2 consecutive 15m closes back inside -> trade to the opposite VA edge.",
+         "Stop beyond the 8-bar excursion extreme +/-0.4 ATR; RR>=1.5; risk 0.5-3%; session 07-20 UTC; entry = next candle open;",
+         "entry candle exits use its close only; SL checked before TP; 10-day timeout. Same biases as STUDY 1.", ""]
+    if not trades:
+        return "\n".join(L + ["NO TRADES"])
+    for t in trades:
+        t["r_net"] = t["r_gross"] - FEE_ROUND_TRIP / t["risk_pct"]
+    mid = trades[len(trades) // 2]["signal_time"]
+    def line(label, rows):
+        L.append(fmt(label, stats([x["r_net"] for x in rows])))
+    line("A: all trades (r_net)", trades)
+    L.append(fmt("A: all trades (r_gross)", stats([x["r_gross"] for x in trades])))
+    line("A first half (r_net)", [x for x in trades if x["signal_time"] < mid])
+    line("A second half (r_net)", [x for x in trades if x["signal_time"] >= mid])
+    wt = [x for x in trades if x["with_trend"]]
+    L.append("")
+    line("B: only WITH the 4H trend (r_net)", wt)
+    L.append(fmt("B: with trend (r_gross)", stats([x["r_gross"] for x in wt])))
+    line("B first half (r_net)", [x for x in wt if x["signal_time"] < mid])
+    line("B second half (r_net)", [x for x in wt if x["signal_time"] >= mid])
+    line("C: AGAINST the 4H trend / no trend (r_net)", [x for x in trades if not x["with_trend"]])
+    L.append("")
+    for d in ("LONG", "SHORT"):
+        line(f"A {d} (r_net)", [x for x in trades if x["direction"] == d])
+    months = {}
+    for x in trades:
+        months.setdefault(datetime.fromtimestamp(x["signal_time"], timezone.utc).strftime("%Y-%m"), []).append(x["r_net"])
+    for k in sorted(months):
+        L.append(fmt(f"month {k} (A r_net)", stats(months[k])))
+    byc = {}
+    for x in trades:
+        byc[x["pair"]] = byc.get(x["pair"], 0.0) + x["r_net"]
+    top = sorted(byc.items(), key=lambda kv: -kv[1])[:3]
+    L.append("top 3 coins by net R: " + ", ".join(f"{k} {v:+.1f}" for k, v in top) + f" | total {sum(byc.values()):+.1f}")
+    res = {}
+    for x in trades:
+        res[x["result"]] = res.get(x["result"], 0) + 1
+    L.append("exits: " + ", ".join(f"{k}={v}" for k, v in sorted(res.items())))
+    L.append(f"median risk pct: {100 * float(np.median([x['risk_pct'] for x in trades])):.2f}")
+    return "\n".join(L)
+
+
 def main():
     end = int(time.time()) // 900 * 900
     start = end - (DAYS + WARMUP_DAYS) * 86400
@@ -227,7 +374,7 @@ def main():
     M.get_live_price = sim_live_price
     coins = M.get_top_coins(M.SCAN_TOP_N_COINS)
     print("universe:", len(coins), [c["symbol"] for c in coins])
-    trades, have = [], 0
+    trades, va_trades, have = [], [], 0
     for rank, c in enumerate(coins):
         df15 = fetch_history(c["pair"], "15min", start, end)
         df4 = fetch_history(c["pair"], "4hour", start - 40 * 86400, end)
@@ -235,12 +382,15 @@ def main():
             print("skip (no data):", c["pair"]); continue
         have += 1
         got = run_pair(c["pair"], c["symbol"], rank, df15, df4)
-        print(f"{c['pair']}: bars15={len(df15)} signals={len(got)}", flush=True)
+        va = run_va_pair(c["pair"], rank, df15, df4)
+        print(f"{c['pair']}: bars15={len(df15)} study1={len(got)} study2={len(va)}", flush=True)
         trades += got
+        va_trades += va
     trades = apply_run_cap(trades)
+    va_trades = sorted(va_trades, key=lambda x: x["signal_time"])
     meta = {"start": datetime.fromtimestamp(start, timezone.utc).strftime("%Y-%m-%d"),
             "end": datetime.fromtimestamp(end, timezone.utc).strftime("%Y-%m-%d"), "days": DAYS, "coins": have}
-    text = report(trades, meta)
+    text = "STUDY 1: THE LIVE BOT (reversal mode only; trend mode is disabled in the bot)\n" + report(trades, meta) + va_report(va_trades, meta)
     print(text)
     with open("lvar_backtest_result.txt", "w", encoding="utf-8") as fh:
         fh.write(text + "\n")
@@ -248,7 +398,8 @@ def main():
         w = csv.writer(fh)
         cols = ["pair", "mode", "direction", "signal_time", "entry", "result", "r_gross", "r_net", "risk_pct", "bars"]
         w.writerow(cols)
-        for t in trades:
+        for t in trades + va_trades:
+            t.setdefault("r_net", t["r_gross"] - FEE_ROUND_TRIP / t["risk_pct"])
             w.writerow([t.get(k) for k in cols])
 
 
