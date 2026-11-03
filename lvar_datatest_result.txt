@@ -1,59 +1,83 @@
-DATA ACCESS TEST from the GitHub Actions runner
-run at: 2026-11-03 20:28 UTC
-Asked for history starting 2022-11-01 where the API allows it; BTC and AVAX (a mid-cap alt with a long history).
+DATA ACCESS TEST v2 from the GitHub Actions runner
+run at: 2026-11-03 20:47 UTC
+Binance/Bybit exchange APIs were already shown to be blocked in v1 (HTTP 451/403) and are not repeated.
 
-Binance funding                                      BTC   HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Binance OI history                                   BTC   HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Binance long/short ratio                             BTC   HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Binance perp klines 1d                               BTC   HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit funding                                        BTC   HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit OI history 1d                                  BTC   HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit long/short ratio                               BTC   HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit perp klines 1d                                 BTC   HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-OKX funding (older than 2023-11-14)                  BTC   HTTP 200  n=    0 no records  {"code": "0", "data": [], "msg": ""}
-OKX OI+volume 1d                                     BTC   HTTP 200  n=  180 2026-05-08 .. 2026-11-03
-KuCoin futures funding                               BTC   HTTP 200  n=    0 no records  TypeError: list indices must be integers or slices, not str
-KuCoin futures klines 1d                             BTC   HTTP 200  n=  191 2022-11-01 .. 2023-05-10 DEEP
-KuCoin futures contract info                         BTC   HTTP 200  n=    1 2026-11-03 .. 2026-11-03  snapshot only, openInterest=10272740
-Gate funding                                         BTC   HTTP 400  n=    0 no records  {"label":"INVALID_PARAM_VALUE","message":"from time exceeds 180-day limit"}
-Gate contract stats 1d (OI, ratios, liquidations)    BTC   HTTP 400  n=    0 no records  {"label":"INVALID_PARAM_VALUE","message":"from time exceeds 180-day limit"}
-Bitget funding (page 40)                             BTC   HTTP 200  n=    0 no records  {"code": "00000", "msg": "success", "requestTime": 1793737713940, "data": []}
-MEXC funding (page 40)                               BTC   HTTP 200  n=    0 no records  {"success": true, "code": 0, "data": {"pageSize": 100, "totalCount": 1618, "totalPage": 17, "currentPage": 40, "resultList": []}}
-Hyperliquid funding                                  BTC   HTTP 200  n=  500 2023-05-12 .. 2023-06-25
-Binance funding                                      AVAX  HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Binance OI history                                   AVAX  HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Binance long/short ratio                             AVAX  HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Binance perp klines 1d                               AVAX  HTTP 451  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit funding                                        AVAX  HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit OI history 1d                                  AVAX  HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit long/short ratio                               AVAX  HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-Bybit perp klines 1d                                 AVAX  HTTP 403  n=    0 no records  BLOCKED from this server (likely region/IP block)
-OKX funding (older than 2023-11-14)                  AVAX  HTTP 200  n=    0 no records  {"code": "0", "data": [], "msg": ""}
-OKX OI+volume 1d                                     AVAX  HTTP 200  n=  180 2026-05-08 .. 2026-11-03
-KuCoin futures funding                               AVAX  HTTP 200  n=    0 no records  TypeError: list indices must be integers or slices, not str
-KuCoin futures klines 1d                             AVAX  HTTP 200  n=  191 2022-11-01 .. 2023-05-10 DEEP
-KuCoin futures contract info                         AVAX  HTTP 200  n=    1 2026-11-03 .. 2026-11-03  snapshot only, openInterest=14381242
-Gate funding                                         AVAX  HTTP 400  n=    0 no records  {"label":"INVALID_PARAM_VALUE","message":"from time exceeds 180-day limit"}
-Gate contract stats 1d (OI, ratios, liquidations)    AVAX  HTTP 400  n=    0 no records  {"label":"INVALID_PARAM_VALUE","message":"from time exceeds 180-day limit"}
-Bitget funding (page 40)                             AVAX  HTTP 200  n=    0 no records  {"code": "00000", "msg": "success", "requestTime": 1793737723793, "data": []}
-MEXC funding (page 40)                               AVAX  HTTP 200  n=    0 no records  {"success": true, "code": 0, "data": {"pageSize": 100, "totalCount": 1618, "totalPage": 17, "currentPage": 40, "resultList": []}}
-Hyperliquid funding                                  AVAX  HTTP 200  n=  500 2023-05-12 .. 2023-06-25
+KuCoin futures funding 2022-11                 BTC           HTTP 200  n=    90 2022-11-01 .. 2022-11-30 DEEP
+KuCoin futures funding 2024-06                 BTC           HTTP 200  n=    90 2024-06-01 .. 2024-06-30 DEEP
+KuCoin futures klines 1d                       BTC           HTTP 200  n=   191 2022-11-01 .. 2023-05-10 DEEP
+KuCoin futures contract info                   BTC           HTTP 200  n=     1 2026-11-03 .. 2026-11-03  snapshot only, openInterest=10277453
+Gate funding (latest 1000)                     BTC           HTTP 200  n=    90 2026-10-05 .. 2026-11-03
+Gate stats 1d (last 170 days)                  BTC           HTTP 200  n=   101 2026-05-18 .. 2026-08-26 DEEP  fields: long_liq_amount,long_liq_size,long_liq_usd,long_liq_usd_new,lsr_account,lsr_taker,open_interest,short_liq_amount,short_liq_size,short_liq_usd,short_liq_usd_new,top_lsr_account,top_lsr_size
+Hyperliquid funding from launch                BTC           HTTP 200  n=   500 2023-05-12 .. 2023-06-25 DEEP
+Hyperliquid funding last 20 days               BTC           HTTP 200  n=   480 2026-10-14 .. 2026-11-03 DEEP
+KuCoin futures funding 2022-11                 AVAX          HTTP 200  n=    90 2022-11-01 .. 2022-11-30 DEEP
+KuCoin futures funding 2024-06                 AVAX          HTTP 200  n=    90 2024-06-01 .. 2024-06-30 DEEP
+KuCoin futures klines 1d                       AVAX          HTTP 200  n=   191 2022-11-01 .. 2023-05-10 DEEP
+KuCoin futures contract info                   AVAX          HTTP 200  n=     1 2026-11-03 .. 2026-11-03  snapshot only, openInterest=14356320
+Gate funding (latest 1000)                     AVAX          HTTP 200  n=    90 2026-10-05 .. 2026-11-03
+Gate stats 1d (last 170 days)                  AVAX          HTTP 200  n=   101 2026-05-18 .. 2026-08-26 DEEP  fields: long_liq_amount,long_liq_size,long_liq_usd,long_liq_usd_new,lsr_account,lsr_taker,open_interest,short_liq_amount,short_liq_size,short_liq_usd,short_liq_usd_new,top_lsr_account,top_lsr_size
+Hyperliquid funding from launch                AVAX          HTTP 200  n=   500 2023-05-12 .. 2023-06-25 DEEP
+Hyperliquid funding last 20 days               AVAX          HTTP 200  n=   480 2026-10-14 .. 2026-11-03 DEEP
+MEXC funding (oldest page)                     BTC           HTTP 200  n=  1618 2025-05-13 .. 2026-11-03  totalCount=1618
+MEXC funding (oldest page)                     AVAX          HTTP 200  n=  1618 2025-05-13 .. 2026-11-03  totalCount=1618
+Vision metrics (OI, ratios) 2021-12-15         BTCUSDT       HTTP 200  n=   287 2021-12-15 .. 2021-12-15  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2022-11-01         BTCUSDT       HTTP 200  n=   288 2022-11-01 .. 2022-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2023-11-01         BTCUSDT       HTTP 200  n=   288 2023-11-01 .. 2023-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2024-11-01         BTCUSDT       HTTP 200  n=   288 2024-11-01 .. 2024-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2026-10-01         BTCUSDT       HTTP 200  n=   288 2026-10-01 .. 2026-10-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision fundingRate 2020-06                     BTCUSDT       HTTP 200  n=    90 2020-06-01 .. 2020-06-30  columns: calc_time,funding_interval_hours,last_funding_rate
+Vision fundingRate 2022-11                     BTCUSDT       HTTP 200  n=    90 2022-11-01 .. 2022-11-30  columns: calc_time,funding_interval_hours,last_funding_rate
+Vision fundingRate 2024-11                     BTCUSDT       HTTP 200  n=    90 2024-11-01 .. 2024-11-30  columns: calc_time,funding_interval_hours,last_funding_rate
+Vision liquidationSnapshot 2022-11-01          BTCUSDT       HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision liquidationSnapshot 2023-11-01          BTCUSDT       HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision klines 1d 2022-11                       BTCUSDT       HTTP 200  n=    30 2022-11-01 .. 2022-11-30  columns: open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore
+Vision metrics (OI, ratios) 2021-12-15         AVAXUSDT      HTTP 200  n=   287 2021-12-15 .. 2021-12-15  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2022-11-01         AVAXUSDT      HTTP 200  n=   288 2022-11-01 .. 2022-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2023-11-01         AVAXUSDT      HTTP 200  n=   288 2023-11-01 .. 2023-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2024-11-01         AVAXUSDT      HTTP 200  n=   288 2024-11-01 .. 2024-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2026-10-01         AVAXUSDT      HTTP 200  n=   288 2026-10-01 .. 2026-10-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision fundingRate 2020-06                     AVAXUSDT      HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision fundingRate 2022-11                     AVAXUSDT      HTTP 200  n=    90 2022-11-01 .. 2022-11-30  columns: calc_time,funding_interval_hours,last_funding_rate
+Vision fundingRate 2024-11                     AVAXUSDT      HTTP 200  n=    90 2024-11-01 .. 2024-11-30  columns: calc_time,funding_interval_hours,last_funding_rate
+Vision liquidationSnapshot 2022-11-01          AVAXUSDT      HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision liquidationSnapshot 2023-11-01          AVAXUSDT      HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision klines 1d 2022-11                       AVAXUSDT      HTTP 200  n=    30 2022-11-01 .. 2022-11-30  columns: open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore
+Vision metrics (OI, ratios) 2021-12-15         1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision metrics (OI, ratios) 2022-11-01         1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision metrics (OI, ratios) 2023-11-01         1000PEPEUSDT  HTTP 200  n=   288 2023-11-01 .. 2023-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2024-11-01         1000PEPEUSDT  HTTP 200  n=   288 2024-11-01 .. 2024-11-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision metrics (OI, ratios) 2026-10-01         1000PEPEUSDT  HTTP 200  n=   288 2026-10-01 .. 2026-10-01  columns: create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,count_long_short_ratio,su
+Vision fundingRate 2020-06                     1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision fundingRate 2022-11                     1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision fundingRate 2024-11                     1000PEPEUSDT  HTTP 200  n=    90 2024-11-01 .. 2024-11-30  columns: calc_time,funding_interval_hours,last_funding_rate
+Vision liquidationSnapshot 2022-11-01          1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision liquidationSnapshot 2023-11-01          1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
+Vision klines 1d 2022-11                       1000PEPEUSDT  HTTP 404  n=     0 no records  not available (404 = file does not exist; 403 may mean blocked): <?xml version="1.0" encoding="UTF-8"?> <Error><Code>NoSuchKey</Code><Message>The specified
 
 ============================================================
-SUMMARY (DEEP = history reaches back to about 2022-11 when asked for it)
-FUNDING-RATE history:
-  deep + reachable: NONE
-  reachable but shallow/snapshot: Hyperliquid funding
-  blocked: Binance funding, Bybit funding
-OPEN-INTEREST / stats history:
-  deep + reachable: NONE
-  reachable but shallow/snapshot: OKX OI+volume 1d
-  blocked: Binance OI history, Bybit OI history 1d
-LONG/SHORT-ratio history:
-  deep + reachable: NONE
-  blocked: Binance long/short ratio, Bybit long/short ratio
-PERPETUAL klines (daily):
-  deep + reachable: KuCoin futures klines 1d
-  blocked: Binance perp klines 1d, Bybit perp klines 1d
-OI snapshot only:
-  reachable but shallow/snapshot: KuCoin futures contract info
+SUMMARY
+FUNDING-RATE history (exchange APIs):
+  deep: Hyperliquid funding from launch, Hyperliquid funding last 20 days, KuCoin futures funding 2022-11, KuCoin futures funding 2024-06
+  reachable but not deep / snapshot: Gate funding (latest 1000), MEXC funding (oldest page)
+OPEN-INTEREST / ratios / liquidations (exchange APIs):
+  deep: Gate stats 1d (last 170 days)
+PERPETUAL klines daily (exchange APIs):
+  deep: KuCoin futures klines 1d
+Open-interest snapshot only:
+  reachable but not deep / snapshot: KuCoin futures contract info
+data.binance.vision METRICS (open interest, long/short ratios, taker ratio):
+  1000PEPEUSDT: found 2023-11-01, 2024-11-01, 2026-10-01 | missing/blocked 2021-12-15(404), 2022-11-01(404)
+  AVAXUSDT: found 2021-12-15, 2022-11-01, 2023-11-01, 2024-11-01, 2026-10-01
+  BTCUSDT: found 2021-12-15, 2022-11-01, 2023-11-01, 2024-11-01, 2026-10-01
+data.binance.vision FUNDING:
+  1000PEPEUSDT: found 2024-11 | missing/blocked 2020-06(404), 2022-11(404)
+  AVAXUSDT: found 2022-11, 2024-11 | missing/blocked 2020-06(404)
+  BTCUSDT: found 2020-06, 2022-11, 2024-11
+data.binance.vision LIQUIDATIONS:
+  1000PEPEUSDT: found NONE | missing/blocked 2022-11-01(404), 2023-11-01(404)
+  AVAXUSDT: found NONE | missing/blocked 2022-11-01(404), 2023-11-01(404)
+  BTCUSDT: found NONE | missing/blocked 2022-11-01(404), 2023-11-01(404)
+data.binance.vision KLINES (site reachability check):
+  1000PEPEUSDT: found NONE | missing/blocked 2022-11(404)
+  AVAXUSDT: found 2022-11
+  BTCUSDT: found 2022-11
