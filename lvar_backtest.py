@@ -1,16 +1,16 @@
 """
-DAILY DONCHIAN TREND-FOLLOWING ENSEMBLE - backtest (read-only research; nothing is tuned).
-Rules are taken from the published design "Catching Crypto Trends" (Zarattini, Pagani, Barbon; Swiss Finance Institute rp2580):
-an ensemble of Donchian-channel trend models with different lookbacks, long-only, volatility-based sizing, top liquid coins.
-  model L: ON when the daily close breaks above the highest high of the previous L days; OFF when the close falls below the
-           midpoint of the previous-L-day channel; otherwise keep the state. Decision at the close of day t, applied to day t+1.
-  ensemble signal = mean of the model states (0..1); weights = signal / vol (30-day) normalised over the coins that exist
-  that day, total exposure <= 100% (rest in cash); no leverage, no shorts.
-Benchmarks over the SAME coins and dates: BTC buy&hold and equal-weight buy&hold (daily rebalanced).
-Costs: 0.10% + 0.05% slippage per unit of turnover (stress: 0.30%).
-Biases (stated): the universe is TODAY's liquid list (survivorship) - it favours long-only strategies AND the equal-weight
-benchmark alike, so the comparison against the equal-weight benchmark is the fair one.
-Output files keep the old names so the existing workflow commits them: lvar_backtest_result.txt, lvar_backtest_trades.csv.
+1-HOUR FUTURES-STYLE INTRADAY BACKTEST - two hypotheses fixed IN ADVANCE, nothing tuned (read-only research).
+Prices: KuCoin spot 1h candles used as a proxy for the perpetual (price difference is tiny); costs are futures-style:
+  taker 0.06% per side + 0.03% slippage per side = 0.15% round trip, plus funding 0.01% per 8h held (charged both ways).
+  stress case: 0.30% round trip.
+H1  "DONCHIAN-24 BREAKOUT" (both directions): signal at the close of a 1h bar that breaks the previous 24-bar high (long) / low (short);
+    entry = next bar open; stop = entry -/+ 2 x ATR14; exit at the first of: stop (intrabar, gap-aware), close back through the midpoint of the
+    prior-24-bar channel (exit at the next open), or 72 bars.
+H2  "DAILY-TREND PULLBACK RESUMPTION" (both directions): daily trend from the LAST COMPLETED UTC day (EMA20 > EMA50 and close > EMA50 = up; mirrored = down).
+    long when the 1h close crosses back above the 1h EMA20 in an up-trend (short mirrored); entry = next bar open; stop = 2 x ATR14; target = 3 x ATR14; 48 bars.
+Common: one position per coin and hypothesis; stop distance must be 0.4%-8% of price; SL checked before TP inside a bar; same-bar gaps fill at the open.
+Pass rule (written before running): net avgR >= +0.10 AND PF >= 1.2 AND n >= 300 AND BOTH halves of the period net-positive.
+Biases: today's liquid coin list (survivorship), spot proxy for futures, no order-book impact. Output file names are kept so the existing workflow commits them.
 """
 import csv
 import os
@@ -22,21 +22,22 @@ import pandas as pd
 
 import crypto_signal_bot as M
 
-DAYS = int(os.getenv("BT_DAYS", "1400"))
-LOOKBACKS = [5, 10, 20, 30, 60, 90, 150, 250, 360]
-VOL_WIN = 30
-COST = 0.0015
+DAYS = max(int(os.getenv("BT_DAYS", "0") or 0), 1095)       # at least 3 years whatever the workflow input says
+COST_RT = 0.0015
 COST_STRESS = 0.0030
-MIN_HISTORY = 40
+FUNDING_8H = 0.0001
+ATR_N = 14
+CH_N = 24
+MIN_RISK, MAX_RISK = 0.004, 0.08
 SKIP = {"USDT", "USDC", "FDUSD", "TUSD", "DAI", "USDE", "USD1", "PYUSD", "USDD", "BUSD", "EURT", "XAUT", "PAXG"}
 
 
-def fetch_daily(pair: str, start: int, end: int) -> pd.DataFrame:
+def fetch_1h(pair: str, start: int, end: int) -> pd.DataFrame:
     rows, cur_end = [], end
     while cur_end > start:
-        cur_start = max(start, cur_end - 1400 * 86400)
+        cur_start = max(start, cur_end - 1400 * 3600)
         payload = M.safe_get_json(f"{M.KUCOIN_BASE}/api/v1/market/candles",
-                                  {"symbol": pair, "type": "1day", "startAt": cur_start, "endAt": cur_end})
+                                  {"symbol": pair, "type": "1hour", "startAt": cur_start, "endAt": cur_end})
         if isinstance(payload, dict) and payload.get("code") == "200000" and isinstance(payload.get("data"), list):
             for it in payload["data"]:
                 try:
@@ -45,145 +46,192 @@ def fetch_daily(pair: str, start: int, end: int) -> pd.DataFrame:
                 except (TypeError, ValueError, IndexError):
                     continue
         cur_end = cur_start
-        time.sleep(0.3)
+        time.sleep(0.25)
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows).drop_duplicates("time").sort_values("time")
-    df = df[(df.close > 0) & (df.high >= df.low) & (df.volume >= 0)]
-    df = df[df.time + 86400 <= int(time.time()) - 60]          # completed daily bars only
-    df.index = pd.to_datetime(df["time"], unit="s", utc=True).dt.normalize()
-    return df[["open", "high", "low", "close", "volume"]]
+    df = df[(df.open > 0) & (df.close > 0) & (df.high >= df.low) & (df.volume >= 0)]
+    df = df[df.time + 3600 <= int(time.time()) - 60]
+    return df.reset_index(drop=True)
 
 
-def model_state(high: np.ndarray, low: np.ndarray, close: np.ndarray, L: int) -> np.ndarray:
-    """State at the CLOSE of each day (1 = long). Uses only data up to and including that day's close."""
-    n = len(close)
-    st = np.zeros(n)
-    on = 0.0
-    for t in range(L, n):
-        hh = high[t - L:t].max()          # previous L days only
-        ll = low[t - L:t].min()
-        if on == 0.0 and close[t] > hh:
-            on = 1.0
-        elif on == 1.0 and close[t] < (hh + ll) / 2.0:
-            on = 0.0
-        st[t] = on
-    return st
+def atr(df: pd.DataFrame, n: int = ATR_N) -> np.ndarray:
+    pc = df["close"].shift(1)
+    tr = pd.concat([df.high - df.low, (df.high - pc).abs(), (df.low - pc).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / n, adjust=False, min_periods=n).mean().to_numpy()
 
 
-def ensemble_signal(df: pd.DataFrame) -> pd.Series:
-    """Mean of the models that already have enough history (a model with L > available history is simply absent)."""
-    h, l, c = df["high"].to_numpy(), df["low"].to_numpy(), df["close"].to_numpy()
+def simulate(o, h, l, c, i, side, stop, target, mid, max_hold):
+    """Position opened at open[i+1]. Returns (r_gross, exit_index, reason, entry) or None if the data ends first."""
     n = len(c)
-    acc = np.zeros(n)
-    cnt = np.zeros(n)
-    for L in LOOKBACKS:
-        if n <= L + 1:
+    e = i + 1
+    if e >= n:
+        return None
+    entry = o[e]
+    risk = abs(entry - stop)
+    if risk <= 0 or (side == 1 and stop >= entry) or (side == -1 and stop <= entry):
+        return None
+    last = min(n - 1, i + max_hold)
+    for k in range(e, last + 1):
+        if side == 1:
+            if o[k] <= stop:
+                return (o[k] - entry) / risk, k, "SL", entry
+            if l[k] <= stop:
+                return -1.0, k, "SL", entry
+            if target is not None and h[k] >= target:
+                return (target - entry) / risk, k, "TP", entry
+        else:
+            if o[k] >= stop:
+                return (entry - o[k]) / risk, k, "SL", entry
+            if h[k] >= stop:
+                return -1.0, k, "SL", entry
+            if target is not None and l[k] <= target:
+                return (entry - target) / risk, k, "TP", entry
+        if mid is not None and k + 1 < n and np.isfinite(mid[k]) and ((side == 1 and c[k] < mid[k]) or (side == -1 and c[k] > mid[k])):
+            return side * (o[k + 1] - entry) / risk, k + 1, "MID", entry
+        if k == i + max_hold:
+            return side * (c[k] - entry) / risk, k, "TIME", entry
+    return None
+
+
+def finish(trade, risk_pct, hold):
+    r, k, reason, entry = trade
+    costs = COST_RT + FUNDING_8H * hold / 8.0
+    return r, r - costs / risk_pct, r - (COST_STRESS + FUNDING_8H * hold / 8.0) / risk_pct
+
+
+def daily_trend(df: pd.DataFrame) -> np.ndarray:
+    """+1 / -1 / 0 per 1h bar from the last COMPLETED UTC day."""
+    day = df["time"] // 86400
+    dc = df.groupby(day)["close"].last()
+    ema20, ema50 = dc.ewm(span=20, adjust=False, min_periods=20).mean(), dc.ewm(span=50, adjust=False, min_periods=50).mean()
+    st = pd.Series(0, index=dc.index)
+    st[(ema20 > ema50) & (dc > ema50)] = 1
+    st[(ema20 < ema50) & (dc < ema50)] = -1
+    prev = st.shift(1).fillna(0)
+    return day.map(prev).to_numpy()
+
+
+def run_coin(pair: str, rank: int, df: pd.DataFrame) -> list:
+    if len(df) < 1500:
+        return []
+    o, h, l, c = (df[k].to_numpy(float) for k in ("open", "high", "low", "close"))
+    t = df["time"].to_numpy()
+    a = atr(df)
+    hh = df["high"].shift(1).rolling(CH_N).max().to_numpy()
+    ll = df["low"].shift(1).rolling(CH_N).min().to_numpy()
+    mid = (hh + ll) / 2.0
+    e20 = df["close"].ewm(span=20, adjust=False, min_periods=20).mean().to_numpy()
+    tr = daily_trend(df)
+    out = []
+    busy = {"H1": -1, "H2": -1}
+    for i in range(max(CH_N, 60), len(df) - 2):
+        if not np.isfinite(a[i]) or a[i] <= 0:
             continue
-        s = model_state(h, l, c, L)
-        acc[L:] += s[L:]
-        cnt[L:] += 1
-    sig = np.where(cnt > 0, acc / np.maximum(cnt, 1), 0.0)
-    return pd.Series(sig, index=df.index)
+        cands = []
+        if i > busy["H1"] and np.isfinite(hh[i]):
+            if c[i] > hh[i]:
+                cands.append(("H1", 1, o[i + 1] - 2 * a[i], None, mid, 72))
+            elif c[i] < ll[i]:
+                cands.append(("H1", -1, o[i + 1] + 2 * a[i], None, mid, 72))
+        if i > busy["H2"] and np.isfinite(e20[i]) and np.isfinite(e20[i - 1]):
+            if tr[i] == 1 and c[i - 1] < e20[i - 1] and c[i] > e20[i]:
+                cands.append(("H2", 1, o[i + 1] - 2 * a[i], o[i + 1] + 3 * a[i], None, 48))
+            elif tr[i] == -1 and c[i - 1] > e20[i - 1] and c[i] < e20[i]:
+                cands.append(("H2", -1, o[i + 1] + 2 * a[i], o[i + 1] - 3 * a[i], None, 48))
+        for name, side, stop, target, midarr, hold in cands:
+            risk_pct = abs(o[i + 1] - stop) / o[i + 1]
+            if not (MIN_RISK <= risk_pct <= MAX_RISK):
+                continue
+            res = simulate(o, h, l, c, i, side, stop, target, midarr, hold)
+            if res is None:
+                continue
+            rg, rn, rs = finish(res, risk_pct, res[1] - (i + 1) + 1)
+            busy[name] = res[1]
+            out.append({"pair": pair, "hyp": name, "side": "LONG" if side == 1 else "SHORT", "time": int(t[i]) + 3600,
+                        "reason": res[2], "bars": res[1] - i, "risk_pct": risk_pct, "r_gross": rg, "r_net": rn, "r_stress": rs})
+    return out
 
 
-def portfolio(data: dict, cost: float):
-    idx = sorted(set().union(*[d.index for d in data.values()]))
-    idx = pd.DatetimeIndex(idx)
-    ret = pd.DataFrame({k: d["close"].pct_change() for k, d in data.items()}).reindex(idx)
-    sig = pd.DataFrame({k: ensemble_signal(d) for k, d in data.items()}).reindex(idx)
-    vol = ret.rolling(VOL_WIN).std()
-    avail = ret.notna() & vol.notna() & (vol > 0)
-    invvol = (1.0 / vol).where(avail)
-    norm = invvol.sum(axis=1)
-    w_target = (sig * invvol).div(norm, axis=0).where(avail).fillna(0.0)       # decided at close t
-    w = w_target.shift(1).fillna(0.0)                                          # applied to day t+1 returns
-    gross = (w * ret.fillna(0.0)).sum(axis=1)
-    turnover = w.diff().abs().sum(axis=1).fillna(0.0)
-    net = gross - cost * turnover
-    ew_w = avail.shift(1, fill_value=False).astype(float)
-    ew = (ew_w * ret.fillna(0.0)).sum(axis=1) / ew_w.sum(axis=1).replace(0, np.nan)
-    ew = ew.fillna(0.0)
-    btc = ret["BTC-USDT"].fillna(0.0) if "BTC-USDT" in ret else ew
-    return net, gross, ew, btc, w, turnover, avail
+def stats(rs):
+    a = np.asarray(rs, float)
+    if len(a) == 0:
+        return None
+    wins, losses = a[a > 0].sum(), -a[a < 0].sum()
+    cum = np.cumsum(a)
+    return {"n": len(a), "win%": 100 * float((a > 0).mean()), "avgR": float(a.mean()), "totalR": float(a.sum()),
+            "PF": float(wins / losses) if losses > 0 else float("inf"), "maxDD": float((np.maximum.accumulate(cum) - cum).max())}
 
 
-def metrics(r: pd.Series) -> dict:
-    r = r.dropna()
-    if len(r) < 30 or r.std() == 0:
-        return {"days": len(r)}
-    eq = (1 + r).cumprod()
-    yrs = len(r) / 365.0
-    dd = float((eq / eq.cummax() - 1).min())
-    cagr = float(eq.iloc[-1] ** (1 / yrs) - 1) if eq.iloc[-1] > 0 else -1.0
-    sh = float(r.mean() / r.std() * np.sqrt(365))
-    return {"days": len(r), "total%": round(100 * float(eq.iloc[-1] - 1), 1), "CAGR%": round(100 * cagr, 1),
-            "vol%": round(100 * float(r.std() * np.sqrt(365)), 1), "Sharpe": round(sh, 2), "maxDD%": round(100 * dd, 1),
-            "Calmar": round(cagr / abs(dd), 2) if dd < 0 else None}
+def fmt(label, rs):
+    s = stats(rs)
+    if s is None:
+        return f"{label:38s} n=0"
+    return f"{label:38s} n={s['n']:5d} win%={s['win%']:5.1f} avgR={s['avgR']:+.3f} totalR={s['totalR']:+8.1f} PF={s['PF']:.2f} maxDD={s['maxDD']:.1f}"
 
 
-def line(label, m):
-    if "total%" not in m:
-        return f"{label:36s} n/a"
-    return (f"{label:36s} total={m['total%']:+8.1f}%  CAGR={m['CAGR%']:+7.1f}%  vol={m['vol%']:5.1f}%  "
-            f"Sharpe={m['Sharpe']:+5.2f}  maxDD={m['maxDD%']:6.1f}%  Calmar={m['Calmar']}")
-
-
-def report(data, net, gross, ew, btc, w, turnover, stress, avail) -> str:
-    start = net.index[np.argmax((avail.sum(axis=1) > 0).to_numpy())]
-    sl = lambda s: s[s.index >= start + pd.Timedelta(days=VOL_WIN + 5)]
-    net, gross, ew, btc, stress = map(sl, (net, gross, ew, btc, stress))
-    mid = net.index[len(net) // 2]
-    L = ["DAILY DONCHIAN TREND ENSEMBLE (rules fixed in advance from the published design; nothing tuned)",
-         f"period: {net.index[0].date()} -> {net.index[-1].date()} ({len(net)} days), coins: {len(data)}",
-         "Biases: universe = TODAY's liquid list (survivorship). Compare against the equal-weight benchmark (same bias).",
-         f"Costs: {COST * 100:.2f}% per unit turnover (stress {COST_STRESS * 100:.2f}%). Long-only, no leverage, rest in cash.", ""]
-    for label, s in (("STRATEGY net", net), ("STRATEGY gross", gross), ("STRATEGY stress costs", stress),
-                     ("BENCH equal-weight B&H", ew), ("BENCH BTC B&H", btc)):
-        L.append(line(label, metrics(s)))
-    L.append("")
-    for tag, f in (("first half", lambda s: s[s.index < mid]), ("second half", lambda s: s[s.index >= mid])):
-        L.append(f"--- {tag} ---")
-        for label, s in (("STRATEGY net", net), ("BENCH equal-weight", ew), ("BENCH BTC", btc)):
-            L.append(line(label, metrics(f(s))))
-    L.append("")
-    L.append("--- by calendar year (net / equal-weight / BTC) ---")
-    for y in sorted(set(net.index.year)):
-        a = metrics(net[net.index.year == y]); b = metrics(ew[ew.index.year == y]); c = metrics(btc[btc.index.year == y])
-        if "total%" in a and "total%" in b and "total%" in c:
-            L.append(f"{y}: strategy {a['total%']:+7.1f}% (maxDD {a['maxDD%']:.1f}%) | equal-weight {b['total%']:+7.1f}% (maxDD {b['maxDD%']:.1f}%) | BTC {c['total%']:+7.1f}% (maxDD {c['maxDD%']:.1f}%)")
-    exp = w.sum(axis=1)
-    L.append("")
-    L.append(f"average exposure {100 * float(exp.mean()):.1f}% of capital; days fully in cash {100 * float((exp < 0.01).mean()):.1f}%; "
-             f"turnover/day {100 * float(turnover.mean()):.1f}% of capital")
-    top = (w.mean() * 100).sort_values(ascending=False).head(5)
-    L.append("largest average weights: " + ", ".join(f"{k.replace('-USDT', '')} {v:.1f}%" for k, v in top.items()))
+def report(trades, meta):
+    L = ["1H INTRADAY BACKTEST - two fixed hypotheses (nothing tuned)",
+         f"period: {meta['start']} -> {meta['end']}  coins: {meta['coins']}  (spot 1h as perpetual proxy; costs 0.15% round trip + funding; stress 0.30%)",
+         "Pass rule fixed before the run: net avgR >= +0.10 AND PF >= 1.2 AND n >= 300 AND both halves net-positive.", ""]
+    ts = sorted(trades, key=lambda x: x["time"])
+    mid_t = ts[len(ts) // 2]["time"] if ts else 0
+    for hyp, title in (("H1", "H1 DONCHIAN-24 BREAKOUT"), ("H2", "H2 DAILY-TREND PULLBACK RESUMPTION")):
+        rows = [x for x in ts if x["hyp"] == hyp]
+        L.append("=" * 60); L.append(title)
+        if not rows:
+            L.append("NO TRADES"); continue
+        for k in ("r_gross", "r_net", "r_stress"):
+            L.append(fmt(f"  {k}", [x[k] for x in rows]))
+        a = [x["r_net"] for x in rows if x["time"] < mid_t]; b = [x["r_net"] for x in rows if x["time"] >= mid_t]
+        L.append(fmt("  first half (net)", a)); L.append(fmt("  second half (net)", b))
+        for side in ("LONG", "SHORT"):
+            L.append(fmt(f"  {side} (net)", [x["r_net"] for x in rows if x["side"] == side]))
+        years = sorted({datetime.fromtimestamp(x["time"], timezone.utc).year for x in rows})
+        for y in years:
+            L.append(fmt(f"  year {y} (net)", [x["r_net"] for x in rows if datetime.fromtimestamp(x["time"], timezone.utc).year == y]))
+        byc = {}
+        for x in rows:
+            byc[x["pair"]] = byc.get(x["pair"], 0.0) + x["r_net"]
+        top = sorted(byc.items(), key=lambda kv: -kv[1])[:3]
+        L.append("  top 3 coins by net R: " + ", ".join(f"{k} {v:+.0f}" for k, v in top) + f" | total {sum(byc.values()):+.0f}")
+        res = {}
+        for x in rows:
+            res[x["reason"]] = res.get(x["reason"], 0) + 1
+        L.append("  exits: " + ", ".join(f"{k}={v}" for k, v in sorted(res.items())))
+        L.append(f"  median risk {100 * float(np.median([x['risk_pct'] for x in rows])):.2f}% | median bars held {int(np.median([x['bars'] for x in rows]))}")
+        sn, sa, sb = stats([x["r_net"] for x in rows]), stats(a), stats(b)
+        ok = bool(sn and sa and sb and sn["avgR"] >= 0.10 and sn["PF"] >= 1.2 and sn["n"] >= 300 and sa["avgR"] > 0 and sb["avgR"] > 0)
+        L.append(f"  VERDICT (pre-registered rule): {'PASS - candidate for forward paper test' if ok else 'FAIL - rejected'}")
+        L.append("")
     return "\n".join(L)
 
 
 def main():
-    end = int(time.time())
+    end = int(time.time()) // 3600 * 3600
     start = end - DAYS * 86400
     coins = [c for c in M.get_top_coins(M.SCAN_TOP_N_COINS) if c["symbol"] not in SKIP]
     print("universe:", len(coins), [c["symbol"] for c in coins])
-    data = {}
-    for c in coins:
-        df = fetch_daily(c["pair"], start, end)
-        print(f"{c['pair']}: daily bars {len(df)}", flush=True)
-        if len(df) >= MIN_HISTORY + VOL_WIN:
-            data[c["pair"]] = df
-    if len(data) < 5:
-        text = "NOT ENOUGH DATA"
-    else:
-        net, gross, ew, btc, w, turnover, avail = portfolio(data, COST)
-        stress = portfolio(data, COST_STRESS)[0]
-        text = report(data, net, gross, ew, btc, w, turnover, stress, avail)
-        pd.DataFrame({"net": net, "gross": gross, "equal_weight": ew, "btc": btc, "exposure": w.sum(axis=1)}).to_csv("lvar_backtest_trades.csv")
+    trades, have = [], 0
+    for rank, c in enumerate(coins):
+        df = fetch_1h(c["pair"], start, end)
+        got = run_coin(c["pair"], rank, df)
+        print(f"{c['pair']}: 1h bars {len(df)} trades {len(got)}", flush=True)
+        if len(df) >= 1500:
+            have += 1
+        trades += got
+    meta = {"start": datetime.fromtimestamp(start, timezone.utc).strftime("%Y-%m-%d"),
+            "end": datetime.fromtimestamp(end, timezone.utc).strftime("%Y-%m-%d"), "coins": have}
+    text = report(trades, meta) if trades else "NO TRADES"
     print(text)
     with open("lvar_backtest_result.txt", "w", encoding="utf-8") as fh:
         fh.write(text + "\n")
-    if not os.path.exists("lvar_backtest_trades.csv"):
-        open("lvar_backtest_trades.csv", "w").write("no data\n")
+    with open("lvar_backtest_trades.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        cols = ["pair", "hyp", "side", "time", "reason", "bars", "risk_pct", "r_gross", "r_net"]
+        w.writerow(cols)
+        for x in trades:
+            w.writerow([x[k] for k in cols])
 
 
 if __name__ == "__main__":
