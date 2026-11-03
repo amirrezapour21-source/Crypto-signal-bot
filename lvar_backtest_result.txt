@@ -1,67 +1,25 @@
-STUDY 1: THE LIVE BOT (reversal mode only; trend mode is disabled in the bot)
-LVAR BACKTEST (measurement only; no parameter was tuned on this data)
-period: 2026-05-03 -> 2026-11-02 (180 days), coins with data: 29
-Biases: universe = TODAY's liquid list (survivorship/look-ahead); entry = open of the candle after the signal;
-flat fees (0.2% round trip net, 0.4% stress); no gaps/slippage; SL assumed filled exactly at the stop.
+DAILY DONCHIAN TREND ENSEMBLE (rules fixed in advance from the published design; nothing tuned)
+period: 2026-07-12 -> 2026-11-02 (114 days), coins: 27
+Biases: universe = TODAY's liquid list (survivorship). Compare against the equal-weight benchmark (same bias).
+Costs: 0.15% per unit turnover (stress 0.30%). Long-only, no leverage, rest in cash.
 
-ALL
-  r_gross                          n=  12  win%= 16.7  avgR=+0.070  totalR=   +0.84  PF=1.09  maxDD=8.0
-  r_net                            n=  12  win%= 16.7  avgR=-0.189  totalR=   -2.27  PF=0.81  maxDD=10.29
-  r_stress                         n=  12  win%= 16.7  avgR=-0.449  totalR=   -5.39  PF=0.63  maxDD=12.58
+STRATEGY net                         total=   +11.9%  CAGR=  +43.3%  vol= 20.1%  Sharpe=+1.89  maxDD=  -5.7%  Calmar=7.63
+STRATEGY gross                       total=   +12.8%  CAGR=  +47.1%  vol= 20.2%  Sharpe=+2.02  maxDD=  -5.5%  Calmar=8.54
+STRATEGY stress costs                total=   +11.0%  CAGR=  +39.5%  vol= 20.1%  Sharpe=+1.76  maxDD=  -5.8%  Calmar=6.78
+BENCH equal-weight B&H               total=   +51.0%  CAGR= +274.3%  vol= 58.1%  Sharpe=+2.56  maxDD= -12.8%  Calmar=21.51
+BENCH BTC B&H                        total=   +20.3%  CAGR=  +80.9%  vol= 37.4%  Sharpe=+1.77  maxDD= -11.3%  Calmar=7.15
 
-REVERSAL LONG (r_net)              n=   6  win%= 16.7  avgR=+0.362  totalR=   +2.17  PF=1.41  maxDD=3.79
-REVERSAL SHORT (r_net)             n=   6  win%= 16.7  avgR=-0.740  totalR=   -4.44  PF=0.32  maxDD=6.5
-TREND LONG (r_net)                 n=0
-TREND SHORT (r_net)                n=0
+--- first half ---
+STRATEGY net                         total=   +10.7%  CAGR=  +91.3%  vol= 20.8%  Sharpe=+3.23  maxDD=  -2.8%  Calmar=33.13
+BENCH equal-weight                   total=   +40.4%  CAGR= +778.6%  vol= 54.1%  Sharpe=+4.29  maxDD=  -7.3%  Calmar=106.78
+BENCH BTC                            total=   +25.9%  CAGR= +336.7%  vol= 40.0%  Sharpe=+3.89  maxDD=  -5.6%  Calmar=59.92
+--- second half ---
+STRATEGY net                         total=    +1.1%  CAGR=   +7.3%  vol= 19.5%  Sharpe=+0.46  maxDD=  -5.7%  Calmar=1.29
+BENCH equal-weight                   total=    +7.6%  CAGR=  +59.5%  vol= 62.1%  Sharpe=+1.06  maxDD= -12.8%  Calmar=4.66
+BENCH BTC                            total=    -4.4%  CAGR=  -25.0%  vol= 34.3%  Sharpe=-0.67  maxDD= -11.3%  Calmar=-2.21
 
-MODE REVERSAL
-  r_gross                          n=  12  win%= 16.7  avgR=+0.070  totalR=   +0.84  PF=1.09  maxDD=8.0
-  r_net                            n=  12  win%= 16.7  avgR=-0.189  totalR=   -2.27  PF=0.81  maxDD=10.29
-  r_stress                         n=  12  win%= 16.7  avgR=-0.449  totalR=   -5.39  PF=0.63  maxDD=12.58
+--- by calendar year (net / equal-weight / BTC) ---
+2026: strategy   +11.9% (maxDD -5.7%) | equal-weight   +51.0% (maxDD -12.8%) | BTC   +20.3% (maxDD -11.3%)
 
-MODE TREND: n=0
-
-REVERSAL first half (r_net)        n=   6  win%= 16.7  avgR=-0.707  totalR=   -4.24  PF=0.33  maxDD=5.12
-REVERSAL second half (r_net)       n=   6  win%= 16.7  avgR=+0.328  totalR=   +1.97  PF=1.36  maxDD=3.79
-TREND first half (r_net)           n=0
-TREND second half (r_net)          n=0
-
-month 2026-05 (r_net)              n=   2  win%= 50.0  avgR=+0.438  totalR=   +0.88  PF=1.74  maxDD=0.0
-month 2026-06 (r_net)              n=   3  win%=  0.0  avgR=-1.245  totalR=   -3.73  PF=0.0  maxDD=2.57
-month 2026-07 (r_net)              n=   2  win%=  0.0  avgR=-1.385  totalR=   -2.77  PF=0.0  maxDD=1.39
-month 2026-08 (r_net)              n=   3  win%=  0.0  avgR=-1.263  totalR=   -3.79  PF=0.0  maxDD=2.42
-month 2026-09 (r_net)              n=   2  win%= 50.0  avgR=+3.573  totalR=   +7.15  PF=27.56  maxDD=0.27
-
-top 3 coins by net R: PEPE-USDT +6.7, SUI-USDT -0.3, ENA-USDT -1.1 | total -2.3
-exits: BE=1, SL=9, TP2=2
-median risk pct: 0.84
-signal days: 12 of 180; trades/day avg 0.07
-====================================================================================================
-STUDY 2: VALUE-AREA RE-ENTRY ROTATION (hypothesis fixed in advance; nothing tuned)
-Rule: close outside the previous-day VA, then 2 consecutive 15m closes back inside -> trade to the opposite VA edge.
-Stop beyond the 8-bar excursion extreme +/-0.4 ATR; RR>=1.5; risk 0.5-3%; session 07-20 UTC; entry = next candle open;
-entry candle exits use its close only; SL checked before TP; 10-day timeout. Same biases as STUDY 1.
-
-A: all trades (r_net)              n=1659  win%= 30.0  avgR=-0.137  totalR= -226.87  PF=0.84  maxDD=258.89
-A: all trades (r_gross)            n=1659  win%= 30.0  avgR=+0.065  totalR= +107.08  PF=1.09  maxDD=55.21
-A first half (r_net)               n= 829  win%= 30.5  avgR=-0.111  totalR=  -92.40  PF=0.87  maxDD=133.09
-A second half (r_net)              n= 830  win%= 29.4  avgR=-0.162  totalR= -134.46  PF=0.81  maxDD=133.14
-
-B: only WITH the 4H trend (r_net)  n= 676  win%= 29.3  avgR=-0.176  totalR= -118.89  PF=0.79  maxDD=163.55
-B: with trend (r_gross)            n= 676  win%= 29.3  avgR=+0.034  totalR=  +23.11  PF=1.05  maxDD=74.87
-B first half (r_net)               n= 334  win%= 28.1  avgR=-0.244  totalR=  -81.41  PF=0.72  maxDD=105.04
-B second half (r_net)              n= 342  win%= 30.4  avgR=-0.110  totalR=  -37.49  PF=0.87  maxDD=59.7
-C: AGAINST the 4H trend / no trend (r_net) n= 983  win%= 30.4  avgR=-0.110  totalR= -107.97  PF=0.87  maxDD=127.47
-
-A LONG (r_net)                     n= 859  win%= 27.0  avgR=-0.192  totalR= -165.18  PF=0.78  maxDD=182.85
-A SHORT (r_net)                    n= 800  win%= 33.1  avgR=-0.077  totalR=  -61.68  PF=0.9  maxDD=133.23
-month 2026-05 (A r_net)            n= 284  win%= 34.2  avgR=+0.019  totalR=   +5.50  PF=1.02  maxDD=26.64
-month 2026-06 (A r_net)            n= 296  win%= 28.4  avgR=-0.185  totalR=  -54.78  PF=0.78  maxDD=85.77
-month 2026-07 (A r_net)            n= 275  win%= 28.7  avgR=-0.169  totalR=  -46.47  PF=0.81  maxDD=52.67
-month 2026-08 (A r_net)            n= 247  win%= 28.3  avgR=-0.277  totalR=  -68.34  PF=0.68  maxDD=70.4
-month 2026-09 (A r_net)            n= 259  win%= 29.3  avgR=-0.067  totalR=  -17.32  PF=0.92  maxDD=50.04
-month 2026-10 (A r_net)            n= 281  win%= 31.3  avgR=-0.117  totalR=  -32.81  PF=0.86  maxDD=45.02
-month 2026-11 (A r_net)            n=  17  win%= 17.6  avgR=-0.744  totalR=  -12.65  PF=0.29  maxDD=12.42
-top 3 coins by net R: ENA-USDT +25.0, AAVE-USDT +16.5, DOGE-USDT +8.6 | total -226.9
-exits: SL=1162, TP2=497
-median risk pct: 1.05
+average exposure 19.4% of capital; days fully in cash 18.4%; turnover/day 4.0% of capital
+largest average weights: BTC 2.0%, BNB 1.9%, ETH 1.4%, SOL 1.3%, XMR 1.3%
