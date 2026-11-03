@@ -1,40 +1,34 @@
-1H INTRADAY BACKTEST - two fixed hypotheses (nothing tuned)
-period: 2023-01-03 -> 2026-11-03  coins: 27  (spot 1h as perpetual proxy; costs 0.15% round trip + funding; stress 0.30%)
+5-MINUTE ENTRY ON PREVIOUS-DAY LEVELS (hypothesis fixed in advance; nothing tuned)
+period: 2025-11-03 -> 2026-11-03  coins: 27  (spot 5m as perpetual proxy; costs 0.15% round trip + funding; stress 0.30%)
 Pass rule fixed before the run: net avgR >= +0.10 AND PF >= 1.2 AND n >= 300 AND both halves net-positive.
 
 ============================================================
-H1 DONCHIAN-24 BREAKOUT
-  r_gross                              n=22895 win%= 32.4 avgR=+0.053 totalR= +1210.3 PF=1.11 maxDD=435.2
-  r_net                                n=22895 win%= 30.2 avgR=-0.039 totalR=  -900.8 PF=0.93 maxDD=1289.6
-  r_stress                             n=22895 win%= 28.6 avgR=-0.120 totalR= -2750.3 PF=0.81 maxDD=3008.0
-  first half (net)                     n=11549 win%= 29.5 avgR=-0.067 totalR=  -773.3 PF=0.88 maxDD=1017.0
-  second half (net)                    n=11346 win%= 30.9 avgR=-0.011 totalR=  -127.5 PF=0.98 maxDD=735.6
-  LONG (net)                           n=11599 win%= 29.5 avgR=-0.001 totalR=   -16.6 PF=1.00 maxDD=661.2
-  SHORT (net)                          n=11296 win%= 30.9 avgR=-0.078 totalR=  -884.2 PF=0.86 maxDD=886.6
-  year 2023 (net)                      n= 4805 win%= 27.6 avgR=-0.124 totalR=  -597.8 PF=0.79 maxDD=672.3
-  year 2024 (net)                      n= 5980 win%= 31.1 avgR=-0.047 totalR=  -278.4 PF=0.91 maxDD=401.1
-  year 2025 (net)                      n= 6429 win%= 31.4 avgR=+0.018 totalR=  +114.2 PF=1.03 maxDD=264.8
-  year 2026 (net)                      n= 5681 win%= 30.1 avgR=-0.024 totalR=  -138.7 PF=0.96 maxDD=735.6
-  top 3 coins by net R: PEPE-USDT +94, TRUMP-USDT +57, SOL-USDT +48 | total -901
-  exits: MID=15537, SL=7266, TIME=92
-  median risk 2.22% | median bars held 14
+VARIANT A: all signals
+  r_gross                              n= 1347 win%= 37.2 avgR=+0.039 totalR=   +52.2 PF=1.06 maxDD=39.7
+  r_net                                n= 1347 win%= 36.5 avgR=-0.196 totalR=  -263.7 PF=0.74 maxDD=267.0
+  r_stress                             n= 1347 win%= 35.4 avgR=-0.428 totalR=  -576.4 PF=0.53 maxDD=578.1
+  first half (net)                     n=  673 win%= 34.0 avgR=-0.239 totalR=  -160.7 PF=0.70 maxDD=166.4
+  second half (net)                    n=  674 win%= 38.9 avgR=-0.153 totalR=  -103.0 PF=0.79 maxDD=105.3
+  LONG (net)                           n=  695 win%= 36.0 avgR=-0.208 totalR=  -144.9 PF=0.73 maxDD=143.5
+  SHORT (net)                          n=  652 win%= 37.0 avgR=-0.182 totalR=  -118.8 PF=0.76 maxDD=127.5
+  profitable months (net): 1 of 13
+  top 3 coins by net R: AVAX-USDT +17, DOGE-USDT +6, TRX-USDT +4 | total -264
+  exits: SL=807, TIME=135, TP=405
+  median risk 0.64% | median bars held 10
   VERDICT (pre-registered rule): FAIL - rejected
 
 ============================================================
-H2 DAILY-TREND PULLBACK RESUMPTION
-  r_gross                              n=18868 win%= 41.0 avgR=+0.002 totalR=   +29.1 PF=1.00 maxDD=275.9
-  r_net                                n=18868 win%= 40.6 avgR=-0.088 totalR= -1654.1 PF=0.86 maxDD=1667.7
-  r_stress                             n=18868 win%= 40.3 avgR=-0.167 totalR= -3148.3 PF=0.75 maxDD=3158.3
-  first half (net)                     n= 9327 win%= 39.9 avgR=-0.105 totalR=  -979.1 PF=0.83 maxDD=980.6
-  second half (net)                    n= 9541 win%= 41.1 avgR=-0.071 totalR=  -675.1 PF=0.89 maxDD=751.2
-  LONG (net)                           n= 8338 win%= 39.7 avgR=-0.102 totalR=  -851.4 PF=0.84 maxDD=852.5
-  SHORT (net)                          n=10530 win%= 41.2 avgR=-0.076 totalR=  -802.7 PF=0.88 maxDD=834.6
-  year 2023 (net)                      n= 3741 win%= 39.5 avgR=-0.130 totalR=  -486.4 PF=0.80 maxDD=495.2
-  year 2024 (net)                      n= 5018 win%= 40.1 avgR=-0.092 totalR=  -461.2 PF=0.85 maxDD=479.4
-  year 2025 (net)                      n= 5332 win%= 40.7 avgR=-0.074 totalR=  -392.5 PF=0.88 maxDD=472.4
-  year 2026 (net)                      n= 4777 win%= 41.7 avgR=-0.066 totalR=  -314.0 PF=0.89 maxDD=417.0
-  top 3 coins by net R: TRUMP-USDT +11, DOT-USDT -2, ENA-USDT -6 | total -1654
-  exits: SL=10682, TIME=1194, TP=6992
-  median risk 2.25% | median bars held 11
+VARIANT B: only with the 4H trend
+  r_gross                              n=  454 win%= 33.9 avgR=-0.033 totalR=   -14.8 PF=0.95 maxDD=40.2
+  r_net                                n=  454 win%= 33.3 avgR=-0.271 totalR=  -123.2 PF=0.66 maxDD=133.2
+  r_stress                             n=  454 win%= 32.2 avgR=-0.508 totalR=  -230.6 PF=0.48 maxDD=236.8
+  first half (net)                     n=  206 win%= 29.1 avgR=-0.338 totalR=   -69.7 PF=0.60 maxDD=82.1
+  second half (net)                    n=  248 win%= 36.7 avgR=-0.216 totalR=   -53.5 PF=0.72 maxDD=61.6
+  LONG (net)                           n=  187 win%= 34.2 avgR=-0.267 totalR=   -50.0 PF=0.67 maxDD=53.4
+  SHORT (net)                          n=  267 win%= 32.6 avgR=-0.274 totalR=   -73.2 PF=0.66 maxDD=84.6
+  profitable months (net): 3 of 13
+  top 3 coins by net R: JCT-USDT +3, AVAX-USDT +3, ETH-USDT +0 | total -123
+  exits: SL=287, TIME=36, TP=131
+  median risk 0.62% | median bars held 9
   VERDICT (pre-registered rule): FAIL - rejected
 
