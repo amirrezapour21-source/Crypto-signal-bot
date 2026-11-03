@@ -1,25 +1,28 @@
 DAILY DONCHIAN TREND ENSEMBLE (rules fixed in advance from the published design; nothing tuned)
-period: 2026-07-12 -> 2026-11-02 (114 days), coins: 27
+period: 2023-03-10 -> 2026-11-02 (1334 days), coins: 27
 Biases: universe = TODAY's liquid list (survivorship). Compare against the equal-weight benchmark (same bias).
 Costs: 0.15% per unit turnover (stress 0.30%). Long-only, no leverage, rest in cash.
 
-STRATEGY net                         total=   +11.9%  CAGR=  +43.3%  vol= 20.1%  Sharpe=+1.89  maxDD=  -5.7%  Calmar=7.63
-STRATEGY gross                       total=   +12.8%  CAGR=  +47.1%  vol= 20.2%  Sharpe=+2.02  maxDD=  -5.5%  Calmar=8.54
-STRATEGY stress costs                total=   +11.0%  CAGR=  +39.5%  vol= 20.1%  Sharpe=+1.76  maxDD=  -5.8%  Calmar=6.78
-BENCH equal-weight B&H               total=   +51.0%  CAGR= +274.3%  vol= 58.1%  Sharpe=+2.56  maxDD= -12.8%  Calmar=21.51
-BENCH BTC B&H                        total=   +20.3%  CAGR=  +80.9%  vol= 37.4%  Sharpe=+1.77  maxDD= -11.3%  Calmar=7.15
+STRATEGY net                         total=   +66.9%  CAGR=  +15.0%  vol= 17.5%  Sharpe=+0.89  maxDD= -24.7%  Calmar=0.61
+STRATEGY gross                       total=   +78.7%  CAGR=  +17.2%  vol= 17.5%  Sharpe=+1.00  maxDD= -22.7%  Calmar=0.76
+STRATEGY stress costs                total=   +55.9%  CAGR=  +12.9%  vol= 17.5%  Sharpe=+0.78  maxDD= -26.7%  Calmar=0.48
+BENCH equal-weight B&H               total=  +206.2%  CAGR=  +35.8%  vol= 64.4%  Sharpe=+0.80  maxDD= -66.5%  Calmar=0.54
+BENCH BTC B&H                        total=  +277.2%  CAGR=  +43.8%  vol= 45.9%  Sharpe=+1.02  maxDD= -53.0%  Calmar=0.83
 
 --- first half ---
-STRATEGY net                         total=   +10.7%  CAGR=  +91.3%  vol= 20.8%  Sharpe=+3.23  maxDD=  -2.8%  Calmar=33.13
-BENCH equal-weight                   total=   +40.4%  CAGR= +778.6%  vol= 54.1%  Sharpe=+4.29  maxDD=  -7.3%  Calmar=106.78
-BENCH BTC                            total=   +25.9%  CAGR= +336.7%  vol= 40.0%  Sharpe=+3.89  maxDD=  -5.6%  Calmar=59.92
+STRATEGY net                         total=   +81.1%  CAGR=  +38.4%  vol= 21.5%  Sharpe=+1.62  maxDD= -16.9%  Calmar=2.27
+BENCH equal-weight                   total=  +382.4%  CAGR= +136.6%  vol= 61.2%  Sharpe=+1.71  maxDD= -45.7%  Calmar=2.99
+BENCH BTC                            total=  +382.4%  CAGR= +136.6%  vol= 48.5%  Sharpe=+2.02  maxDD= -26.2%  Calmar=5.22
 --- second half ---
-STRATEGY net                         total=    +1.1%  CAGR=   +7.3%  vol= 19.5%  Sharpe=+0.46  maxDD=  -5.7%  Calmar=1.29
-BENCH equal-weight                   total=    +7.6%  CAGR=  +59.5%  vol= 62.1%  Sharpe=+1.06  maxDD= -12.8%  Calmar=4.66
-BENCH BTC                            total=    -4.4%  CAGR=  -25.0%  vol= 34.3%  Sharpe=-0.67  maxDD= -11.3%  Calmar=-2.21
+STRATEGY net                         total=    -7.8%  CAGR=   -4.4%  vol= 12.1%  Sharpe=-0.31  maxDD= -15.5%  Calmar=-0.28
+BENCH equal-weight                   total=   -36.5%  CAGR=  -22.0%  vol= 67.4%  Sharpe=-0.03  maxDD= -62.4%  Calmar=-0.35
+BENCH BTC                            total=   -21.8%  CAGR=  -12.6%  vol= 43.0%  Sharpe=-0.10  maxDD= -53.0%  Calmar=-0.24
 
 --- by calendar year (net / equal-weight / BTC) ---
-2026: strategy   +11.9% (maxDD -5.7%) | equal-weight   +51.0% (maxDD -12.8%) | BTC   +20.3% (maxDD -11.3%)
+2023: strategy   +16.4% (maxDD -8.9%) | equal-weight   +76.4% (maxDD -35.2%) | BTC  +107.6% (maxDD -20.0%)
+2024: strategy   +49.8% (maxDD -16.9%) | equal-weight  +138.1% (maxDD -45.7%) | BTC  +121.3% (maxDD -26.2%)
+2025: strategy    -5.5% (maxDD -10.9%) | equal-weight   -35.6% (maxDD -54.0%) | BTC    -6.3% (maxDD -32.0%)
+2026: strategy    +1.3% (maxDD -8.8%) | equal-weight   +13.1% (maxDD -43.2%) | BTC   -12.4% (maxDD -39.5%)
 
-average exposure 19.4% of capital; days fully in cash 18.4%; turnover/day 4.0% of capital
-largest average weights: BTC 2.0%, BNB 1.9%, ETH 1.4%, SOL 1.3%, XMR 1.3%
+average exposure 22.5% of capital; days fully in cash 5.7%; turnover/day 3.4% of capital
+largest average weights: TRX 3.3%, BTC 2.9%, BNB 2.1%, ETH 1.7%, XMR 1.2%
