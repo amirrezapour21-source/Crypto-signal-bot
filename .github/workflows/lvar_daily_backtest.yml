@@ -1,27 +1,52 @@
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: '3.11'
+name: LVAR Daily Backtest
 
-  - name: Install dependencies
-    run: pip install requests pandas numpy
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "History length in days"
+        required: false
+        default: "1460"
 
-  - name: Self-test
-    run: python lvar_daily_selftest.py
+permissions:
+  contents: write
 
-  - name: Run backtest
-    env:
-      BT_DAYS: ${{ github.event.inputs.days }}
-    run: python lvar_daily_backtest.py
+concurrency:
+  group: lvar-daily-backtest
+  cancel-in-progress: false
 
-  - name: Commit results
-    run: |
-      git config user.name "signal-bot"
-      git config user.email "signal-bot@users.noreply.github.com"
-      git add lvar_daily_result.txt lvar_daily_trades.csv
-      git commit -m "LVAR daily backtest result" || exit 0
-      for i in 1 2 3 4 5 6; do
-        git pull --rebase origin main && git push origin main && exit 0
-        sleep $((RANDOM % 8 + 3))
-      done
-      exit 1
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pandas numpy
+
+      - name: Self-test
+        run: python lvar_daily_selftest.py
+
+      - name: Run backtest
+        env:
+          BT_DAYS: ${{ github.event.inputs.days }}
+        run: python lvar_daily_backtest.py
+
+      - name: Commit results
+        run: |
+          git config user.name "signal-bot"
+          git config user.email "signal-bot@users.noreply.github.com"
+          git add lvar_daily_result.txt lvar_daily_trades.csv
+          git commit -m "LVAR daily backtest result" || exit 0
+          for i in 1 2 3 4 5 6; do
+            git pull --rebase origin main && git push origin main && exit 0
+            sleep $((RANDOM % 8 + 3))
+          done
+          exit 1
