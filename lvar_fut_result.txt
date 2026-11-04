@@ -1,0 +1,135 @@
+FUTURES POSITIONING BACKTEST - Binance USDT-M perpetuals, daily, real open interest and real funding
+run at: 2026-11-04 04:34 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 911 from the download-site listing
+costs: fee+slippage 0.20% round trip (stress 0.40%) plus REAL funding for every settlement while open; max 8 open positions
+Pass rule fixed before the run (A and B each): net avgR >= +0.10 AND PF >= 1.2 AND n >= 300 AND both halves net-positive.
+Known problems: top-70 liquid contracts only, entries assume a fill at the day's open, daily bars hide intrabar order (SL is assumed first),
+funding of the whole exit day is counted, news is not in the data, two hypotheses were tested so a pass is only a candidate.
+files found/requested: klines 2166/3360 | funding 2175/3360 | open-interest days 64318/66833
+
+symbols with usable data: 68
+signals before the position cap: 142 | taken: 95
+============================================================
+HYPOTHESIS A - crowded funding reversal, long and short (eligible)
+  r_gross                              n=   95 win%= 46.3 avgR=+0.058 totalR=    +5.5 PF=1.16 maxDD=9.3
+  r_net                                n=   95 win%= 49.5 avgR=+0.099 totalR=    +9.4 PF=1.29 maxDD=7.9
+  r_stress                             n=   95 win%= 48.4 avgR=+0.078 totalR=    +7.4 PF=1.22 maxDD=8.8
+  first half (net)                     n=   43 win%= 53.5 avgR=+0.263 totalR=   +11.3 PF=1.76 maxDD=3.9
+  second half (net)                    n=   52 win%= 46.2 avgR=-0.037 totalR=    -1.9 PF=0.89 maxDD=7.8
+  LONG (net)                           n=   53 win%= 50.9 avgR=+0.193 totalR=   +10.2 PF=1.61 maxDD=5.1
+  SHORT (net)                          n=   42 win%= 47.6 avgR=-0.020 totalR=    -0.8 PF=0.94 maxDD=6.3
+  year 2022 (net)                      n=    2 win%=  0.0 avgR=-0.601 totalR=    -1.2 PF=0.00 maxDD=0.2
+  year 2023 (net)                      n=   23 win%= 65.2 avgR=+0.493 totalR=   +11.3 PF=2.95 maxDD=2.3
+  year 2024 (net)                      n=   27 win%= 48.1 avgR=+0.007 totalR=    +0.2 PF=1.02 maxDD=3.9
+  year 2025 (net)                      n=    4 win%= 50.0 avgR=+0.517 totalR=    +2.1 PF=3.50 maxDD=0.3
+  year 2026 (net)                      n=   39 win%= 43.6 avgR=-0.077 totalR=    -3.0 PF=0.78 maxDD=7.1
+  days open per trade: mean 5.9 | median 7 | 90th pct 7 | max 7
+  trades per week: 0.47 | days with a new entry: 5%
+  open positions: mean 0.4 | max 8 | days with none open 75% | days at cap 0%
+  exits: SL=25, TIME=59, TP=11
+  median risk 10.7% of price
+  longest time below equity peak (net): 962 days
+  profitable months (net, by exit): 16 of 30 | worst month -3.9R | best month +3.8R
+  at 0.5% risk per trade (not compounded): total +5% | max drawdown 4%
+  top 3 coins by net R: BCHUSDT +4, BNBUSDT +3, CLUSDT +2 | total +9
+  avgR net without those 3 coins: -0.002 (n=70)
+  share of positive-week profit from the best 5 weeks: 51%
+  weekly-block bootstrap of net avgR: 95% CI [-0.130, +0.351], P(avgR>0)=0.80 (52 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+  note: fewer than 300 trades = insufficient sample
+
+  average real funding cost per trade: -0.599% of position (negative = funding was income)
+
+signals before the position cap: 9036 | taken: 1670
+============================================================
+CONTROL A0 - same price trigger without the funding condition (information only)
+  r_gross                              n= 1670 win%= 48.0 avgR=+0.079 totalR=  +131.5 PF=1.23 maxDD=25.9
+  r_net                                n= 1670 win%= 47.0 avgR=+0.054 totalR=   +90.9 PF=1.16 maxDD=28.0
+  r_stress                             n= 1670 win%= 46.1 avgR=+0.034 totalR=   +56.0 PF=1.09 maxDD=31.2
+  first half (net)                     n=  835 win%= 47.4 avgR=+0.050 totalR=   +42.0 PF=1.15 maxDD=21.6
+  second half (net)                    n=  835 win%= 46.6 avgR=+0.059 totalR=   +48.9 PF=1.17 maxDD=21.1
+  LONG (net)                           n=  986 win%= 45.3 avgR=+0.072 totalR=   +70.8 PF=1.19 maxDD=27.9
+  SHORT (net)                          n=  684 win%= 49.4 avgR=+0.029 totalR=   +20.2 PF=1.10 maxDD=32.5
+  year 2022 (net)                      n=   31 win%= 41.9 avgR=-0.101 totalR=    -3.1 PF=0.71 maxDD=5.1
+  year 2023 (net)                      n=  463 win%= 47.9 avgR=+0.086 totalR=   +40.0 PF=1.26 maxDD=18.1
+  year 2024 (net)                      n=  417 win%= 48.0 avgR=+0.043 totalR=   +18.1 PF=1.12 maxDD=28.0
+  year 2025 (net)                      n=  368 win%= 41.8 avgR=-0.028 totalR=   -10.5 PF=0.92 maxDD=20.9
+  year 2026 (net)                      n=  391 win%= 50.1 avgR=+0.119 totalR=   +46.5 PF=1.36 maxDD=12.3
+  days open per trade: mean 6.0 | median 7 | 90th pct 7 | max 7
+  trades per week: 8.20 | days with a new entry: 60%
+  open positions: mean 7.0 | max 8 | days with none open 0% | days at cap 69%
+  exits: SL=402, TIME=1092, TP=176
+  median risk 11.4% of price
+  longest time below equity peak (net): 303 days
+  profitable months (net, by exit): 27 of 47 | worst month -11.2R | best month +19.3R
+  at 0.5% risk per trade (not compounded): total +45% | max drawdown 14%
+  top 3 coins by net R: PAXGUSDT +11, SOLUSDT +11, HYPEUSDT +10 | total +91
+  avgR net without those 3 coins: +0.038 (n=1517)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.014, +0.124], P(avgR>0)=0.94 (204 weeks)
+  (sensitivity only - not eligible for selection)
+
+  average real funding cost per trade: +0.034% of position (negative = funding was income)
+
+signals before the position cap: 42 | taken: 42
+============================================================
+HYPOTHESIS B - leveraged pump fade: price + open interest + funding, short (eligible)
+  r_gross                              n=   42 win%= 35.7 avgR=-0.189 totalR=    -8.0 PF=0.66 maxDD=9.0
+  r_net                                n=   42 win%= 35.7 avgR=-0.189 totalR=    -8.0 PF=0.66 maxDD=9.0
+  r_stress                             n=   42 win%= 35.7 avgR=-0.202 totalR=    -8.5 PF=0.64 maxDD=9.5
+  first half (net)                     n=   21 win%= 38.1 avgR=-0.190 totalR=    -4.0 PF=0.62 maxDD=5.4
+  second half (net)                    n=   21 win%= 33.3 avgR=-0.189 totalR=    -4.0 PF=0.69 maxDD=6.0
+  LONG (net)                           n=0
+  SHORT (net)                          n=   42 win%= 35.7 avgR=-0.189 totalR=    -8.0 PF=0.66 maxDD=9.0
+  year 2023 (net)                      n=    4 win%= 50.0 avgR=-0.119 totalR=    -0.5 PF=0.76 maxDD=1.0
+  year 2024 (net)                      n=   21 win%= 28.6 avgR=-0.358 totalR=    -7.5 PF=0.40 maxDD=6.6
+  year 2025 (net)                      n=   11 win%= 36.4 avgR=+0.001 totalR=    +0.0 PF=1.00 maxDD=4.8
+  year 2026 (net)                      n=    6 win%= 50.0 avgR=+0.006 totalR=    +0.0 PF=1.01 maxDD=3.0
+  days open per trade: mean 6.9 | median 9 | 90th pct 10 | max 10
+  trades per week: 0.22 | days with a new entry: 3%
+  open positions: mean 0.2 | max 3 | days with none open 83% | days at cap 0%
+  exits: SL=22, TIME=17, TP=3
+  median risk 18.0% of price
+  longest time below equity peak (net): 1338 days
+  profitable months (net, by exit): 8 of 21 | worst month -3.4R | best month +3.8R
+  at 0.5% risk per trade (not compounded): total -4% | max drawdown 4%
+  top 3 coins by net R: UNIUSDT +3, FARTCOINUSDT +3, SUIUSDT +2 | total -8
+  avgR net without those 3 coins: -0.426 (n=37)
+  share of positive-week profit from the best 5 weeks: 63%
+  weekly-block bootstrap of net avgR: 95% CI [-0.458, +0.125], P(avgR>0)=0.12 (30 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+  note: fewer than 300 trades = insufficient sample
+
+  average real funding cost per trade: -0.217% of position (negative = funding was income)
+
+signals before the position cap: 130 | taken: 126
+============================================================
+CONTROL B0 - same price trigger without open interest and funding (information only)
+  r_gross                              n=  126 win%= 50.0 avgR=-0.012 totalR=    -1.5 PF=0.97 maxDD=13.5
+  r_net                                n=  126 win%= 50.0 avgR=-0.031 totalR=    -3.8 PF=0.93 maxDD=14.2
+  r_stress                             n=  126 win%= 50.0 avgR=-0.043 totalR=    -5.4 PF=0.90 maxDD=15.0
+  first half (net)                     n=   63 win%= 41.3 avgR=-0.209 totalR=   -13.2 PF=0.60 maxDD=12.1
+  second half (net)                    n=   63 win%= 58.7 avgR=+0.148 totalR=    +9.3 PF=1.41 maxDD=6.4
+  LONG (net)                           n=0
+  SHORT (net)                          n=  126 win%= 50.0 avgR=-0.031 totalR=    -3.8 PF=0.93 maxDD=14.2
+  year 2023 (net)                      n=   15 win%= 46.7 avgR=-0.240 totalR=    -3.6 PF=0.50 maxDD=3.4
+  year 2024 (net)                      n=   39 win%= 41.0 avgR=-0.208 totalR=    -8.1 PF=0.59 maxDD=9.1
+  year 2025 (net)                      n=   36 win%= 50.0 avgR=+0.002 totalR=    +0.1 PF=1.01 maxDD=6.4
+  year 2026 (net)                      n=   36 win%= 61.1 avgR=+0.217 totalR=    +7.8 PF=1.67 maxDD=4.4
+  days open per trade: mean 7.4 | median 10 | 90th pct 10 | max 10
+  trades per week: 0.64 | days with a new entry: 7%
+  open positions: mean 0.7 | max 5 | days with none open 55% | days at cap 0%
+  exits: SL=53, TIME=65, TP=8
+  median risk 18.0% of price
+  longest time below equity peak (net): 1283 days
+  profitable months (net, by exit): 18 of 41 | worst month -4.4R | best month +6.1R
+  at 0.5% risk per trade (not compounded): total -2% | max drawdown 7%
+  top 3 coins by net R: SOXLUSDT +4, ENAUSDT +2, UNIUSDT +2 | total -4
+  avgR net without those 3 coins: -0.112 (n=111)
+  share of positive-week profit from the best 5 weeks: 34%
+  weekly-block bootstrap of net avgR: 95% CI [-0.208, +0.165], P(avgR>0)=0.37 (81 weeks)
+  (sensitivity only - not eligible for selection)
+
+  average real funding cost per trade: +0.159% of position (negative = funding was income)
+
+total run time: 1033s
