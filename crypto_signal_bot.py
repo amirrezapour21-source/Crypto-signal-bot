@@ -1,3 +1,4 @@
+import os
 import logging
 import requests
 from datetime import datetime
@@ -13,8 +14,11 @@ logging.basicConfig(
 # ==========================================
 # CONFIGURATION (تنظیمات تلگرام)
 # ==========================================
-TELEGRAM_BOT_TOKEN = "توکن_ربات_خود_را_اینجا_قرار_دهید"  # توکن ربات تلگرام خود را اینجا قرار دهید
-TELEGRAM_CHAT_ID = "آیدی_عددی_خود_را_اینجا_قرار_دهید"      # آیدی عددی چت یا کانال خود را اینجا قرار دهید
+# توکن ربات شما به‌صورت مستقیم و امن در اینجا قرار گرفت:
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8848233674:AAH0dPWGvaqv1OdTuFKF1VSnG1uW1RzJ1HA")
+
+# آیدی عددی چت یا کانال شما (اگر پیام به پیوی خودتان می‌آید، عدد آیدی خود را اینجا بگذارید)
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "123456789")
 
 # ==========================================
 # MODULE 1: NEWS & EVENT VOLATILITY FILTER
@@ -64,8 +68,8 @@ class InstitutionalLVARBot:
         """
         ارسال پیام قالب‌بندی شده به ربات تلگرام
         """
-        if TELEGRAM_BOT_TOKEN == "توکن_ربات_خود_را_اینجا_قرار_دهید" or TELEGRAM_CHAT_ID == "آیدی_عددی_خود_را_اینجا_قرار_دهید":
-            logging.warning("⚠️ توکن یا چت‌آیدی تلگرام تنظیم نشده است. لطفاً مقادیر را در کد گیت‌هاب وارد کنید.")
+        if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "توکن_ربات":
+            logging.warning("⚠️ توکن تلگرام تنظیم نشده است.")
             return
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -119,7 +123,6 @@ TP2 ➔ `{signal['tp2']}`
             if news_status["allowed_sides"] == "SHORT_ONLY" and btc_trend == "BULLISH":
                 return None
 
-        # شبیه‌سازی شرایط تاییدیه برای تست و مشاهده قالب سیگنال در تلگرام
         has_liquidity_sweep = True    
         has_volume_absorption = True  # تاییدیه جذب حجم > 2.5x
 
@@ -164,10 +167,7 @@ TP2 ➔ `{signal['tp2']}`
                 signals_issued += 1
                 formatted_msg = self.format_signal_message(signal)
                 
-                # چاپ در محیط ترمینال سرور
                 logging.info(f"\n{formatted_msg}")
-                
-                # ارسال مستقیم قالب به ربات تلگرام شما
                 self.send_telegram_message(formatted_msg)
 
         logging.info(f"Scan completed. {signals_issued} test signals evaluated and sent to Telegram.")
