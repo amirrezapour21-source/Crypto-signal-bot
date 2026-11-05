@@ -1,5 +1,5 @@
 import logging
-import time
+import requests
 from datetime import datetime
 
 # ==========================================
@@ -11,6 +11,12 @@ logging.basicConfig(
 )
 
 # ==========================================
+# CONFIGURATION (تنظیمات تلگرام)
+# ==========================================
+TELEGRAM_BOT_TOKEN = "توکن_ربات_خود_را_اینجا_قرار_دهید"  # توکن ربات تلگرام خود را اینجا قرار دهید
+TELEGRAM_CHAT_ID = "آیدی_عددی_خود_را_اینجا_قرار_دهید"      # آیدی عددی چت یا کانال خود را اینجا قرار دهید
+
+# ==========================================
 # MODULE 1: NEWS & EVENT VOLATILITY FILTER
 # ==========================================
 class LVARNewsFilter:
@@ -18,7 +24,7 @@ class LVARNewsFilter:
         self.buffer_hours = high_impact_buffer_hours
 
     def check_market_news_status(self) -> dict:
-        news_event_active = False  # در صورت انتشار خبر مهم کلان True می‌شود
+        news_event_active = False  # در صورت وجود نوسانات خبری مهم True می‌شود
         
         status = {
             "news_active": news_event_active,
@@ -32,10 +38,10 @@ class LVARNewsFilter:
 # ==========================================
 class InstitutionalLVARBot:
     def __init__(self):
-        self.version = "v4.0 Pro (Formatted UI Edition)"
+        self.version = "v4.0 Pro (Telegram UI Enabled)"
         self.news_filter = LVARNewsFilter()
         
-        # لیست کامل ۲۳ جفت‌ارز نهادی و پرنقدینگی
+        # لیست ۲۳ جفت‌ارز نهادی و پرنقدینگی
         self.watched_pairs = [
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
             "LINKUSDT", "DOGEUSDT", "ADAUSDT", "HBARUSDT", "ZECUSDT",
@@ -48,37 +54,61 @@ class InstitutionalLVARBot:
         self.max_leverage = 5.0
 
     def get_btc_macro_trend(self) -> str:
+        # روند کلان بیت‌کوین در تایم‌فریم ۴ ساعته
         return "BEARISH"
 
     def calculate_atr_volatility_gate(self, symbol: str) -> bool:
         return True
 
+    def send_telegram_message(self, message: str):
+        """
+        ارسال پیام قالب‌بندی شده به ربات تلگرام
+        """
+        if TELEGRAM_BOT_TOKEN == "توکن_ربات_خود_را_اینجا_قرار_دهید" or TELEGRAM_CHAT_ID == "آیدی_عددی_خود_را_اینجا_قرار_دهید":
+            logging.warning("⚠️ توکن یا چت‌آیدی تلگرام تنظیم نشده است. لطفاً مقادیر را در کد گیت‌هاب وارد کنید.")
+            return
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                logging.info("📤 سیگنال با موفقیت به تلگرام ارسال شد.")
+            else:
+                logging.error(f"❌ خطا در ارسال به تلگرام: {response.text}")
+        except Exception as e:
+            logging.error(f"❌ خطای ارتباطی با تلگرام: {e}")
+
     def format_signal_message(self, signal: dict) -> str:
         """
-        طراحی قالب پیام دقیقا مطابق با فرمت استاندارد مد نظر شما (تصاویر ارسالی)
+        طراحی قالب بصری پیام‌دهی دقیقاً مطابق با استانداردهای درخواستی شما
         """
         msg = f"""
-📊 **{signal['symbol']} — SIGNAL**
-🟢 **Direction:** {signal['side']}
-📈 **Strategy:** LVAR Value Rejection
+📊 *{signal['symbol']} — SIGNAL*
+🟢 *Direction:* {signal['side']}
+📈 *Strategy:* LVAR Value Rejection
 
-📍 **Entry**
+📍 *Entry*
 `{signal['entry']}`
 
-🛑 **Stop Loss**
+🛑 *Stop Loss*
 `{signal['sl']}`
 
-🎯 **Take Profit**
+🎯 *Take Profit*
 TP1 ➔ `{signal['tp1']}`
 TP2 ➔ `{signal['tp2']}`
 
-⚖️ **Risk/Reward**
+⚖️ *Risk/Reward*
 `1 : {signal['rr_ratio']}`
 
-⚠️ **Risk Level**
+⚠️ *Risk Level*
 `{signal['risk_level']}`
 
-🏛️ **Exchange**
+🏛️ *Exchange*
 `CoinGecko / TradingView`
 -----------------------------------------
 """
@@ -89,26 +119,25 @@ TP2 ➔ `{signal['tp2']}`
             if news_status["allowed_sides"] == "SHORT_ONLY" and btc_trend == "BULLISH":
                 return None
 
-        # شبیه‌سازی شرایط تاییدیه (در صورت فعال شدن سناریو)
-        has_liquidity_sweep = False
-        has_volume_absorption = False  # حجم > 2.5x
+        # شبیه‌سازی شرایط تاییدیه برای تست و مشاهده قالب سیگنال در تلگرام
+        has_liquidity_sweep = True    
+        has_volume_absorption = True  # تاییدیه جذب حجم > 2.5x
 
         if not self.calculate_atr_volatility_gate(symbol):
             return None
 
         if has_liquidity_sweep and has_volume_absorption:
             side_val = "SHORT" if btc_trend == "BEARISH" else "LONG"
-            entry_price = 0.945704
             
             signal_data = {
                 "symbol": symbol.replace("USDT", "/USDT"),
                 "side": side_val,
-                "entry": entry_price,
-                "sl": 0.923969,
-                "tp1": 1.0006,
-                "tp2": 1.0679,
+                "entry": 0.231500,
+                "sl": 0.229586,
+                "tp1": 0.240650,
+                "tp2": 0.245000,
                 "rr_ratio": self.min_risk_reward_ratio,
-                "risk_level": "MEDIUM"
+                "risk_level": "INSTITUTIONAL"
             }
             return signal_data
 
@@ -122,20 +151,26 @@ TP2 ➔ `{signal['tp2']}`
 
         news_status = self.news_filter.check_market_news_status()
         if news_status["news_active"]:
-            logging.warning("⚠️ High Impact News Detected! Risk multiplier adjusted.")
+            logging.warning("⚠️ High Impact News Detected!")
         else:
             logging.info("✅ News & Volatility Filter: Normal Market Conditions.")
 
         signals_issued = 0
-        for pair in self.watched_pairs:
+        test_pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        
+        for pair in test_pairs:
             signal = self.scan_pair_lvar_setup(pair, btc_trend, news_status)
             if signal:
                 signals_issued += 1
                 formatted_msg = self.format_signal_message(signal)
-                # در نسخه لایو، این پیام مستقیماً به کانال یا چت تلگرام ارسال می‌شود
+                
+                # چاپ در محیط ترمینال سرور
                 logging.info(f"\n{formatted_msg}")
+                
+                # ارسال مستقیم قالب به ربات تلگرام شما
+                self.send_telegram_message(formatted_msg)
 
-        logging.info(f"Scan completed. {len(self.watched_pairs)} institutional pairs evaluated, {signals_issued} signals issued.")
+        logging.info(f"Scan completed. {signals_issued} test signals evaluated and sent to Telegram.")
 
 # ==========================================
 # MAIN EXECUTION ENTRYPOINT
