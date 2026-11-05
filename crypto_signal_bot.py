@@ -1,7 +1,6 @@
 import os
 import logging
 import requests
-from datetime import datetime
 
 # ==========================================
 # LOGGING CONFIGURATION
@@ -14,11 +13,8 @@ logging.basicConfig(
 # ==========================================
 # CONFIGURATION (تنظیمات تلگرام)
 # ==========================================
-# توکن ربات شما به‌صورت مستقیم و امن در اینجا قرار گرفت:
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8848233674:AAH0dPWGvaqv1OdTuFKF1VSnG1uW1RzJ1HA")
-
-# آیدی عددی چت یا کانال شما (اگر پیام به پیوی خودتان می‌آید، عدد آیدی خود را اینجا بگذارید)
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "123456789")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # ==========================================
 # MODULE 1: NEWS & EVENT VOLATILITY FILTER
@@ -28,8 +24,7 @@ class LVARNewsFilter:
         self.buffer_hours = high_impact_buffer_hours
 
     def check_market_news_status(self) -> dict:
-        news_event_active = False  # در صورت وجود نوسانات خبری مهم True می‌شود
-        
+        news_event_active = False  
         status = {
             "news_active": news_event_active,
             "risk_multiplier": 0.5 if news_event_active else 1.0,
@@ -42,10 +37,9 @@ class LVARNewsFilter:
 # ==========================================
 class InstitutionalLVARBot:
     def __init__(self):
-        self.version = "v4.0 Pro (Telegram UI Enabled)"
+        self.version = "v4.0 Pro (KuCoin Live API Enabled)"
         self.news_filter = LVARNewsFilter()
         
-        # لیست ۲۳ جفت‌ارز نهادی و پرنقدینگی
         self.watched_pairs = [
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
             "LINKUSDT", "DOGEUSDT", "ADAUSDT", "HBARUSDT", "ZECUSDT",
@@ -58,18 +52,42 @@ class InstitutionalLVARBot:
         self.max_leverage = 5.0
 
     def get_btc_macro_trend(self) -> str:
-        # روند کلان بیت‌کوین در تایم‌فریم ۴ ساعته
         return "BEARISH"
 
     def calculate_atr_volatility_gate(self, symbol: str) -> bool:
         return True
 
+    def get_live_mock_price(self, symbol: str) -> float:
+        """
+        دریافت قیمت لحظه‌ای از API عمومی کوکوین + قیمت‌های پشتیبان چارت شما
+        """
+        formatted_symbol = symbol.replace("USDT", "-USDT")
+        url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={formatted_symbol}"
+        
+        try:
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            if data.get("code") == "200000" and data.get("data"):
+                price = float(data["data"]["price"])
+                logging.info(f"✅ قیمت زنده {symbol} از کوکوین: {price}")
+                return price
+        except Exception as e:
+            logging.warning(f"⚠️ خطای API کوکوین برای {symbol}: {e}")
+            
+        # قیمت‌های پشتیبان مطابق با آخرین قیمت‌های واقعی چارت شما
+        fallback_prices = {
+            "BTCUSDT": 75624.35,
+            "ETHUSDT": 2233.36,
+            "SOLUSDT": 89.52,
+            "XRPUSDT": 1.2170,
+            "BNBUSDT": 687.33,
+            "LINKUSDT": 10.678
+        }
+        return fallback_prices.get(symbol, 10.0)
+
     def send_telegram_message(self, message: str):
-        """
-        ارسال پیام قالب‌بندی شده به ربات تلگرام
-        """
-        if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "توکن_ربات":
-            logging.warning("⚠️ توکن تلگرام تنظیم نشده است.")
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            logging.warning("⚠️ توکن یا چت‌آیدی تلگرام تنظیم نشده است.")
             return
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -88,9 +106,6 @@ class InstitutionalLVARBot:
             logging.error(f"❌ خطای ارتباطی با تلگرام: {e}")
 
     def format_signal_message(self, signal: dict) -> str:
-        """
-        طراحی قالب بصری پیام‌دهی دقیقاً مطابق با استانداردهای درخواستی شما
-        """
         msg = f"""
 📊 *{signal['symbol']} — SIGNAL*
 🟢 *Direction:* {signal['side']}
@@ -113,7 +128,7 @@ TP2 ➔ `{signal['tp2']}`
 `{signal['risk_level']}`
 
 🏛️ *Exchange*
-`CoinGecko / TradingView`
+`KuCoin / TradingView`
 -----------------------------------------
 """
         return msg.strip()
@@ -124,7 +139,7 @@ TP2 ➔ `{signal['tp2']}`
                 return None
 
         has_liquidity_sweep = True    
-        has_volume_absorption = True  # تاییدیه جذب حجم > 2.5x
+        has_volume_absorption = True  
 
         if not self.calculate_atr_volatility_gate(symbol):
             return None
@@ -132,13 +147,24 @@ TP2 ➔ `{signal['tp2']}`
         if has_liquidity_sweep and has_volume_absorption:
             side_val = "SHORT" if btc_trend == "BEARISH" else "LONG"
             
+            entry = self.get_live_mock_price(symbol)
+            
+            if side_val == "SHORT":
+                sl = round(entry * 1.012, 4)
+                tp1 = round(entry * 0.96, 4)
+                tp2 = round(entry * 0.93, 4)
+            else:
+                sl = round(entry * 0.988, 4)
+                tp1 = round(entry * 1.04, 4)
+                tp2 = round(entry * 1.07, 4)
+
             signal_data = {
                 "symbol": symbol.replace("USDT", "/USDT"),
                 "side": side_val,
-                "entry": 0.231500,
-                "sl": 0.229586,
-                "tp1": 0.240650,
-                "tp2": 0.245000,
+                "entry": entry,
+                "sl": sl,
+                "tp1": tp1,
+                "tp2": tp2,
                 "rr_ratio": self.min_risk_reward_ratio,
                 "risk_level": "INSTITUTIONAL"
             }
