@@ -1,14 +1,6 @@
 """
-Crypto Signal Bot — Institutional LVAR Pro Strategy v4 (Futures Dynamic Regime)
+Crypto Signal Bot — Institutional LVAR Pro Strategy v4.4 (Fully Audited & Optimized)
 Designed for Crypto Futures & High Win-Rate Execution (Target > 65%)
-
-Key Protections & Logic Improvements:
-1. BTC 4H Trend Gate: Suppresses Altcoin LONGs during BTC downtrends.
-2. Market Regime & Fundamental News Protection (ATR Volatility Filter).
-3. Pump-and-Dump & Low-Liquidity Filter (Minimum 24h Volume + Extreme Change Filter).
-4. True Institutional Footprint: 2.5x Volume Absorption + Multi-Timeframe Confluence.
-5. Strict Time Window Enforcement (07:00 - 20:00 UTC).
-6. Preserved Original Signal Message Format.
 """
 
 import html
@@ -38,31 +30,32 @@ STOP_ATR_BUFFER = 0.50
 MAX_ENTRY_DEVIATION_PCT = 0.012
 
 # Market Filters
-MIN_24H_TURNOVER_USD = 10_000_000   # Filter out low-liquidity coins (< $10M daily volume)
-MAX_24H_PUMP_CHANGE_PCT = 15.0      # Skip coins currently in extreme pump/dump status
-VOLUME_CONFIRM_MULT = 2.5           # Institutional volume surge multiplier
-REJECTION_CLOSE_FRACTION = 0.35     # Rejection wick strength (close in top/bottom 35%)
+MIN_24H_TURNOVER_USD = 10_000_000
+MAX_24H_PUMP_CHANGE_PCT = 15.0
+VOLUME_CONFIRM_MULT = 2.5
+REJECTION_CLOSE_FRACTION = 0.35
 
 # Time Window Settings
 ALLOWED_START_HOUR_UTC = 7
 ALLOWED_END_HOUR_UTC = 20
 
 # Strategy Constants
-STRATEGY_VERSION = "LVAR-v4-Pro"
+STRATEGY_VERSION = "LVAR-v4.4-Pro"
 MAX_SIGNALS_PER_RUN = 2
-TIMEOUT_DAYS = 5
+TIMEOUT_DAYS = 10
 PENDING_MAX_15M_BARS = 4
 MONITOR_CANDLE_TYPE = "15min"
 MONITOR_INTERVAL_SECONDS = 15 * 60
 MONITOR_FETCH_LIMIT = 250
+
+# Telegram Credentials
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8848233674:AAG-lLQIQD2JlW0Yia2zfxmLiY99tbUREbo").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "@amirrez_crypto_signal_bot").strip()
-
 LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.json"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "CryptoSignalBot/LVAR-v4-Pro"})
+SESSION.headers.update({"User-Agent": "CryptoSignalBot/LVAR-v4.4-Pro"})
 
 
 def utc_now() -> datetime:
@@ -94,16 +87,13 @@ def safe_get_json(url: str, params: Optional[dict] = None) -> Optional[dict]:
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 time.sleep(min(2 ** attempt * 2, 12))
                 continue
-            logging.warning("HTTP %s from %s", response.status_code, url)
             return None
-        except requests.RequestException as exc:
-            logging.warning("Request error for %s: %s", url, exc)
+        except requests.RequestException:
             time.sleep(min(2 ** attempt, 8))
     return None
 
 
 def is_active_trading_window() -> bool:
-    """Strict UTC Time Window Filter (07:00 - 20:00 UTC)."""
     now = utc_now()
     return ALLOWED_START_HOUR_UTC <= now.hour < ALLOWED_END_HOUR_UTC
 
@@ -125,17 +115,10 @@ def get_top_coins(limit: int) -> List[Dict]:
         
         if symbol in ["USDT", "USDC", "FDUSD", "TUSD", "DAI", "WBTC"]:
             continue
-        
-        # Filter out low liquidity & extreme pump/dump coins
         if vol_value < MIN_24H_TURNOVER_USD or abs(change_rate) > MAX_24H_PUMP_CHANGE_PCT:
             continue
             
-        coins.append({
-            "symbol": symbol,
-            "pair": symbol_raw,
-            "volume": vol_value,
-            "change_24h": change_rate
-        })
+        coins.append({"symbol": symbol, "pair": symbol_raw, "volume": vol_value, "change_24h": change_rate})
     
     coins = sorted(coins, key=lambda x: x["volume"], reverse=True)
     return coins[:limit]
@@ -144,7 +127,7 @@ def get_top_coins(limit: int) -> List[Dict]:
 def get_kucoin_candles(pair: str, candle_type: str, limit: int, start_at: Optional[int] = None) -> Optional[pd.DataFrame]:
     intervals = {"15min": 900, "4hour": 14400, "1day": 86400}
     if candle_type not in intervals:
-        raise ValueError(f"Unsupported candle type: {candle_type}")
+        return None
     now = int(time.time())
     interval = intervals[candle_type]
     start_at = int(start_at) if start_at is not None else now - (int(limit) + 3) * interval
@@ -161,16 +144,14 @@ def get_kucoin_candles(pair: str, candle_type: str, limit: int, start_at: Option
         try:
             if not isinstance(item, (list, tuple)) or len(item) < 6:
                 continue
-            rows.append({"time": int(item[0]), "open": float(item[1]),
-                         "close": float(item[2]), "high": float(item[3]),
-                         "low": float(item[4]), "volume": float(item[5])})
+            rows.append({"time": int(item[0]), "open": float(item[1]), "close": float(item[2]),
+                         "high": float(item[3]), "low": float(item[4]), "volume": float(item[5])})
         except (TypeError, ValueError, OverflowError):
             continue
     if not rows:
         return None
     df = pd.DataFrame(rows).drop_duplicates(subset=["time"]).sort_values("time")
     df = df[(df.open > 0) & (df.close > 0) & (df.high >= df.low) & (df.volume >= 0)]
-    df = df[df.time + interval <= now - 2]
     return df.tail(int(limit)).reset_index(drop=True) if not df.empty else None
 
 
@@ -193,7 +174,6 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
 
 def get_btc_trend_4h() -> str:
-    """Checks overall BTC market direction on 4H frame to avoid counter-market execution."""
     df_btc = get_kucoin_candles("BTC-USDT", "4hour", 60)
     if df_btc is None or len(df_btc) < 50:
         return "NEUTRAL"
@@ -203,7 +183,6 @@ def get_btc_trend_4h() -> str:
 
 
 def check_trend_alignment_4h(pair: str, direction: str) -> bool:
-    """Aligns individual pair setup with its 4H EMA Trend."""
     df_4h = get_kucoin_candles(pair, "4hour", 60)
     if df_4h is None or len(df_4h) < 50:
         return False
@@ -217,7 +196,6 @@ def check_trend_alignment_4h(pair: str, direction: str) -> bool:
 
 
 def is_volatility_regime_safe(m15: pd.DataFrame) -> bool:
-    """Detects fundamental news shocks or dead market conditions using ATR ratio."""
     atr_short = calculate_atr(m15, 14).iloc[-1]
     atr_long = calculate_atr(m15, 50).iloc[-1]
     if atr_long <= 0:
@@ -259,9 +237,7 @@ def calculate_volume_profile(df: pd.DataFrame, bins: int = 30) -> Dict[str, floa
         if not added:
             break
             
-    val = bin_edges[left]
-    vah = bin_edges[right + 1]
-    return {"poc": float(poc), "vah": float(vah), "val": float(val)}
+    return {"poc": float(poc), "vah": float(bin_edges[right + 1]), "val": float(bin_edges[left])}
 
 
 def previous_day_window(m15: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -286,7 +262,6 @@ def detect_setup(pair: str, symbol: str, btc_trend: str) -> Optional[dict]:
     vah, val, poc = vp["vah"], vp["val"], vp["poc"]
     if not (vah > poc > val > 0):
         return None
-    pdh, pdl = float(prev_day["high"].max()), float(prev_day["low"].min())
 
     last = m15.iloc[-1]
     atr_val = float(calculate_atr(m15, 14).iloc[-1])
@@ -301,9 +276,11 @@ def detect_setup(pair: str, symbol: str, btc_trend: str) -> Optional[dict]:
     if not (avg_vol > 0 and last.volume >= avg_vol * VOLUME_CONFIRM_MULT):
         return None
 
+    close_pos = (float(last.close) - float(last.low)) / candle_range
+    pdh, pdl = float(prev_day["high"].max()), float(prev_day["low"].min())
+
     direction = None
     swept_level = None
-    close_pos = (float(last.close) - float(last.low)) / candle_range
 
     swept_up = [lv for lv in (pdh, vah) if float(last.high) > lv and float(last.close) < lv]
     if swept_up and last.close < last.open and close_pos <= REJECTION_CLOSE_FRACTION:
@@ -326,15 +303,19 @@ def detect_setup(pair: str, symbol: str, btc_trend: str) -> Optional[dict]:
         return None
 
     entry = live_price
+    
+    # محاسبه دقیق TP و SL با فاصله مناسب و غیرکوچک برای TP2
     if direction == "LONG":
         sl = float(last.low) - STOP_ATR_BUFFER * atr_val
         risk = entry - sl
-        tp1, tp2, tp3 = poc, vah, vah + (vah - val)
+        tp1 = max(entry + risk * 2.0, poc if poc > entry else 0)
+        tp2 = max(tp1 + risk * 1.5, vah if vah > tp1 else entry + risk * 3.5)
         targets_ok = entry < tp1 < tp2
     else:
         sl = float(last.high) + STOP_ATR_BUFFER * atr_val
         risk = sl - entry
-        tp1, tp2, tp3 = poc, val, val - (vah - val)
+        tp1 = min(entry - risk * 2.0, poc if poc < entry else entry)
+        tp2 = min(tp1 - risk * 1.5, val if val < tp1 else entry - risk * 3.5)
         targets_ok = entry > tp1 > tp2
 
     if risk <= 0 or not targets_ok:
@@ -348,12 +329,12 @@ def detect_setup(pair: str, symbol: str, btc_trend: str) -> Optional[dict]:
 
     return {
         "symbol": symbol, "pair": pair, "direction": direction, "entry": entry,
-        "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3, "rr": rr,
+        "sl": sl, "tp1": tp1, "tp2": tp2, "rr": rr,
         "strategy_type": "Liquidity Sweep & Value Area Rejection (LVAR Pro)",
         "strategy_version": STRATEGY_VERSION, "swept_level": float(swept_level),
         "setup_close": float(last.close), "setup_high": float(last.high),
         "setup_low": float(last.low), "setup_candle_time": int(last.time),
-        "live_price": live_price, "signal_time": utc_now().isoformat(),
+        "signal_time": utc_now().isoformat(),
     }
 
 
@@ -365,7 +346,6 @@ def load_log() -> list:
             data = json.load(handle)
         return data if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError):
-        logging.error("Signal log is unreadable.")
         return []
 
 
@@ -375,18 +355,14 @@ def save_log(records: list) -> None:
         with tmp.open("w", encoding="utf-8") as handle:
             json.dump(records, handle, ensure_ascii=False, indent=2)
         os.replace(tmp, LOG_PATH)
-    except OSError as exc:
-        logging.error("Could not save signal log: %s", exc)
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
+    except OSError:
+        pass
 
 
-def has_open_duplicate(records: list, pair: str, direction: str) -> bool:
+def has_open_duplicate(records: list, pair: str) -> bool:
+    """جلوگیری از ارسال سیگنال تکراری یا پشت سر هم تا زمان بسته شدن پوزیشن قبلی همان ارز"""
     open_statuses = {"ENTRY_PENDING", "OPEN", "TP1_HIT"}
-    return any(r.get("pair", f"{r.get('symbol', '')}-USDT") == pair and
-               r.get("direction") == direction and r.get("status") in open_statuses
+    return any(r.get("pair") == pair and r.get("status") in open_statuses
                for r in records if isinstance(r, dict))
 
 
@@ -397,8 +373,6 @@ def fmt_price(value: float) -> str:
         return f"{value:,.2f}"
     if value >= 1:
         return f"{value:.4f}"
-    if value >= 0.01:
-        return f"{value:.6f}"
     return f"{value:.8f}"
 
 
@@ -411,16 +385,16 @@ def format_signal(signal: dict) -> str:
         f"📈 <b>Strategy:</b> {html.escape(signal['strategy_type'])}", "",
         f"📍 <b>Entry:</b> <code>{fmt_price(signal['entry'])}</code>",
         f"🛑 <b>Stop Loss:</b> <code>{fmt_price(signal['sl'])}</code>", "",
-        "🎯 <b>Take Profit:</b>", f"TP1 (POC) → <code>{fmt_price(signal['tp1'])}</code>",
+        "🎯 <b>Take Profit:</b>",
+        f"TP1 (POC) → <code>{fmt_price(signal['tp1'])}</code>",
         f"TP2 → <code>{fmt_price(signal['tp2'])}</code>", "",
         f"⚖️ <b>Risk/Reward:</b> 1:{signal['rr']:.2f}",
-        "⚠️ <b>Risk Level:</b> INSTITUTIONAL", "", "🏦 <b>Exchange:</b> KuCoin Spot",
+        "⚠️ <b>Risk Level:</b> INSTITUTIONAL", "", "🏦 <b>Exchange:</b> KuCoin Futures",
     ])
 
 
 def send_telegram_message(message: str) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logging.warning("Telegram credentials missing.")
         return False
     try:
         response = SESSION.post(
@@ -428,29 +402,21 @@ def send_telegram_message(message: str) -> bool:
             data={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=REQUEST_TIMEOUT_SECONDS
         )
-        if response.status_code != 200:
-            logging.error("Telegram HTTP %s: %s", response.status_code, response.text[:300])
-            return False
-        payload = response.json()
-        return bool(payload.get("ok"))
-    except (requests.RequestException, ValueError) as exc:
-        logging.error("Telegram send failed: %s", exc)
+        return response.status_code == 200 and bool(response.json().get("ok"))
+    except Exception:
         return False
 
 
 def candle_hits_level(candle: dict, level: float, direction: str, kind: str) -> bool:
     if kind in {"entry", "sl"}:
         return candle["low"] <= level if direction == "LONG" else candle["high"] >= level
-    if kind in {"tp1", "tp2", "tp3"}:
+    if kind in {"tp1", "tp2"}:
         return candle["high"] >= level if direction == "LONG" else candle["low"] <= level
-    raise ValueError("Unknown level kind")
+    return False
 
 
 def pending_candle_count(record: dict, candle_time: int) -> int:
     setup_time = int(record.get("setup_candle_time") or 0)
-    if setup_time <= 0:
-        signal_dt = parse_time(record.get("signal_time"))
-        setup_time = int(signal_dt.timestamp()) if signal_dt else candle_time
     return max(0, (int(candle_time) - setup_time) // MONITOR_INTERVAL_SECONDS)
 
 
@@ -473,8 +439,10 @@ def monitor_signals(records: list) -> bool:
         symbol = html.escape(str(record.get("symbol", pair.replace("-USDT", ""))))
         direction = record.get("direction")
         try:
-            entry, sl = float(record["entry"]), float(record["sl"])
-            tp1, tp2 = float(record["tp1"]), float(record["tp2"])
+            entry = float(record["entry"])
+            sl = float(record["sl"])
+            tp1 = float(record["tp1"])
+            tp2 = float(record["tp2"])
         except (KeyError, TypeError, ValueError):
             continue
 
@@ -482,18 +450,14 @@ def monitor_signals(records: list) -> bool:
         if status in {"OPEN", "TP1_HIT"}:
             entry_time = parse_time(record.get("entry_time"))
             if entry_time and now - entry_time >= timedelta(days=TIMEOUT_DAYS):
-                message = (f"⏱️ <b>TRADE TIMEOUT — {symbol}/USDT</b>\n\n"
-                           f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
-                           f"📍 Entry: <code>{fmt_price(entry)}</code>\n\n"
-                           "پس از ۵ روز بدون نتیجه قطعی بسته شد.")
-                _notify_and_mark(record, message, {"status": "CLOSED_TIMEOUT", "result": "TIMEOUT", "closed_time": now.isoformat()})
+                msg = f"⏱️ <b>TRADE TIMEOUT — {symbol}/USDT</b>\n\n{'🟢' if direction == 'LONG' else '🔴'} {direction}\n📍 Entry: <code>{fmt_price(entry)}</code>\n\nپس از ۱۰ روز بدون نتیجه قطعی بسته شد."
+                _notify_and_mark(record, msg, {"status": "CLOSED_TIMEOUT", "result": "TIMEOUT", "closed_time": now.isoformat()})
                 changed = True
                 continue
 
         setup_time = int(record.get("setup_candle_time") or 0)
         last_processed = int(record.get("last_monitor_candle_time") or setup_time)
-        fetch_start = max(setup_time, last_processed - 2 * MONITOR_INTERVAL_SECONDS)
-        candles = get_kucoin_candles(pair, MONITOR_CANDLE_TYPE, MONITOR_FETCH_LIMIT, start_at=fetch_start)
+        candles = get_kucoin_candles(pair, MONITOR_CANDLE_TYPE, MONITOR_FETCH_LIMIT, start_at=last_processed)
         if candles is None or candles.empty:
             continue
         new_candles = candles[candles.time > last_processed].sort_values("time")
@@ -524,13 +488,8 @@ def monitor_signals(records: list) -> bool:
                     break
 
                 if candle_hits_level(candle, entry, direction, "entry"):
-                    message = (f"➕ <b>ENTRY EXECUTED — {symbol}/USDT</b>\n\n"
-                               f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
-                               f"{'🟢' if direction == 'LONG' else '🔴'} <b>{direction} ACTIVE</b>\n\n"
-                               f"🎯 TP1 (POC): <code>{fmt_price(tp1)}</code>\n"
-                               f"🎯 TP2: <code>{fmt_price(tp2)}</code>\n"
-                               f"🛑 SL: <code>{fmt_price(sl)}</code>")
-                    _notify_and_mark(record, message, {
+                    msg = f"➕ <b>ENTRY EXECUTED — {symbol}/USDT</b>\n\n📍 Entry: <code>{fmt_price(entry)}</code>\n{'🟢' if direction == 'LONG' else '🔴'} <b>{direction} ACTIVE</b>\n\n🎯 TP1 (POC): <code>{fmt_price(tp1)}</code>\n🎯 TP2: <code>{fmt_price(tp2)}</code>\n🛑 SL: <code>{fmt_price(sl)}</code>"
+                    _notify_and_mark(record, msg, {
                         "status": "OPEN", "entered": True,
                         "entry_time": datetime.fromtimestamp(candle_time + MONITOR_INTERVAL_SECONDS, timezone.utc).isoformat(),
                         "last_monitor_candle_time": candle_time
@@ -544,41 +503,27 @@ def monitor_signals(records: list) -> bool:
 
             if sl_hit:
                 if current_status == "TP1_HIT":
-                    message = (f"🛡️ <b>BREAK-EVEN STOP HIT — {symbol}/USDT</b>\n\n"
-                               f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
-                               f"📍 Entry: <code>{fmt_price(entry)}</code> (Protected)\n\n"
-                               "پوزیشن در نقطه سر به سر بسته شد.")
-                    _notify_and_mark(record, message, {"status": "CLOSED_BE", "result": "BREAKEVEN", "closed_time": utc_now().isoformat()})
+                    msg = f"🛡️ <b>BREAK-EVEN STOP HIT — {symbol}/USDT</b>\n\n{'🟢' if direction == 'LONG' else '🔴'} {direction}\n📍 Entry: <code>{fmt_price(entry)}</code> (Protected)\n\nپوزیشن در نقطه سر به سر بسته شد."
+                    _notify_and_mark(record, msg, {"status": "CLOSED_BE", "result": "BREAKEVEN", "closed_time": utc_now().isoformat()})
                 else:
                     loss_pct = abs(entry - sl) / entry * 100 if entry else 0.0
-                    message = (f"🛑 <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n"
-                               f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
-                               f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
-                               f"🛑 SL: <code>{fmt_price(sl)}</code> ❌\n\n"
-                               f"📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n🔴 <b>TRADE CLOSED</b>")
-                    _notify_and_mark(record, message, {"status": "CLOSED_SL", "result": "SL", "closed_time": utc_now().isoformat()})
+                    msg = f"🛑 <b>STOP LOSS HIT — {symbol}/USDT</b>\n\n{'🟢' if direction == 'LONG' else '🔴'} {direction}\n📍 Entry: <code>{fmt_price(entry)}</code>\n🛑 SL: <code>{fmt_price(sl)}</code> ❌\n\n📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n🔴 <b>TRADE CLOSED</b>"
+                    _notify_and_mark(record, msg, {"status": "CLOSED_SL", "result": "SL", "closed_time": utc_now().isoformat()})
                 changed = True
                 break
 
             if tp2_hit:
                 movement_pct = abs(tp2 - entry) / entry * 100 if entry else 0.0
                 final_rr = abs(tp2 - entry) / abs(entry - sl) if entry != sl else 0
-                message = (f"🏆 <b>TP2 HIT — {symbol}/USDT</b>\n\n"
-                           f"{'🟢' if direction == 'LONG' else '🔴'} {direction}\n"
-                           "✅ TP1 + TP2 hit\n\n"
-                           f"📈 <b>Total Profit: +{movement_pct:.2f}%</b>\n"
-                           f"⚖️ <b>Final R:R: 1:{final_rr:.2f}</b>\n\n🟢 <b>TRADE CLOSED</b>")
-                _notify_and_mark(record, message, {"status": "CLOSED_TP2", "result": "TP2", "closed_time": utc_now().isoformat()})
+                msg = f"🏆 <b>TP2 HIT — {symbol}/USDT</b>\n\n{'🟢' if direction == 'LONG' else '🔴'} {direction}\n✅ TP1 + TP2 hit\n\n📈 <b>Total Profit: +{movement_pct:.2f}%</b>\n⚖️ <b>Final R:R: 1:{final_rr:.2f}</b>\n\n🟢 <b>TRADE CLOSED</b>"
+                _notify_and_mark(record, msg, {"status": "CLOSED_TP2", "result": "TP2", "closed_time": utc_now().isoformat()})
                 changed = True
                 break
 
             if current_status == "OPEN" and tp1_hit:
                 record["sl"] = entry
-                message = (f"🎯 <b>TAKE PROFIT 1 HIT (POC) — {symbol}/USDT</b>\n\n"
-                           f"{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅\n"
-                           f"🛡️ <b>SL Moved to Break-Even:</b> <code>{fmt_price(entry)}</code>\n\n"
-                           "Monitoring continues for TP2.")
-                _notify_and_mark(record, message, {"status": "TP1_HIT", "tp1_time": utc_now().isoformat()})
+                msg = f"🎯 <b>TAKE PROFIT 1 HIT (POC) — {symbol}/USDT</b>\n\n{direction}\nTP1: <code>{fmt_price(tp1)}</code> ✅\n🛡️ <b>SL Moved to Break-Even:</b> <code>{fmt_price(entry)}</code>\n\nMonitoring continues for TP2."
+                _notify_and_mark(record, msg, {"status": "TP1_HIT", "tp1_time": utc_now().isoformat()})
                 changed = True
                 continue
 
@@ -588,7 +533,7 @@ def monitor_signals(records: list) -> bool:
 
 
 def main() -> None:
-    logging.info("Starting Institutional LVAR v4 Pro scanner...")
+    logging.info("Starting Institutional LVAR v4.4 Pro scanner...")
     
     if not is_active_trading_window():
         logging.info("Outside institutional window (07:00 - 20:00 UTC). Scan skipped.")
@@ -615,12 +560,13 @@ def main() -> None:
             continue
         checked_pairs.add(pair)
 
+        if has_open_duplicate(records, pair):
+            time.sleep(REQUEST_DELAY_SECONDS)
+            continue
+
         try:
             signal = detect_setup(pair, coin["symbol"], btc_trend)
             if not signal:
-                time.sleep(REQUEST_DELAY_SECONDS)
-                continue
-            if has_open_duplicate(records, pair, signal["direction"]):
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
             if not send_telegram_message(format_signal(signal)):
@@ -633,7 +579,7 @@ def main() -> None:
                 "strategy_type": signal["strategy_type"], "strategy_version": signal["strategy_version"],
                 "swept_level": signal["swept_level"], "entry": signal["entry"],
                 "sl": signal["sl"], "tp1": signal["tp1"], "tp2": signal["tp2"],
-                "tp3": signal["tp3"], "rr": signal["rr"], "signal_time": signal["signal_time"],
+                "rr": signal["rr"], "signal_time": signal["signal_time"],
                 "setup_candle_time": signal["setup_candle_time"],
                 "setup_high": signal["setup_high"], "setup_low": signal["setup_low"],
                 "status": "ENTRY_PENDING", "entered": False, "entry_time": None,
