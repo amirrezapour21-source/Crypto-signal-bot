@@ -55,9 +55,9 @@ PENDING_MAX_15M_BARS = 4
 MONITOR_CANDLE_TYPE = "15min"
 MONITOR_INTERVAL_SECONDS = 15 * 60
 MONITOR_FETCH_LIMIT = 250
-
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8848233674:AAG-lLQIQD2JlW0Yia2zfxmLiY99tbUREbo").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "@amirrez_crypto_signal_bot").strip()
+
 LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.json"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
