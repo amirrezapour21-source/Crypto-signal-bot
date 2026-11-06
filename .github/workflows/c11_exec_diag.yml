@@ -1,0 +1,37 @@
+name: C11 Execution Diagnostic (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_time_utc:
+        description: "Exact RUN_TIME_UTC from the C11 run log (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c11-exec-diag
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run read-only diagnostic
+        env:
+          RUN_TIME_UTC: ${{ github.event.inputs.run_time_utc }}
+        run: python c11_exec_diag.py
