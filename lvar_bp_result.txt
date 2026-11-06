@@ -1,0 +1,106 @@
+BLUEPRINT BACKTEST - LVAR value rejection (liquidity sweep + volume absorption), 15m bars, Binance USDT-M perpetuals, real funding
+run at: 2026-11-06 19:45 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 875 from the download-site listing (TradFi names removed); BTCUSDT always loaded for the gates
+selected: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, ZECUSDT, NOTUSDT, ADAUSDT, 1000PEPEUSDT, DOGEUSDT, RIVERUSDT, TRBUSDT, HYPEUSDT, IOUSDT, SUIUSDT, PEOPLEUSDT, BNBUSDT, TRUMPUSDT, GUNUSDT, NEARUSDT, WIFUSDT, ORDIUSDT, WLDUSDT, PARTIUSDT, AUCTIONUSDT, CYBERUSDT, UNIUSDT, MUBARAKUSDT, LISTAUSDT, PNUTUSDT, PERPUSDT, LTCUSDT, LINKUSDT, LSKUSDT, DASHUSDT, KAITOUSDT, NILUSDT, BCHUSDT, FARTCOINUSDT, ENAUSDT, AXSUSDT, HIFIUSDT, HIGHUSDT, AVAXUSDT, QNTUSDT, RAREUSDT, AKEUSDT, ARBUSDT, FRONTUSDT, TUTUSDT, 1000FLOKIUSDT, BLZUSDT, REDUSDT, MASKUSDT, MATICUSDT, ZKUSDT, JASMYUSDT, BBUSDT, ZROUSDT, AAVEUSDT, 1000RATSUSDT, UNFIUSDT, 1000SHIBUSDT, STORJUSDT, APEUSDT, PUMPUSDT, LAYERUSDT, FILUSDT, HBARUSDT, TAOUSDT, BMTUSDT
+costs: fee+slippage 0.20% round trip (stress 0.40%) plus REAL funding while open; max 8 open positions; one position per coin
+Pass rule fixed before the run (V2 only): net avgR >= +0.10 AND PF >= 1.2 AND n >= 300 AND both halves net-positive.
+Known problems: top-70 liquid contracts, entry at the next bar open, 15m bars hide intrabar order (SL assumed first), the scheduled-event
+blackout file is not reproducible in history (only the BTC volatility gate is), Binance data instead of KuCoin spot.
+files found/requested: 15m klines 2588/3430 | funding 2577/3430
+BTC gates: news gate closed on 6.5% of bars | macro bias BULLISH 45% / BEARISH 39% / NEUTRAL 16% of 4h bars
+symbols with usable data: 70 | raw signals (gates passed, before order filters): 3922
+
+[V2] signals before the position cap: 3260 | taken: 2984
+============================================================
+V2 - sweep + absorption, ATR-based stop beyond the sweep, TP1 2.5R / TP2 4.5R, full position (eligible)
+  r_gross                              n= 2984 win%= 15.1 avgR=-0.038 totalR=  -113.1 PF=0.95 maxDD=227.6
+  r_net                                n= 2984 win%= 15.2 avgR=-0.203 totalR=  -606.4 PF=0.76 maxDD=670.5
+  r_stress                             n= 2984 win%= 15.1 avgR=-0.365 totalR= -1089.7 PF=0.63 maxDD=1140.5
+  first half (net)                     n= 1490 win%= 14.3 avgR=-0.252 totalR=  -375.5 PF=0.71 maxDD=396.9
+  second half (net)                    n= 1494 win%= 16.1 avgR=-0.155 totalR=  -230.9 PF=0.82 maxDD=281.6
+  LONG (net)                           n= 1480 win%= 13.6 avgR=-0.304 totalR=  -449.9 PF=0.66 maxDD=509.6
+  SHORT (net)                          n= 1504 win%= 16.7 avgR=-0.104 totalR=  -156.5 PF=0.87 maxDD=188.7
+  year 2022 (net)                      n=  101 win%= 18.8 avgR=+0.049 totalR=    +4.9 PF=1.06 maxDD=27.3
+  year 2023 (net)                      n=  499 win%= 11.8 avgR=-0.425 totalR=  -212.3 PF=0.54 maxDD=210.7
+  year 2024 (net)                      n=  904 win%= 15.4 avgR=-0.179 totalR=  -161.6 PF=0.79 maxDD=174.8
+  year 2025 (net)                      n=  923 win%= 16.7 avgR=-0.133 totalR=  -123.1 PF=0.84 maxDD=175.8
+  year 2026 (net)                      n=  557 win%= 14.7 avgR=-0.205 totalR=  -114.4 PF=0.76 maxDD=172.7
+  days open per trade: mean 0.5 | median 0 | 90th pct 1 | max 10
+  trades per week: 14.30 | days with a new entry: 138%
+  open positions: mean 3.1 | max 32 | days with none open 24% | days at cap 11%
+  exits: BE=396, SL=2136, TIME2=4, TP2=448
+  median risk 1.3% of price
+  longest time below equity peak (net): 1439 days
+  profitable months (net, by exit): 11 of 48 | worst month -54.2R | best month +35.9R
+  at 0.5% risk per trade (not compounded): total -303% | max drawdown 335%
+  top 3 coins by net R: MUBARAKUSDT +19, TRUMPUSDT +16, PEOPLEUSDT +9 | total -606
+  avgR net without those 3 coins: -0.228 (n=2852)
+  share of positive-week profit from the best 5 weeks: 26%
+  weekly-block bootstrap of net avgR: 95% CI [-0.300, -0.108], P(avgR>0)=0.00 (210 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+  average real funding cost per trade: +0.007% of position (negative = funding was income)
+
+[V2P] signals before the position cap: 3260 | taken: 2984
+============================================================
+V2P - same, half of the position closed at TP1 (information only)
+  r_gross                              n= 2984 win%= 28.4 avgR=-0.022 totalR=   -64.5 PF=0.97 maxDD=188.1
+  r_net                                n= 2984 win%= 28.4 avgR=-0.187 totalR=  -557.9 PF=0.78 maxDD=617.5
+  r_stress                             n= 2984 win%= 28.4 avgR=-0.349 totalR= -1041.1 PF=0.63 maxDD=1087.3
+  first half (net)                     n= 1490 win%= 27.4 avgR=-0.227 totalR=  -338.2 PF=0.73 maxDD=359.0
+  second half (net)                    n= 1494 win%= 29.3 avgR=-0.147 totalR=  -219.7 PF=0.82 maxDD=264.4
+  LONG (net)                           n= 1480 win%= 26.4 avgR=-0.277 totalR=  -410.1 PF=0.68 maxDD=460.0
+  SHORT (net)                          n= 1504 win%= 30.3 avgR=-0.098 totalR=  -147.7 PF=0.88 maxDD=179.6
+  year 2022 (net)                      n=  101 win%= 38.6 avgR=+0.108 totalR=   +10.9 PF=1.15 maxDD=23.1
+  year 2023 (net)                      n=  499 win%= 23.0 avgR=-0.394 totalR=  -196.8 PF=0.56 maxDD=196.5
+  year 2024 (net)                      n=  904 win%= 28.8 avgR=-0.164 totalR=  -148.5 PF=0.80 maxDD=159.2
+  year 2025 (net)                      n=  923 win%= 28.7 avgR=-0.146 totalR=  -134.6 PF=0.82 maxDD=170.7
+  year 2026 (net)                      n=  557 win%= 30.2 avgR=-0.160 totalR=   -88.9 PF=0.80 maxDD=140.6
+  days open per trade: mean 0.5 | median 0 | 90th pct 1 | max 10
+  trades per week: 14.30 | days with a new entry: 138%
+  open positions: mean 3.1 | max 32 | days with none open 24% | days at cap 11%
+  exits: BE=396, SL=2136, TIME2=4, TP2=448
+  median risk 1.3% of price
+  longest time below equity peak (net): 1439 days
+  profitable months (net, by exit): 12 of 48 | worst month -53.2R | best month +29.7R
+  at 0.5% risk per trade (not compounded): total -279% | max drawdown 309%
+  top 3 coins by net R: MUBARAKUSDT +14, TRUMPUSDT +12, 1000FLOKIUSDT +5 | total -558
+  avgR net without those 3 coins: -0.204 (n=2885)
+  share of positive-week profit from the best 5 weeks: 27%
+  weekly-block bootstrap of net avgR: 95% CI [-0.271, -0.101], P(avgR>0)=0.00 (210 weeks)
+  (sensitivity only - not eligible for selection)
+
+  average real funding cost per trade: +0.007% of position (negative = funding was income)
+
+[FIXED] signals before the position cap: 3919 | taken: 3489
+============================================================
+FIXED - original blueprint: stop 1.2%, TP1 4%, TP2 7%, same signals (information only)
+  r_gross                              n= 3489 win%= 12.9 avgR=-0.019 totalR=   -67.9 PF=0.97 maxDD=316.7
+  r_net                                n= 3489 win%= 13.0 avgR=-0.190 totalR=  -662.5 PF=0.79 maxDD=715.6
+  r_stress                             n= 3489 win%= 13.0 avgR=-0.357 totalR= -1244.0 PF=0.66 maxDD=1277.3
+  first half (net)                     n= 1744 win%= 11.8 avgR=-0.262 totalR=  -457.3 PF=0.72 maxDD=481.9
+  second half (net)                    n= 1745 win%= 14.2 avgR=-0.118 totalR=  -205.3 PF=0.87 maxDD=241.0
+  LONG (net)                           n= 1639 win%= 11.8 avgR=-0.277 totalR=  -454.4 PF=0.70 maxDD=543.6
+  SHORT (net)                          n= 1850 win%= 14.1 avgR=-0.113 totalR=  -208.2 PF=0.88 maxDD=230.6
+  year 2022 (net)                      n=  117 win%= 16.2 avgR=+0.052 totalR=    +6.1 PF=1.06 maxDD=22.2
+  year 2023 (net)                      n=  602 win%=  9.8 avgR=-0.420 totalR=  -252.5 PF=0.56 maxDD=256.7
+  year 2024 (net)                      n= 1017 win%= 12.5 avgR=-0.205 totalR=  -208.4 PF=0.78 maxDD=216.3
+  year 2025 (net)                      n= 1051 win%= 13.9 avgR=-0.143 totalR=  -150.4 PF=0.84 maxDD=236.8
+  year 2026 (net)                      n=  702 win%= 14.7 avgR=-0.082 totalR=   -57.3 PF=0.91 maxDD=182.4
+  days open per trade: mean 0.5 | median 0 | 90th pct 1 | max 10
+  trades per week: 16.72 | days with a new entry: 167%
+  open positions: mean 3.7 | max 38 | days with none open 20% | days at cap 16%
+  exits: BE=351, SL=2687, TIME=2, TIME2=1, TP2=448
+  median risk 1.2% of price
+  longest time below equity peak (net): 1418 days
+  profitable months (net, by exit): 14 of 48 | worst month -61.1R | best month +44.6R
+  at 0.5% risk per trade (not compounded): total -331% | max drawdown 358%
+  top 3 coins by net R: ORDIUSDT +27, MUBARAKUSDT +24, FARTCOINUSDT +20 | total -663
+  avgR net without those 3 coins: -0.218 (n=3362)
+  share of positive-week profit from the best 5 weeks: 26%
+  weekly-block bootstrap of net avgR: 95% CI [-0.294, -0.084], P(avgR>0)=0.00 (210 weeks)
+  (sensitivity only - not eligible for selection)
+
+  average real funding cost per trade: +0.005% of position (negative = funding was income)
+
+total run time: 173s
