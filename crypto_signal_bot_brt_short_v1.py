@@ -12,6 +12,7 @@
 # ============================================================
 
 import copy
+import html
 import json
 import os
 import sys
@@ -31,6 +32,16 @@ STATE_FILE = os.environ.get(
 )
 
 STATE_VERSION = 1
+
+# ------------------------------------------------------------
+# TELEGRAM (same message layout as the LVAR signal bot).
+# Messages are queued during the run and sent only AFTER the state is saved.
+# A Telegram failure never fails the run.
+# ------------------------------------------------------------
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+OUTBOX = []
 
 # Registration section 0e: only entries at/after this instant
 # (and at/after the state's created_at) are eligible evidence.
@@ -184,6 +195,110 @@ def iso(ts):
 # ============================================================
 # STATE
 # ============================================================
+
+def fmt_price(value):
+    value = float(value)
+    if not np.isfinite(value):
+        return "N/A"
+    if value >= 1000:
+        return f"{value:,.2f}"
+    if value >= 1:
+        return f"{value:.4f}"
+    if value >= 0.01:
+        return f"{value:.6f}"
+    return f"{value:.8f}"
+
+
+def tg_symbol(symbol):
+    base = symbol[:-5] if symbol.endswith("USDTM") else symbol
+    return "BTC" if base == "XBT" else base
+
+
+def msg_signal(pos):
+    rr = abs(pos["entry"] - pos["tp"]) / pos["risk"]
+    return "\n".join([
+        f"📊 <b>{html.escape(tg_symbol(pos['symbol']))}/USDT — SIGNAL</b>", "",
+        "🔴 <b>Direction:</b> SHORT",
+        "📈 <b>Strategy:</b> Break &amp; Retest (4H)", "",
+        f"📍 <b>Entry:</b> <code>{fmt_price(pos['entry'])}</code>",
+        f"🛑 <b>Stop Loss:</b> <code>{fmt_price(pos['sl'])}</code>", "",
+        "🎯 <b>Take Profit:</b>", f"TP (2R) → <code>{fmt_price(pos['tp'])}</code>", "",
+        f"⚖️ <b>Risk/Reward:</b> 1:{rr:.2f}",
+        "⚠️ <b>Risk Level:</b> PAPER TEST", "", "🏦 <b>Exchange:</b> KuCoin Futures",
+    ])
+
+
+def msg_entry(pos):
+    return (
+        f"➕ <b>ENTRY EXECUTED — {html.escape(tg_symbol(pos['symbol']))}/USDT</b>\n\n"
+        f"📍 Entry: <code>{fmt_price(pos['entry'])}</code>\n"
+        "🔴 <b>SHORT ACTIVE</b>\n\n"
+        f"🎯 TP (2R): <code>{fmt_price(pos['tp'])}</code>\n"
+        f"🛑 SL: <code>{fmt_price(pos['sl'])}</code>"
+    )
+
+
+def msg_close(c):
+    sym = html.escape(tg_symbol(c["symbol"]))
+    entry = float(c["entry"])
+    if c["exit_reason"] == "SL":
+        loss_pct = abs(float(c["sl"]) - entry) / entry * 100
+        return (
+            f"🛑 <b>STOP LOSS HIT — {sym}/USDT</b>\n\n"
+            "🔴 SHORT\n"
+            f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
+            f"🛑 SL: <code>{fmt_price(c['sl'])}</code> ❌\n\n"
+            f"📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n🔴 <b>TRADE CLOSED</b>"
+        )
+    if c["exit_reason"] == "TP":
+        pct = abs(entry - float(c["tp"])) / entry * 100
+        return (
+            f"🏆 <b>TP HIT — {sym}/USDT</b>\n\n"
+            "🔴 SHORT\n"
+            "✅ TP hit\n\n"
+            f"📈 <b>Total Profit: +{pct:.2f}%</b>\n"
+            f"⚖️ <b>Final R:R: 1:{float(c['gross_r']):.2f}</b>\n\n🟢 <b>TRADE CLOSED</b>"
+        )
+    pct = (entry - float(c["exit_price"])) / entry * 100
+    return (
+        f"⏱️ <b>TRADE TIMEOUT — {sym}/USDT</b>\n\n"
+        "🔴 SHORT\n"
+        f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
+        f"📊 Result: {pct:+.2f}% ({float(c['gross_r']):+.2f}R)\n\n"
+        "پس از ۳۰ کندل ۴ ساعته بدون نتیجه قطعی بسته شد."
+    )
+
+
+def send_outbox():
+    queued = list(OUTBOX)
+    del OUTBOX[:]
+    if not queued:
+        return
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("TELEGRAM = SKIPPED (credentials missing)")
+        return
+    sent = 0
+    for text in queued:
+        try:
+            r = SESSION.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                data={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            if r.status_code == 200 and r.json().get("ok"):
+                sent += 1
+            else:
+                print(f"TELEGRAM_ERROR HTTP {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            print(f"TELEGRAM_ERROR {str(e)[:200]}")
+        time.sleep(0.5)
+    print(f"TELEGRAM = SENT {sent}/{len(queued)}")
+
 
 def new_state():
     return {
@@ -1105,6 +1220,9 @@ def handle_signal(
             :-MAX_SIGNALS
         ]
 
+    OUTBOX.append(msg_signal(position))
+    OUTBOX.append(msg_entry(position))
+
     return "OPENED"
 
 
@@ -1256,6 +1374,8 @@ def monitor_bar(
         state["closed"].append(
             closed
         )
+
+        OUTBOX.append(msg_close(closed))
 
         if len(state["closed"]) > MAX_CLOSED:
             del state["closed"][
@@ -1894,6 +2014,8 @@ def main():
                 "STATE_SAVE = UNCHANGED"
             )
 
+        send_outbox()
+
         sys.exit(2)
 
     # --------------------------------------------------------
@@ -1922,6 +2044,8 @@ def main():
         print(
             "STATE_SAVE = UNCHANGED"
         )
+
+    send_outbox()
 
     report(
         state,
