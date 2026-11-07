@@ -39,6 +39,9 @@ jobs:
       - name: Run BRT-S
         id: run
         continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python crypto_signal_bot_brt_short_v1.py
 
       - name: Save paper state
