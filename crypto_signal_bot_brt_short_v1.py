@@ -1,14 +1,15 @@
 # ============================================================
-# BRT-S - FORWARD PAPER TRADING ENGINE (v1)
-# Break + Retest SHORT on 4H support/resistance levels.
-# 4H | SHORT ONLY | LEVEL = CLUSTER OF >= 3 PIVOTS (PIV 5, LOOKBACK 180, TOL 0.25 ATR14)
-#    | BREAK: a close at/above the level within the last 10 bars, then a close back below it
-#      that reached level - 0.5 ATR, then a BEARISH retest bar whose high is within the level zone
-#    | ENTRY = NEXT CANDLE OPEN | SL = max(high of retest bar, level) + 0.25 ATR14
+# BRT-S - FORWARD PAPER TRADING ENGINE (v2, LONG + SHORT)
+# Break + Retest on 4H support/resistance levels, both directions.
+# 4H | LEVEL = CLUSTER OF >= 3 PIVOTS (PIV 5, LOOKBACK 180, TOL 0.25 ATR14)
+#    | SHORT: a close at/above the level within the last 10 bars, then a close back below it that
+#      reached level - 0.5 ATR, then a BEARISH retest bar whose high is within the level zone
+#    | LONG is the exact mirror (close at/below, then back above reaching level + 0.5 ATR, BULLISH retest bar)
+#    | ENTRY = NEXT CANDLE OPEN | SL = beyond max/min(retest bar extreme, level) +/- 0.25 ATR14
 #    | TP = 2R | HOLD = 30 BARS | RISK MUST BE 1%-12% OF PRICE
 # PAPER ONLY - NO REAL ORDERS. Separate state file; shares nothing with C11 / LONG-M1 / U67-S / U67-L.
 # The backtest of this rule (lvar_sr_backtest.py, variant B) did NOT pass the pre-registered rule;
-# this forward test is information only.
+# this forward test is information only. LONG and SHORT are reported separately.
 # ============================================================
 
 import copy
@@ -28,7 +29,7 @@ KLINE_URL = BASE + "/api/v1/kline/query"
 
 STATE_FILE = os.environ.get(
     "BRT_STATE_FILE",
-    "brt_short_paper_state.json"
+    "brt_paper_state.json"
 )
 
 STATE_VERSION = 1
@@ -46,7 +47,7 @@ OUTBOX = []
 # Registration section 0e: only entries at/after this instant
 # (and at/after the state's created_at) are eligible evidence.
 REGISTRATION_ELIGIBLE_FROM = pd.Timestamp(
-    "2026-11-07T00:00:00Z"
+    "2026-11-08T00:00:00Z"
 )
 
 # ------------------------------------------------------------
@@ -135,7 +136,7 @@ MAX_CLOSED = 5000
 # SYMBOLS
 # ------------------------------------------------------------
 
-SYMS = [
+CORE_SYMS = [
     "XBTUSDTM",
     "ETHUSDTM",
     "SOLUSDTM",
@@ -171,11 +172,33 @@ SYMS = [
     "FLOKIUSDTM",
 ]
 
+# Extra liquid symbols. If KuCoin does not know one of them, or its data fails, it is SKIPPED
+# (reported in the log) and never counts as a failed symbol.
+EXTRA_SYMS = [
+    "ZECUSDTM",
+    "TAOUSDTM",
+    "HYPEUSDTM",
+    "ENAUSDTM",
+    "WLDUSDTM",
+    "ORDIUSDTM",
+    "TRUMPUSDTM",
+    "PNUTUSDTM",
+    "TONUSDTM",
+    "TIAUSDTM",
+    "JUPUSDTM",
+    "PENGUUSDTM",
+    "FARTCOINUSDTM",
+    "RUNEUSDTM",
+
+]
+
+SYMS = CORE_SYMS + EXTRA_SYMS
+
 
 SESSION = requests.Session()
 SESSION.headers.update(
     {
-        "User-Agent": "brt-short-paper-v1/1.0"
+        "User-Agent": "brt-paper-v2/1.0"
     }
 )
 
@@ -214,11 +237,15 @@ def tg_symbol(symbol):
     return "BTC" if base == "XBT" else base
 
 
+def side_icon(side):
+    return "🟢" if side == "LONG" else "🔴"
+
+
 def msg_signal(pos):
     rr = abs(pos["entry"] - pos["tp"]) / pos["risk"]
     return "\n".join([
         f"📊 <b>{html.escape(tg_symbol(pos['symbol']))}/USDT — SIGNAL</b>", "",
-        "🔴 <b>Direction:</b> SHORT",
+        f"{side_icon(pos['side'])} <b>Direction:</b> {pos['side']}",
         "📈 <b>Strategy:</b> Break &amp; Retest (4H)", "",
         f"📍 <b>Entry:</b> <code>{fmt_price(pos['entry'])}</code>",
         f"🛑 <b>Stop Loss:</b> <code>{fmt_price(pos['sl'])}</code>", "",
@@ -232,7 +259,7 @@ def msg_entry(pos):
     return (
         f"➕ <b>ENTRY EXECUTED — {html.escape(tg_symbol(pos['symbol']))}/USDT</b>\n\n"
         f"📍 Entry: <code>{fmt_price(pos['entry'])}</code>\n"
-        "🔴 <b>SHORT ACTIVE</b>\n\n"
+        f"{side_icon(pos['side'])} <b>{pos['side']} ACTIVE</b>\n\n"
         f"🎯 TP (2R): <code>{fmt_price(pos['tp'])}</code>\n"
         f"🛑 SL: <code>{fmt_price(pos['sl'])}</code>"
     )
@@ -241,11 +268,13 @@ def msg_entry(pos):
 def msg_close(c):
     sym = html.escape(tg_symbol(c["symbol"]))
     entry = float(c["entry"])
+    side = c["side"]
+    sgn = 1.0 if side == "LONG" else -1.0
     if c["exit_reason"] == "SL":
         loss_pct = abs(float(c["sl"]) - entry) / entry * 100
         return (
             f"🛑 <b>STOP LOSS HIT — {sym}/USDT</b>\n\n"
-            "🔴 SHORT\n"
+            f"{side_icon(side)} {side}\n"
             f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
             f"🛑 SL: <code>{fmt_price(c['sl'])}</code> ❌\n\n"
             f"📉 <b>Loss: -{loss_pct:.2f}%</b>\n\n🔴 <b>TRADE CLOSED</b>"
@@ -254,15 +283,15 @@ def msg_close(c):
         pct = abs(entry - float(c["tp"])) / entry * 100
         return (
             f"🏆 <b>TP HIT — {sym}/USDT</b>\n\n"
-            "🔴 SHORT\n"
+            f"{side_icon(side)} {side}\n"
             "✅ TP hit\n\n"
             f"📈 <b>Total Profit: +{pct:.2f}%</b>\n"
             f"⚖️ <b>Final R:R: 1:{float(c['gross_r']):.2f}</b>\n\n🟢 <b>TRADE CLOSED</b>"
         )
-    pct = (entry - float(c["exit_price"])) / entry * 100
+    pct = sgn * (float(c["exit_price"]) - entry) / entry * 100
     return (
         f"⏱️ <b>TRADE TIMEOUT — {sym}/USDT</b>\n\n"
-        "🔴 SHORT\n"
+        f"{side_icon(side)} {side}\n"
         f"📍 Entry: <code>{fmt_price(entry)}</code>\n"
         f"📊 Result: {pct:+.2f}% ({float(c['gross_r']):+.2f}R)\n\n"
         "پس از ۳۰ کندل ۴ ساعته بدون نتیجه قطعی بسته شد."
@@ -303,7 +332,7 @@ def send_outbox():
 def new_state():
     return {
         "state_version": STATE_VERSION,
-        "strategy": "brt_short_only_frozen_v1",
+        "strategy": "brt_both_sides_frozen_v1",
         "created_at": utc_now().isoformat(),
         "eligible_from": iso(
             max(
@@ -817,8 +846,9 @@ def levels_at(i, piv_idx, piv_px, a):
     return out
 
 
-def short_level(d, i):
-    """resistance level of a SHORT break+retest on bar i, or None. Uses only bars up to i."""
+def setup_at(d, i):
+    """(side, level) of a break+retest on bar i, side = +1 LONG (bullish bar) / -1 SHORT (bearish bar), or None.
+    Uses only bars up to i. Identical to the backtest (lvar_sr_backtest.py, mode B)."""
     if i < LOOKBACK + PIV or i < FRESH + 1:
         return None
     o = d["open"].to_numpy(float)[: i + 1]
@@ -826,25 +856,42 @@ def short_level(d, i):
     l = d["low"].to_numpy(float)[: i + 1]
     c = d["close"].to_numpy(float)[: i + 1]
     a = float(d["atr"].iloc[i])
-    if not (np.isfinite(a) and a > 0) or not (c[i] < o[i]):
+    if not (np.isfinite(a) and a > 0):
+        return None
+    if c[i] > o[i]:
+        side = 1
+    elif c[i] < o[i]:
+        side = -1
+    else:
         return None
     piv_idx, piv_px = find_pivots(h, l)
     tol = TOL * a
     best = None
     for lvl, npv in levels_at(i, piv_idx, piv_px, a):
-        if not (c[i] < lvl and lvl - tol <= h[i] <= lvl + ZONE_BELOW * a):
-            continue
         prev = c[i - FRESH:i]
-        bad = np.nonzero(prev >= lvl)[0]
-        if len(bad) == 0:
-            continue
-        kk = i - FRESH + int(bad[-1])
-        if not (kk <= i - 2 and c[kk + 1:i].min() <= lvl - BREAK_CLEAN * a):
-            continue
-        dist = abs(h[i] - lvl)
+        if side == 1:
+            if not (c[i] > lvl and lvl - ZONE_BELOW * a <= l[i] <= lvl + tol):
+                continue
+            bad = np.nonzero(prev <= lvl)[0]
+            if len(bad) == 0:
+                continue
+            kk = i - FRESH + int(bad[-1])
+            if not (kk <= i - 2 and c[kk + 1:i].max() >= lvl + BREAK_CLEAN * a):
+                continue
+            dist = abs(l[i] - lvl)
+        else:
+            if not (c[i] < lvl and lvl - tol <= h[i] <= lvl + ZONE_BELOW * a):
+                continue
+            bad = np.nonzero(prev >= lvl)[0]
+            if len(bad) == 0:
+                continue
+            kk = i - FRESH + int(bad[-1])
+            if not (kk <= i - 2 and c[kk + 1:i].min() <= lvl - BREAK_CLEAN * a):
+                continue
+            dist = abs(h[i] - lvl)
         if best is None or dist < best[0]:
             best = (dist, lvl)
-    return None if best is None else float(best[1])
+    return None if best is None else (side, float(best[1]))
 
 
 # ============================================================
@@ -861,14 +908,14 @@ def signal_reason(d, i):
     if not np.isfinite(float(r["atr"])) or float(r["atr"]) <= 0:
         return "INVALID_ATR"
 
-    if not float(r["close"]) < float(r["open"]):
-        return "NOT_BEARISH"
+    if float(r["close"]) == float(r["open"]):
+        return "DOJI"
 
     ts = d["ts"]
     if (ts.iloc[i] - ts.iloc[i - FRESH - 1]) != (FRESH + 1) * BAR:
         return "GAP_IN_WINDOW"
 
-    if short_level(d, i) is None:
+    if setup_at(d, i) is None:
         return "NO_RETEST_SETUP"
 
     return "SIGNAL"
@@ -1069,9 +1116,9 @@ def handle_signal(
 
         return "MISSED"
 
-    level = short_level(d, i)
+    setup = setup_at(d, i)
 
-    if level is None:
+    if setup is None:
 
         add_missed(
             state,
@@ -1082,12 +1129,20 @@ def handle_signal(
 
         return "MISSED"
 
-    stop_price = (
-        max(float(d.iloc[i]["high"]), level)
-        + STOP_BUF * atr
-    )
+    side_n, level = setup
 
-    risk = stop_price - entry
+    if side_n == -1:
+        stop_price = (
+            max(float(d.iloc[i]["high"]), level)
+            + STOP_BUF * atr
+        )
+    else:
+        stop_price = (
+            min(float(d.iloc[i]["low"]), level)
+            - STOP_BUF * atr
+        )
+
+    risk = side_n * (entry - stop_price)
 
     if (
         np.isfinite(risk)
@@ -1152,7 +1207,7 @@ def handle_signal(
 
         "symbol": symbol,
 
-        "side": "SHORT",
+        "side": "LONG" if side_n == 1 else "SHORT",
 
         "signal_ts": iso(
             signal_ts
@@ -1172,9 +1227,9 @@ def handle_signal(
 
         "risk_pct": risk / entry,
 
-        "sl": entry + risk,
+        "sl": entry - side_n * risk,
 
-        "tp": entry - TP_R * risk,
+        "tp": entry + side_n * TP_R * risk,
 
         "bars": 0,
 
@@ -1207,9 +1262,11 @@ def handle_signal(
 
             "risk": risk,
 
-            "sl": entry + risk,
+            "side": "LONG" if side_n == 1 else "SHORT",
 
-            "tp": entry - TP_R * risk,
+            "sl": entry - side_n * risk,
+
+            "tp": entry + side_n * TP_R * risk,
 
             "source": "next_candle_open",
         }
@@ -1280,8 +1337,14 @@ def monitor_bar(
 
         # FROZEN INTRABAR PRIORITY:
         # SL FIRST.
-        hit_sl = hi >= sl
-        hit_tp = lo <= tp
+        side_n = 1 if pos.get("side") == "LONG" else -1
+
+        if side_n == 1:
+            hit_sl = lo <= sl
+            hit_tp = hi >= tp
+        else:
+            hit_sl = hi >= sl
+            hit_tp = lo <= tp
 
         if hit_sl:
 
@@ -1297,7 +1360,7 @@ def monitor_bar(
 
             # Exit at close of the 30th monitored candle.
             gross_r = (
-                entry - close
+                side_n * (close - entry)
             ) / risk
 
             reason = "TIMEOUT"
@@ -1342,7 +1405,7 @@ def monitor_bar(
 
         stop_gap = bool(
             reason == "SL"
-            and float(row["open"]) >= sl
+            and side_n * (float(row["open"]) - sl) <= 0
         )
 
         closed = dict(pos)
@@ -1671,11 +1734,11 @@ def report(
 
     print(
         "BRT-S — "
-        "FORWARD PAPER TRADING (v1)"
+        "FORWARD PAPER TRADING (v2)"
     )
 
     print(
-        "4H | SHORT ONLY | "
+        "4H | LONG + SHORT | "
         "BREAK+RETEST | SL LEVEL+0.25 ATR | "
         "TP 2R | HOLD 30"
     )
@@ -1730,6 +1793,37 @@ def report(
     print(
         f"EXIT_REASONS={by_reason}"
     )
+
+    for side_name in ("LONG", "SHORT"):
+
+        s_closed = [
+            x for x in closed
+            if x.get("side") == side_name
+        ]
+
+        s_net = [
+            float(x["net_r"])
+            for x in s_closed
+            if np.isfinite(float(x.get("net_r", np.nan)))
+        ]
+
+        s_open = sum(
+            1 for x in state["open"].values()
+            if x.get("side") == side_name
+        )
+
+        s_sig = sum(
+            1 for x in state["signals"]
+            if x.get("side") == side_name
+        )
+
+        print(
+            f"{side_name}: signals={s_sig} open={s_open} "
+            f"closed={len(s_closed)} "
+            f"net_total={sum(s_net):+.2f}R "
+            f"net_avg={(np.mean(s_net) if s_net else 0.0):+.3f}R "
+            f"PF={pf(s_net):.2f}"
+        )
 
     print(
         f"ASSUMED_ROUND_TRIP_COST="
@@ -1819,11 +1913,11 @@ def main():
 
     print(
         "BRT-S — "
-        "FORWARD PAPER TRADING ENGINE (v1)"
+        "FORWARD PAPER TRADING ENGINE (v2)"
     )
 
     print(
-        "4H | SHORT ONLY | "
+        "4H | LONG + SHORT | "
         "NEXT CANDLE OPEN | "
         "SL LEVEL+0.25 ATR | TP 2R | HOLD 30"
     )
@@ -1841,6 +1935,7 @@ def main():
 
     ok_count = 0
     fail_count = 0
+    extra_skipped = []
 
     all_run_stats = {
         "signals": 0,
@@ -1924,6 +2019,21 @@ def main():
 
         except Exception as e:
 
+            if symbol in EXTRA_SYMS:
+
+                extra_skipped.append(symbol)
+
+                state["symbols"][symbol][
+                    "last_status"
+                ] = "EXTRA_SKIPPED"
+
+                print(
+                    f"EXTRA SYMBOL SKIPPED "
+                    f"{symbol}: {str(e)[:120]}"
+                )
+
+                continue
+
             fail_count += 1
 
             diagnostics[symbol] = {
@@ -1977,9 +2087,13 @@ def main():
     # FAILURE THRESHOLD
     # --------------------------------------------------------
 
+    print(
+        f"EXTRA_SKIPPED={extra_skipped}"
+    )
+
     failure_fraction = (
-        fail_count / len(SYMS)
-        if SYMS
+        fail_count / len(CORE_SYMS)
+        if CORE_SYMS
         else 1.0
     )
 
