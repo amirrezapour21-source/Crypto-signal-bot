@@ -1,0 +1,108 @@
+LIMIT-ENTRY SCREEN for the live BRT-S SHORT rule - 4h bars, Binance USDT-M perpetuals, real funding
+run at: 2026-11-21 11:04 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 875 from the download-site listing (TradFi names removed)
+setup, stop, target (2R from the entry price, stop unchanged), hold 30 bars: identical to the live BRT-S SHORT rule
+MKT = entry at the next open (as now, cost 0.20%). LIM_A = sell limit at the signal-bar close, LIM_B = sell limit at close + 0.25 ATR; both valid for 3 bars (12h), cost 0.10% (maker fee assumed).
+Limit fill: when a bar's high reaches the price, fill at that price (never better); on the fill bar only the stop can hit; unfilled = no trade.
+Purpose: what does it cost to enter by limit (so there is time to review the signal)? Sensitivity only, no pass/fail rule, nothing is selected from it.
+files found/requested: 4h klines 2588/3430 | funding 2577/3430
+symbols with usable data: 70
+
+SHORT setups of the live BRT-S rule: 2553 (before position cap)
+LIM_A: filled 2358 of 2553 setups (92%)
+  market-entry result of the FILLED setups n= 2357 win%= 37.0 avgR=-0.006 totalR=   -13.1 PF=0.99 maxDD=74.2
+  market-entry result of the NOT-filled setups n=    7 win%= 57.1 avgR=+0.650 totalR=    +4.6 PF=2.46 maxDD=1.1
+LIM_B: filled 1625 of 2553 setups (64%)
+  market-entry result of the FILLED setups n= 1609 win%= 27.9 avgR=-0.269 totalR=  -433.2 PF=0.64 maxDD=434.0
+  market-entry result of the NOT-filled setups n=  755 win%= 56.7 avgR=+0.562 totalR=  +424.6 PF=2.20 maxDD=8.8
+
+SUMMARY (net R, one position per coin, max 8 open; MKT cost 0.20%, limit cost 0.10% round trip, plus real funding)
+  MKT    n= 1749 avgR=+0.016 PF=1.02 totalR=  +28.2 win%=37.9 halves=-0.019/+0.051
+  LIM_A  n= 1743 avgR=+0.050 PF=1.08 totalR=  +86.8 win%=37.8 halves=+0.011/+0.088
+  LIM_B  n= 1344 avgR=+0.007 PF=1.01 totalR=   +9.9 win%=35.9 halves=+0.041/-0.027
+
+============================================================
+MKT - SHORT, entry mode MKT (sensitivity only)
+  r_gross                              n= 1749 win%= 37.9 avgR=+0.089 totalR=  +155.7 PF=1.15 maxDD=51.6
+  r_net                                n= 1749 win%= 37.9 avgR=+0.016 totalR=   +28.2 PF=1.02 maxDD=84.3
+  r_stress                             n= 1749 win%= 37.6 avgR=-0.062 totalR=  -107.8 PF=0.91 maxDD=136.1
+  first half (net)                     n=  871 win%= 36.6 avgR=-0.019 totalR=   -16.4 PF=0.97 maxDD=84.3
+  second half (net)                    n=  878 win%= 39.1 avgR=+0.051 totalR=   +44.6 PF=1.08 maxDD=63.6
+  LONG (net)                           n=0
+  SHORT (net)                          n= 1749 win%= 37.9 avgR=+0.016 totalR=   +28.2 PF=1.02 maxDD=84.3
+  year 2022 (net)                      n=   48 win%= 45.8 avgR=+0.313 totalR=   +15.0 PF=1.58 maxDD=6.3
+  year 2023 (net)                      n=  378 win%= 32.5 avgR=-0.163 totalR=   -61.7 PF=0.77 maxDD=70.5
+  year 2024 (net)                      n=  502 win%= 37.8 avgR=+0.031 totalR=   +15.7 PF=1.05 maxDD=45.3
+  year 2025 (net)                      n=  478 win%= 42.5 avgR=+0.161 totalR=   +76.8 PF=1.26 maxDD=44.7
+  year 2026 (net)                      n=  343 win%= 36.2 avgR=-0.051 totalR=   -17.6 PF=0.93 maxDD=63.6
+  days open per trade: mean 1.4 | median 0 | 90th pct 3 | max 5
+  trades per week: 8.39 | days with a new entry: 87%
+  open positions: mean 2.7 | max 13 | days with none open 18% | days at cap 5%
+  exits: SL=1056, TIME=111, TP=582
+  median risk 2.9% of price
+  longest time below equity peak (net): 752 days
+  profitable months (net, by exit): 24 of 48 | worst month -36.8R | best month +27.4R
+  at 0.5% risk per trade (not compounded): total +14% | max drawdown 42%
+  top 3 coins by net R: WIFUSDT +12, PEOPLEUSDT +11, XRPUSDT +11 | total +28
+  avgR net without those 3 coins: -0.003 (n=1635)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.087, +0.110], P(avgR>0)=0.63 (205 weeks)
+  (sensitivity only - not eligible for selection)
+
+============================================================
+LIM_A - SHORT, entry mode LIM_A (sensitivity only)
+  r_gross                              n= 1743 win%= 37.7 avgR=+0.084 totalR=  +146.2 PF=1.14 maxDD=51.6
+  r_net                                n= 1743 win%= 37.8 avgR=+0.050 totalR=   +86.8 PF=1.08 maxDD=63.6
+  r_stress                             n= 1743 win%= 37.7 avgR=+0.011 totalR=   +18.8 PF=1.02 maxDD=86.3
+  first half (net)                     n=  867 win%= 36.4 avgR=+0.011 totalR=    +9.5 PF=1.02 maxDD=63.6
+  second half (net)                    n=  876 win%= 39.0 avgR=+0.088 totalR=   +77.3 PF=1.14 maxDD=58.1
+  LONG (net)                           n=0
+  SHORT (net)                          n= 1743 win%= 37.8 avgR=+0.050 totalR=   +86.8 PF=1.08 maxDD=63.6
+  year 2022 (net)                      n=   47 win%= 44.7 avgR=+0.320 totalR=   +15.0 PF=1.60 maxDD=5.6
+  year 2023 (net)                      n=  374 win%= 32.6 avgR=-0.124 totalR=   -46.6 PF=0.82 maxDD=56.8
+  year 2024 (net)                      n=  503 win%= 37.6 avgR=+0.056 totalR=   +27.9 PF=1.09 maxDD=40.7
+  year 2025 (net)                      n=  476 win%= 42.4 avgR=+0.195 totalR=   +93.0 PF=1.33 maxDD=39.1
+  year 2026 (net)                      n=  343 win%= 36.2 avgR=-0.008 totalR=    -2.6 PF=0.99 maxDD=58.1
+  days open per trade: mean 1.4 | median 0 | 90th pct 3 | max 5
+  trades per week: 8.36 | days with a new entry: 86%
+  open positions: mean 2.7 | max 13 | days with none open 18% | days at cap 4%
+  exits: SL=1057, TIME=108, TP=578
+  median risk 2.9% of price
+  longest time below equity peak (net): 539 days
+  profitable months (net, by exit): 26 of 48 | worst month -34.3R | best month +30.3R
+  at 0.5% risk per trade (not compounded): total +43% | max drawdown 32%
+  top 3 coins by net R: XRPUSDT +13, WIFUSDT +13, PEOPLEUSDT +12 | total +87
+  avgR net without those 3 coins: +0.030 (n=1629)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.054, +0.145], P(avgR>0)=0.83 (205 weeks)
+  (sensitivity only - not eligible for selection)
+
+============================================================
+LIM_B - SHORT, entry mode LIM_B (sensitivity only)
+  r_gross                              n= 1344 win%= 35.9 avgR=+0.049 totalR=   +65.2 PF=1.08 maxDD=52.5
+  r_net                                n= 1344 win%= 35.9 avgR=+0.007 totalR=    +9.9 PF=1.01 maxDD=60.1
+  r_stress                             n= 1344 win%= 35.9 avgR=-0.040 totalR=   -53.6 PF=0.94 maxDD=76.6
+  first half (net)                     n=  672 win%= 37.4 avgR=+0.041 totalR=   +27.7 PF=1.06 maxDD=50.0
+  second half (net)                    n=  672 win%= 34.5 avgR=-0.027 totalR=   -17.8 PF=0.96 maxDD=60.1
+  LONG (net)                           n=0
+  SHORT (net)                          n= 1344 win%= 35.9 avgR=+0.007 totalR=    +9.9 PF=1.01 maxDD=60.1
+  year 2022 (net)                      n=   31 win%= 35.5 avgR=-0.097 totalR=    -3.0 PF=0.86 maxDD=9.8
+  year 2023 (net)                      n=  268 win%= 35.1 avgR=-0.038 totalR=   -10.2 PF=0.94 maxDD=36.9
+  year 2024 (net)                      n=  430 win%= 37.2 avgR=+0.059 totalR=   +25.4 PF=1.09 maxDD=22.1
+  year 2025 (net)                      n=  367 win%= 39.0 avgR=+0.108 totalR=   +39.5 PF=1.17 maxDD=30.5
+  year 2026 (net)                      n=  248 win%= 30.2 avgR=-0.169 totalR=   -41.8 PF=0.77 maxDD=60.1
+  days open per trade: mean 1.0 | median 0 | 90th pct 2 | max 5
+  trades per week: 6.44 | days with a new entry: 70%
+  open positions: mean 1.8 | max 13 | days with none open 29% | days at cap 2%
+  exits: SL=848, TIME=49, TP=447
+  median risk 2.3% of price
+  longest time below equity peak (net): 557 days
+  profitable months (net, by exit): 23 of 48 | worst month -28.3R | best month +25.1R
+  at 0.5% risk per trade (not compounded): total +5% | max drawdown 30%
+  top 3 coins by net R: ORDIUSDT +16, XRPUSDT +13, HBARUSDT +11 | total +10
+  avgR net without those 3 coins: -0.024 (n=1245)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.089, +0.104], P(avgR>0)=0.56 (202 weeks)
+  (sensitivity only - not eligible for selection)
+
+total run time: 126s
