@@ -1,0 +1,172 @@
+BRT-S SCREEN BACKTEST - break+retest with market-direction / no-chasing / stop-cap filters, 4h bars, Binance USDT-M perpetuals, real funding
+run at: 2026-11-21 05:16 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 875 from the download-site listing (TradFi names removed)
+selected: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, ZECUSDT, NOTUSDT, ADAUSDT, 1000PEPEUSDT, DOGEUSDT, RIVERUSDT, TRBUSDT, HYPEUSDT, IOUSDT, SUIUSDT, PEOPLEUSDT, BNBUSDT, TRUMPUSDT, GUNUSDT, NEARUSDT, WIFUSDT, ORDIUSDT, WLDUSDT, PARTIUSDT, AUCTIONUSDT, CYBERUSDT, UNIUSDT, MUBARAKUSDT, LISTAUSDT, PNUTUSDT, PERPUSDT, LTCUSDT, LINKUSDT, LSKUSDT, DASHUSDT, KAITOUSDT, NILUSDT, BCHUSDT, FARTCOINUSDT, ENAUSDT, AXSUSDT, HIFIUSDT, HIGHUSDT, AVAXUSDT, QNTUSDT, RAREUSDT, AKEUSDT, ARBUSDT, FRONTUSDT, TUTUSDT, 1000FLOKIUSDT, BLZUSDT, REDUSDT, MASKUSDT, MATICUSDT, ZKUSDT, JASMYUSDT, BBUSDT, ZROUSDT, AAVEUSDT, 1000RATSUSDT, UNFIUSDT, 1000SHIBUSDT, STORJUSDT, APEUSDT, PUMPUSDT, LAYERUSDT, FILUSDT, HBARUSDT, TAOUSDT, BMTUSDT
+costs: fee+slippage 0.20% round trip plus REAL funding while open; max 8 open positions
+filters (fixed in advance): REG = BTC 4h close vs EMA50 (short below, long above); EXT = move over 3.0 ATR in 6 bars in signal direction skipped; CAP = risk at most 6%
+Pass rule fixed before the run, applied to each variant: net avgR at least +0.10 AND PF at least 1.2 AND n at least 300 AND both halves net-positive.
+This is a SCREEN: five variants are tested, a pass of exactly one is weak evidence; the forward paper test stays the final judge.
+Known problems: top-70 liquid contracts, entry at the next bar open, 4h bars hide intrabar order (SL assumed first), news not in data.
+files found/requested: 4h klines 2588/3430 | funding 2577/3430
+symbols with usable data: 70 | BTC regime bars: 8752 | signals before the position cap: 4676
+
+SUMMARY (net R after 0.20% costs + real funding, one position per coin, max 8 open)
+  BASE   n= 3298 avgR=-0.049 PF=0.93 halves=-0.103/+0.005 LONG=-0.111 SHORT=+0.011 FAIL
+  REG    n= 2242 avgR=-0.036 PF=0.95 halves=-0.072/-0.000 LONG=-0.087 SHORT=+0.028 FAIL
+  EXT    n= 3220 avgR=-0.065 PF=0.91 halves=-0.105/-0.025 LONG=-0.135 SHORT=+0.003 FAIL
+  CAP    n= 3088 avgR=-0.059 PF=0.92 halves=-0.101/-0.016 LONG=-0.120 SHORT=+0.001 FAIL
+  ALL    n= 2016 avgR=-0.056 PF=0.92 halves=-0.068/-0.045 LONG=-0.086 SHORT=-0.019 FAIL
+
+DIAGNOSTIC - trades REJECTED by each filter (before the position cap; not eligible for selection)
+  rejected by REG (net)                n= 1667 win%= 33.7 avgR=-0.092 totalR=  -154.1 PF=0.87 maxDD=183.1
+    LONG rejected by REG               n=  651 win%= 29.2 avgR=-0.225 totalR=  -146.7 PF=0.70 maxDD=160.2
+    SHORT rejected by REG              n= 1016 win%= 36.6 avgR=-0.007 totalR=    -7.4 PF=0.99 maxDD=73.4
+  rejected by EXT (net)                n=  163 win%= 46.6 avgR=+0.271 totalR=   +44.2 PF=1.51 maxDD=7.9
+    LONG rejected by EXT               n=  104 win%= 46.2 avgR=+0.290 totalR=   +30.1 PF=1.53 maxDD=6.4
+    SHORT rejected by EXT              n=   59 win%= 47.5 avgR=+0.238 totalR=   +14.0 PF=1.46 maxDD=8.1
+  rejected by CAP (net)                n=  423 win%= 40.0 avgR=+0.053 totalR=   +22.4 PF=1.09 maxDD=18.1
+    LONG rejected by CAP               n=  222 win%= 34.7 avgR=-0.073 totalR=   -16.3 PF=0.89 maxDD=31.5
+    SHORT rejected by CAP              n=  201 win%= 45.8 avgR=+0.192 totalR=   +38.7 PF=1.38 maxDD=9.3
+  all candidates BASE (net)            n= 4676 win%= 34.9 avgR=-0.063 totalR=  -292.3 PF=0.91 maxDD=316.1
+
+============================================================
+BASE - break and retest, filter set BASE (eligible)
+  r_gross                              n= 3298 win%= 35.4 avgR=+0.030 totalR=   +99.8 PF=1.05 maxDD=92.5
+  r_net                                n= 3298 win%= 35.3 avgR=-0.049 totalR=  -161.3 PF=0.93 maxDD=202.7
+  r_stress                             n= 3298 win%= 35.2 avgR=-0.127 totalR=  -418.1 PF=0.83 maxDD=445.1
+  first half (net)                     n= 1647 win%= 33.7 avgR=-0.103 totalR=  -169.5 PF=0.85 maxDD=193.5
+  second half (net)                    n= 1651 win%= 36.9 avgR=+0.005 totalR=    +8.3 PF=1.01 maxDD=55.9
+  LONG (net)                           n= 1629 win%= 32.9 avgR=-0.111 totalR=  -180.4 PF=0.85 maxDD=210.4
+  SHORT (net)                          n= 1669 win%= 37.7 avgR=+0.011 totalR=   +19.1 PF=1.02 maxDD=85.3
+  year 2022 (net)                      n=   89 win%= 40.4 avgR=+0.133 totalR=   +11.9 PF=1.21 maxDD=9.7
+  year 2023 (net)                      n=  783 win%= 32.1 avgR=-0.169 totalR=  -132.1 PF=0.77 maxDD=141.4
+  year 2024 (net)                      n=  922 win%= 35.0 avgR=-0.042 totalR=   -38.4 PF=0.94 maxDD=64.2
+  year 2025 (net)                      n=  859 win%= 37.3 avgR=+0.021 totalR=   +17.7 PF=1.03 maxDD=34.8
+  year 2026 (net)                      n=  645 win%= 36.4 avgR=-0.031 totalR=   -20.2 PF=0.95 maxDD=55.9
+  days open per trade: mean 1.3 | median 0 | 90th pct 3 | max 5
+  trades per week: 15.80 | days with a new entry: 164%
+  open positions: mean 4.7 | max 15 | days with none open 4% | days at cap 20%
+  exits: SL=2079, TIME=159, TP=1060
+  median risk 2.9% of price
+  longest time below equity peak (net): 1373 days
+  profitable months (net, by exit): 18 of 48 | worst month -35.3R | best month +24.1R
+  at 0.5% risk per trade (not compounded): total -81% | max drawdown 101%
+  top 3 coins by net R: HBARUSDT +21, TRBUSDT +17, KAITOUSDT +17 | total -161
+  avgR net without those 3 coins: -0.069 (n=3133)
+  share of positive-week profit from the best 5 weeks: 17%
+  weekly-block bootstrap of net avgR: 95% CI [-0.108, +0.012], P(avgR>0)=0.07 (210 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+REG - break and retest, filter set REG (eligible)
+  r_gross                              n= 2242 win%= 36.0 avgR=+0.044 totalR=   +98.9 PF=1.07 maxDD=55.9
+  r_net                                n= 2242 win%= 35.9 avgR=-0.036 totalR=   -80.7 PF=0.95 maxDD=118.2
+  r_stress                             n= 2242 win%= 35.8 avgR=-0.113 totalR=  -252.9 PF=0.84 maxDD=267.7
+  first half (net)                     n= 1121 win%= 34.8 avgR=-0.072 totalR=   -80.5 PF=0.90 maxDD=101.4
+  second half (net)                    n= 1121 win%= 36.9 avgR=-0.000 totalR=    -0.2 PF=1.00 maxDD=55.5
+  LONG (net)                           n= 1248 win%= 33.7 avgR=-0.087 totalR=  -108.9 PF=0.88 maxDD=135.9
+  SHORT (net)                          n=  994 win%= 38.5 avgR=+0.028 totalR=   +28.2 PF=1.04 maxDD=51.5
+  year 2022 (net)                      n=   58 win%= 34.5 avgR=-0.077 totalR=    -4.5 PF=0.89 maxDD=15.3
+  year 2023 (net)                      n=  538 win%= 34.4 avgR=-0.086 totalR=   -46.4 PF=0.88 maxDD=81.5
+  year 2024 (net)                      n=  639 win%= 35.4 avgR=-0.041 totalR=   -25.9 PF=0.94 maxDD=63.8
+  year 2025 (net)                      n=  570 win%= 37.9 avgR=+0.039 totalR=   +22.1 PF=1.06 maxDD=28.3
+  year 2026 (net)                      n=  437 win%= 35.9 avgR=-0.059 totalR=   -26.0 PF=0.91 maxDD=55.5
+  days open per trade: mean 1.3 | median 0 | 90th pct 3 | max 5
+  trades per week: 10.76 | days with a new entry: 111%
+  open positions: mean 3.4 | max 13 | days with none open 9% | days at cap 8%
+  exits: SL=1394, TIME=121, TP=727
+  median risk 2.9% of price
+  longest time below equity peak (net): 1326 days
+  profitable months (net, by exit): 22 of 48 | worst month -24.3R | best month +28.0R
+  at 0.5% risk per trade (not compounded): total -40% | max drawdown 59%
+  top 3 coins by net R: HBARUSDT +10, BTCUSDT +10, UNIUSDT +10 | total -81
+  avgR net without those 3 coins: -0.054 (n=2032)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.122, +0.052], P(avgR>0)=0.20 (209 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+EXT - break and retest, filter set EXT (eligible)
+  r_gross                              n= 3220 win%= 34.8 avgR=+0.015 totalR=   +48.8 PF=1.02 maxDD=93.5
+  r_net                                n= 3220 win%= 34.8 avgR=-0.065 totalR=  -209.2 PF=0.91 maxDD=245.8
+  r_stress                             n= 3220 win%= 34.7 avgR=-0.144 totalR=  -463.3 PF=0.81 maxDD=487.7
+  first half (net)                     n= 1609 win%= 33.6 avgR=-0.105 totalR=  -168.8 PF=0.85 maxDD=197.7
+  second half (net)                    n= 1611 win%= 35.9 avgR=-0.025 totalR=   -40.4 PF=0.96 maxDD=75.0
+  LONG (net)                           n= 1580 win%= 32.1 avgR=-0.135 totalR=  -213.9 PF=0.81 maxDD=233.4
+  SHORT (net)                          n= 1640 win%= 37.3 avgR=+0.003 totalR=    +4.7 PF=1.00 maxDD=85.8
+  year 2022 (net)                      n=   83 win%= 42.2 avgR=+0.161 totalR=   +13.3 PF=1.26 maxDD=8.5
+  year 2023 (net)                      n=  772 win%= 31.9 avgR=-0.175 totalR=  -135.4 PF=0.76 maxDD=144.1
+  year 2024 (net)                      n=  913 win%= 34.5 avgR=-0.054 totalR=   -49.6 PF=0.92 maxDD=68.3
+  year 2025 (net)                      n=  818 win%= 36.6 avgR=+0.001 totalR=    +0.5 PF=1.00 maxDD=45.8
+  year 2026 (net)                      n=  634 win%= 35.3 avgR=-0.060 totalR=   -38.0 PF=0.91 maxDD=65.0
+  days open per trade: mean 1.2 | median 0 | 90th pct 3 | max 5
+  trades per week: 15.43 | days with a new entry: 161%
+  open positions: mean 4.6 | max 15 | days with none open 5% | days at cap 18%
+  exits: SL=2054, TIME=142, TP=1024
+  median risk 2.8% of price
+  longest time below equity peak (net): 1373 days
+  profitable months (net, by exit): 16 of 48 | worst month -34.7R | best month +28.3R
+  at 0.5% risk per trade (not compounded): total -105% | max drawdown 123%
+  top 3 coins by net R: HBARUSDT +19, TRBUSDT +14, UNFIUSDT +14 | total -209
+  avgR net without those 3 coins: -0.085 (n=3023)
+  share of positive-week profit from the best 5 weeks: 17%
+  weekly-block bootstrap of net avgR: 95% CI [-0.124, -0.004], P(avgR>0)=0.02 (210 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+CAP - break and retest, filter set CAP (eligible)
+  r_gross                              n= 3088 win%= 34.9 avgR=+0.025 totalR=   +78.6 PF=1.04 maxDD=94.1
+  r_net                                n= 3088 win%= 34.8 avgR=-0.059 totalR=  -180.9 PF=0.92 maxDD=215.1
+  r_stress                             n= 3088 win%= 34.7 avgR=-0.141 totalR=  -436.9 PF=0.81 maxDD=458.7
+  first half (net)                     n= 1544 win%= 33.7 avgR=-0.101 totalR=  -155.9 PF=0.86 maxDD=186.3
+  second half (net)                    n= 1544 win%= 36.0 avgR=-0.016 totalR=   -25.0 PF=0.98 maxDD=65.7
+  LONG (net)                           n= 1514 win%= 32.5 avgR=-0.120 totalR=  -182.2 PF=0.83 maxDD=204.3
+  SHORT (net)                          n= 1574 win%= 37.1 avgR=+0.001 totalR=    +1.3 PF=1.00 maxDD=79.0
+  year 2022 (net)                      n=   81 win%= 42.0 avgR=+0.162 totalR=   +13.2 PF=1.26 maxDD=9.7
+  year 2023 (net)                      n=  760 win%= 31.2 avgR=-0.188 totalR=  -142.6 PF=0.75 maxDD=149.3
+  year 2024 (net)                      n=  850 win%= 35.2 avgR=-0.037 totalR=   -31.7 PF=0.95 maxDD=49.5
+  year 2025 (net)                      n=  773 win%= 37.1 avgR=+0.022 totalR=   +16.7 PF=1.03 maxDD=34.1
+  year 2026 (net)                      n=  624 win%= 35.1 avgR=-0.059 totalR=   -36.5 PF=0.92 maxDD=65.7
+  days open per trade: mean 1.2 | median 0 | 90th pct 2 | max 5
+  trades per week: 14.80 | days with a new entry: 155%
+  open positions: mean 4.2 | max 15 | days with none open 7% | days at cap 15%
+  exits: SL=1979, TIME=99, TP=1010
+  median risk 2.7% of price
+  longest time below equity peak (net): 1373 days
+  profitable months (net, by exit): 18 of 48 | worst month -36.2R | best month +19.3R
+  at 0.5% risk per trade (not compounded): total -90% | max drawdown 108%
+  top 3 coins by net R: HBARUSDT +18, ENAUSDT +13, KAITOUSDT +13 | total -181
+  avgR net without those 3 coins: -0.077 (n=2940)
+  share of positive-week profit from the best 5 weeks: 16%
+  weekly-block bootstrap of net avgR: 95% CI [-0.121, +0.004], P(avgR>0)=0.03 (208 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+ALL - break and retest, filter set ALL (eligible)
+  r_gross                              n= 2016 win%= 35.2 avgR=+0.029 totalR=   +58.8 PF=1.05 maxDD=51.6
+  r_net                                n= 2016 win%= 35.1 avgR=-0.056 totalR=  -113.2 PF=0.92 maxDD=131.1
+  r_stress                             n= 2016 win%= 35.0 avgR=-0.138 totalR=  -279.1 PF=0.81 maxDD=292.8
+  first half (net)                     n= 1008 win%= 35.0 avgR=-0.068 totalR=   -68.3 PF=0.90 maxDD=88.8
+  second half (net)                    n= 1008 win%= 35.2 avgR=-0.045 totalR=   -45.0 PF=0.94 maxDD=66.4
+  LONG (net)                           n= 1124 win%= 33.8 avgR=-0.086 totalR=   -96.6 PF=0.88 maxDD=126.6
+  SHORT (net)                          n=  892 win%= 36.8 avgR=-0.019 totalR=   -16.6 PF=0.97 maxDD=52.1
+  year 2022 (net)                      n=   50 win%= 38.0 avgR=-0.019 totalR=    -0.9 PF=0.97 maxDD=14.1
+  year 2023 (net)                      n=  503 win%= 34.4 avgR=-0.088 totalR=   -44.1 PF=0.87 maxDD=77.8
+  year 2024 (net)                      n=  570 win%= 35.3 avgR=-0.043 totalR=   -24.6 PF=0.94 maxDD=52.2
+  year 2025 (net)                      n=  486 win%= 36.4 avgR=-0.001 totalR=    -0.7 PF=1.00 maxDD=31.6
+  year 2026 (net)                      n=  407 win%= 33.9 avgR=-0.105 totalR=   -42.9 PF=0.85 maxDD=61.4
+  days open per trade: mean 1.2 | median 0 | 90th pct 2 | max 5
+  trades per week: 9.68 | days with a new entry: 102%
+  open positions: mean 2.9 | max 13 | days with none open 14% | days at cap 5%
+  exits: SL=1284, TIME=74, TP=658
+  median risk 2.7% of price
+  longest time below equity peak (net): 1326 days
+  profitable months (net, by exit): 18 of 48 | worst month -22.6R | best month +23.5R
+  at 0.5% risk per trade (not compounded): total -57% | max drawdown 66%
+  top 3 coins by net R: HBARUSDT +12, SOLUSDT +10, BTCUSDT +9 | total -113
+  avgR net without those 3 coins: -0.079 (n=1837)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.143, +0.031], P(avgR>0)=0.11 (206 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+total run time: 138s
