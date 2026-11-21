@@ -1,0 +1,74 @@
+MOMENTUM BREAKOUT SCREEN - 4h bars, Binance USDT-M perpetuals, real funding, long and short
+run at: 2026-11-21 06:45 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 875 from the download-site listing (TradFi names removed)
+rule (fixed in advance): close beyond the 30-bar extreme, body at least 0.8 ATR, entry next open, stop 2.0 ATR, target 2.0R, hold 30 bars, risk 1%-12%
+variants: BRK = no filter; BRK_REG = BTC 4h close vs EMA50 (short below, long above)
+Pass rule fixed before the run: net avgR at least +0.10 AND PF at least 1.2 AND n at least 300 AND both halves net-positive. Two variants only.
+This is a SCREEN, the forward paper test stays the final judge.
+files found/requested: 4h klines 2588/3430 | funding 2577/3430
+symbols with usable data: 70 | BTC regime bars: 8752 | signals before the position cap: 12689
+
+SUMMARY (net R after 0.20% costs + real funding, one position per coin, max 8 open)
+  BRK      n= 3988 avgR=+0.028 PF=1.05 halves=+0.066/-0.011 LONG=+0.007 SHORT=+0.057 FAIL
+  BRK_REG  n= 3505 avgR=+0.052 PF=1.09 halves=+0.092/+0.011 LONG=+0.022 SHORT=+0.095 FAIL
+
+  all candidates (net, before cap)     n=12689 win%= 40.0 avgR=+0.035 totalR=  +438.7 PF=1.06 maxDD=130.7
+  rejected by REG (net, diagnostic only) n= 1355 win%= 37.7 avgR=-0.033 totalR=   -44.8 PF=0.95 maxDD=57.5
+
+============================================================
+BRK - momentum breakout, variant BRK (eligible)
+  r_gross                              n= 3988 win%= 39.7 avgR=+0.068 totalR=  +270.0 PF=1.12 maxDD=76.6
+  r_net                                n= 3988 win%= 39.4 avgR=+0.028 totalR=  +109.9 PF=1.05 maxDD=86.1
+  r_stress                             n= 3988 win%= 39.0 avgR=-0.011 totalR=   -44.4 PF=0.98 maxDD=130.3
+  first half (net)                     n= 1994 win%= 40.4 avgR=+0.066 totalR=  +131.3 PF=1.11 maxDD=62.6
+  second half (net)                    n= 1994 win%= 38.5 avgR=-0.011 totalR=   -21.4 PF=0.98 maxDD=86.1
+  LONG (net)                           n= 2353 win%= 36.9 avgR=+0.007 totalR=   +17.3 PF=1.01 maxDD=86.8
+  SHORT (net)                          n= 1635 win%= 43.1 avgR=+0.057 totalR=   +92.6 PF=1.11 maxDD=69.7
+  year 2022 (net)                      n=  141 win%= 41.1 avgR=+0.032 totalR=    +4.5 PF=1.06 maxDD=15.0
+  year 2023 (net)                      n= 1002 win%= 39.3 avgR=+0.049 totalR=   +49.2 PF=1.08 maxDD=62.6
+  year 2024 (net)                      n= 1032 win%= 40.8 avgR=+0.080 totalR=   +82.8 PF=1.14 maxDD=29.3
+  year 2025 (net)                      n=  974 win%= 38.0 avgR=-0.002 totalR=    -1.7 PF=1.00 maxDD=44.9
+  year 2026 (net)                      n=  839 win%= 39.3 avgR=-0.030 totalR=   -25.0 PF=0.95 maxDD=86.1
+  days open per trade: mean 2.3 | median 1 | 90th pct 5 | max 5
+  trades per week: 19.15 | days with a new entry: 163%
+  open positions: mean 8.5 | max 20 | days with none open 0% | days at cap 74%
+  exits: SL=2170, TIME=725, TP=1093
+  median risk 6.0% of price
+  longest time below equity peak (net): 285 days
+  profitable months (net, by exit): 25 of 48 | worst month -50.9R | best month +36.0R
+  at 0.5% risk per trade (not compounded): total +55% | max drawdown 43%
+  top 3 coins by net R: APEUSDT +28, ADAUSDT +21, TRBUSDT +20 | total +110
+  avgR net without those 3 coins: +0.011 (n=3725)
+  share of positive-week profit from the best 5 weeks: 16%
+  weekly-block bootstrap of net avgR: 95% CI [-0.038, +0.091], P(avgR>0)=0.80 (209 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+BRK_REG - momentum breakout, variant BRK_REG (eligible)
+  r_gross                              n= 3505 win%= 40.8 avgR=+0.094 totalR=  +330.2 PF=1.17 maxDD=71.5
+  r_net                                n= 3505 win%= 40.3 avgR=+0.052 totalR=  +181.2 PF=1.09 maxDD=90.8
+  r_stress                             n= 3505 win%= 39.9 avgR=+0.012 totalR=   +41.4 PF=1.02 maxDD=119.7
+  first half (net)                     n= 1751 win%= 41.5 avgR=+0.092 totalR=  +161.1 PF=1.16 maxDD=58.4
+  second half (net)                    n= 1754 win%= 39.1 avgR=+0.011 totalR=   +20.2 PF=1.02 maxDD=90.8
+  LONG (net)                           n= 2081 win%= 37.5 avgR=+0.022 totalR=   +45.8 PF=1.04 maxDD=96.6
+  SHORT (net)                          n= 1424 win%= 44.3 avgR=+0.095 totalR=  +135.4 PF=1.18 maxDD=56.2
+  year 2022 (net)                      n=  127 win%= 40.9 avgR=-0.004 totalR=    -0.5 PF=0.99 maxDD=21.8
+  year 2023 (net)                      n=  861 win%= 40.4 avgR=+0.075 totalR=   +64.2 PF=1.13 maxDD=50.0
+  year 2024 (net)                      n=  924 win%= 42.2 avgR=+0.121 totalR=  +111.9 PF=1.22 maxDD=24.5
+  year 2025 (net)                      n=  865 win%= 38.8 avgR=+0.020 totalR=   +17.1 PF=1.03 maxDD=48.7
+  year 2026 (net)                      n=  728 win%= 39.3 avgR=-0.016 totalR=   -11.5 PF=0.97 maxDD=90.8
+  days open per trade: mean 2.3 | median 1 | 90th pct 5 | max 5
+  trades per week: 16.83 | days with a new entry: 130%
+  open positions: mean 7.7 | max 19 | days with none open 2% | days at cap 63%
+  exits: SL=1884, TIME=633, TP=988
+  median risk 5.8% of price
+  longest time below equity peak (net): 267 days
+  profitable months (net, by exit): 29 of 48 | worst month -43.1R | best month +34.1R
+  at 0.5% risk per trade (not compounded): total +91% | max drawdown 45%
+  top 3 coins by net R: APEUSDT +24, SOLUSDT +23, ZECUSDT +21 | total +181
+  avgR net without those 3 coins: +0.035 (n=3245)
+  share of positive-week profit from the best 5 weeks: 15%
+  weekly-block bootstrap of net avgR: 95% CI [-0.027, +0.130], P(avgR>0)=0.90 (209 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+total run time: 114s
