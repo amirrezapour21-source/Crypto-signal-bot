@@ -1,7 +1,6 @@
-"""BRT-S, SHORT only. Runs the unchanged engine crypto_signal_bot_brt_short_v1.py with every LONG setup switched off.
-Decision 2026-11-21: LONG was net-negative in every backtest slice (4 years, 70 coins, both halves). SHORT logic, state file, messages: unchanged."""
 import crypto_signal_bot_brt_short_v1 as E
 
+# ---- LONG off (SHORT only) ----
 _orig_setup_at = E.setup_at
 
 
@@ -13,6 +12,27 @@ def setup_at_short_only(d, i):
 
 
 E.setup_at = setup_at_short_only
+
+# ---- extra symbols (unknown on KuCoin = skipped automatically) ----
+MORE_SYMS = [
+    "GRAMUSDTM", "LDOUSDTM", "CRVUSDTM", "MKRUSDTM", "SANDUSDTM",
+    "MANAUSDTM", "AXSUSDTM", "GALAUSDTM", "APEUSDTM", "DYDXUSDTM",
+    "STXUSDTM", "IMXUSDTM", "FETUSDTM", "RENDERUSDTM", "GRTUSDTM",
+    "SNXUSDTM", "COMPUSDTM", "1INCHUSDTM", "CHZUSDTM", "EOSUSDTM",
+    "THETAUSDTM", "NEOUSDTM", "KAVAUSDTM", "ZILUSDTM", "ENJUSDTM",
+    "BLURUSDTM", "PYTHUSDTM", "JTOUSDTM", "STRKUSDTM", "ONDOUSDTM",
+    "WUSDTM", "ETHFIUSDTM", "AEVOUSDTM", "NOTUSDTM", "POPCATUSDTM",
+    "BONKUSDTM", "SHIBUSDTM", "CAKEUSDTM", "JASMYUSDTM", "GMTUSDTM",
+    "ROSEUSDTM", "QNTUSDTM", "EGLDUSDTM", "SUSHIUSDTM", "CFXUSDTM",
+    "KASUSDTM", "TRBUSDTM", "ZROUSDTM", "IOUSDTM", "BOMEUSDTM",
+    "MOODENGUSDTM", "GOATUSDTM", "VIRTUALUSDTM", "MEMEUSDTM",
+    "SUSDTM", "AIXBTUSDTM",
+]
+
+for _s in MORE_SYMS:
+    if _s not in E.SYMS:
+        E.EXTRA_SYMS.append(_s)
+        E.SYMS.append(_s)
 
 if __name__ == "__main__":
     E.main()
