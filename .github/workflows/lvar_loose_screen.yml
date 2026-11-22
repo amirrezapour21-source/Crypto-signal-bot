@@ -1,0 +1,60 @@
+name: LVAR Loose Screen
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lvar-loose-screen
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pandas numpy
+
+      - name: Self-test A
+        run: python lvar_loose_screen.py A --selftest
+
+      - name: Self-test B
+        run: python lvar_loose_screen.py B --selftest
+
+      - name: Self-test C
+        run: python lvar_loose_screen.py C --selftest
+
+      - name: Run variant A
+        run: python lvar_loose_screen.py A
+
+      - name: Run variant B
+        if: always()
+        run: python lvar_loose_screen.py B
+
+      - name: Run variant C
+        if: always()
+        run: python lvar_loose_screen.py C
+
+      - name: Commit results
+        if: always()
+        run: |
+          git config user.name "signal-bot"
+          git config user.email "signal-bot@users.noreply.github.com"
+          git add lvar_loose_*_result.txt lvar_loose_*_trades.csv || true
+          git commit -m "LVAR loosening screen results" || exit 0
+          for i in 1 2 3 4 5 6; do
+            git pull --rebase origin main && git push origin main && exit 0
+            sleep $((RANDOM % 8 + 3))
+          done
+          exit 1
