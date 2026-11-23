@@ -1,0 +1,95 @@
+BRT-S EXIT SCREEN variant HALF (R2 live, BE breakeven at +1R, HALF half off at +1R, TRAIL 3 ATR trailing) - same entries, only the exit differs, 4h bars, Binance USDT-M perpetuals, real funding
+run at: 2026-11-23 06:10 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 875 from the download-site listing (TradFi names removed)
+selected: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, ZECUSDT, NOTUSDT, ADAUSDT, 1000PEPEUSDT, DOGEUSDT, RIVERUSDT, TRBUSDT, HYPEUSDT, IOUSDT, SUIUSDT, PEOPLEUSDT, BNBUSDT, TRUMPUSDT, GUNUSDT, NEARUSDT, WIFUSDT, ORDIUSDT, WLDUSDT, PARTIUSDT, AUCTIONUSDT, CYBERUSDT, UNIUSDT, MUBARAKUSDT, LISTAUSDT, PNUTUSDT, PERPUSDT, LTCUSDT, LINKUSDT, LSKUSDT, DASHUSDT, KAITOUSDT, NILUSDT, BCHUSDT, FARTCOINUSDT, ENAUSDT, AXSUSDT, HIFIUSDT, HIGHUSDT, AVAXUSDT, QNTUSDT, RAREUSDT, AKEUSDT, ARBUSDT, FRONTUSDT, TUTUSDT, 1000FLOKIUSDT, BLZUSDT, REDUSDT, MASKUSDT, MATICUSDT, ZKUSDT, JASMYUSDT, BBUSDT, ZROUSDT, AAVEUSDT, 1000RATSUSDT, UNFIUSDT, 1000SHIBUSDT, STORJUSDT, APEUSDT, PUMPUSDT, LAYERUSDT, FILUSDT, HBARUSDT, TAOUSDT, BMTUSDT
+costs: fee+slippage 0.20% round trip plus REAL funding while open; max 8 open positions
+filters (fixed in advance): REG = BTC 4h close vs EMA50 (short below, long above); EXT = move over 3.0 ATR in 6 bars in signal direction skipped; CAP = risk at most 6%
+Pass rule fixed before the run, applied to each variant: net avgR at least +0.10 AND PF at least 1.2 AND n at least 300 AND both halves net-positive.
+This is a SCREEN: five variants are tested, a pass of exactly one is weak evidence; the forward paper test stays the final judge.
+Known problems: top-70 liquid contracts, entry at the next bar open, 4h bars hide intrabar order (SL assumed first), news not in data.
+files found/requested: 4h klines 2588/3430 | funding 2577/3430
+symbols with usable data: 70 | BTC regime bars: 8752 | signals before the position cap: 4683
+
+SUMMARY (net R after 0.20% costs + real funding, one position per coin, max 8 open)
+  BASE   n= 3489 avgR=-0.077 PF=0.86 halves=-0.118/-0.035 LONG=-0.147 SHORT=-0.008 FAIL
+  SHORT  n= 1823 avgR=-0.005 PF=0.99 halves=-0.021/+0.011 LONG=+nan SHORT=-0.005 FAIL
+
+DIAGNOSTIC - trades REJECTED by each filter (before the position cap; not eligible for selection)
+  rejected by REG (net)                n= 1667 win%= 47.4 avgR=-0.122 totalR=  -202.7 PF=0.78 maxDD=222.5
+    LONG rejected by REG               n=  651 win%= 42.9 avgR=-0.230 totalR=  -149.8 PF=0.63 maxDD=159.5
+    SHORT rejected by REG              n= 1016 win%= 50.3 avgR=-0.052 totalR=   -52.9 PF=0.90 maxDD=84.2
+  rejected by EXT (net)                n=  163 win%= 59.5 avgR=+0.167 totalR=   +27.3 PF=1.41 maxDD=7.7
+    LONG rejected by EXT               n=  104 win%= 61.5 avgR=+0.196 totalR=   +20.4 PF=1.50 maxDD=4.6
+    SHORT rejected by EXT              n=   59 win%= 55.9 avgR=+0.117 totalR=    +6.9 PF=1.27 maxDD=10.1
+  rejected by CAP (net)                n=  424 win%= 53.1 avgR=+0.046 totalR=   +19.4 PF=1.10 maxDD=17.1
+    LONG rejected by CAP               n=  222 win%= 48.2 avgR=-0.065 totalR=   -14.4 PF=0.87 maxDD=28.9
+    SHORT rejected by CAP              n=  202 win%= 58.4 avgR=+0.167 totalR=   +33.8 PF=1.43 maxDD=9.3
+  all candidates BASE (net)            n= 4683 win%= 50.1 avgR=-0.077 totalR=  -362.6 PF=0.85 maxDD=372.7
+
+============================================================
+BASE - break and retest, filter set BASE (eligible)
+  r_gross                              n= 3489 win%= 50.3 avgR=+0.003 totalR=   +10.6 PF=1.01 maxDD=101.0
+  r_net                                n= 3489 win%= 50.2 avgR=-0.077 totalR=  -267.2 PF=0.86 maxDD=284.6
+  r_stress                             n= 3489 win%= 50.1 avgR=-0.155 totalR=  -540.4 PF=0.73 maxDD=551.3
+  first half (net)                     n= 1744 win%= 49.1 avgR=-0.118 totalR=  -205.4 PF=0.78 maxDD=213.4
+  second half (net)                    n= 1745 win%= 51.2 avgR=-0.035 totalR=   -61.8 PF=0.93 maxDD=95.7
+  LONG (net)                           n= 1715 win%= 47.2 avgR=-0.147 totalR=  -252.5 PF=0.74 maxDD=264.6
+  SHORT (net)                          n= 1774 win%= 53.1 avgR=-0.008 totalR=   -14.7 PF=0.98 maxDD=80.0
+  year 2022 (net)                      n=   95 win%= 53.7 avgR=+0.024 totalR=    +2.3 PF=1.05 maxDD=9.8
+  year 2023 (net)                      n=  826 win%= 48.1 avgR=-0.165 totalR=  -136.3 PF=0.71 maxDD=140.9
+  year 2024 (net)                      n=  978 win%= 49.8 avgR=-0.081 totalR=   -79.2 PF=0.85 maxDD=80.3
+  year 2025 (net)                      n=  898 win%= 51.3 avgR=-0.011 totalR=   -10.1 PF=0.98 maxDD=48.0
+  year 2026 (net)                      n=  692 win%= 51.3 avgR=-0.064 totalR=   -44.0 PF=0.88 maxDD=62.7
+  days open per trade: mean 1.0 | median 0 | 90th pct 2 | max 5
+  trades per week: 16.72 | days with a new entry: 170%
+  open positions: mean 4.4 | max 16 | days with none open 5% | days at cap 16%
+  exits: SL=2531, TIME=81, TP=877
+  median risk 2.9% of price
+  longest time below equity peak (net): 1373 days
+  profitable months (net, by exit): 15 of 48 | worst month -35.0R | best month +14.9R
+  at 0.5% risk per trade (not compounded): total -134% | max drawdown 142%
+  top 3 coins by net R: HBARUSDT +11, KAITOUSDT +11, TRBUSDT +7 | total -267
+  avgR net without those 3 coins: -0.089 (n=3313)
+  share of positive-week profit from the best 5 weeks: 18%
+  weekly-block bootstrap of net avgR: 95% CI [-0.118, -0.033], P(avgR>0)=0.00 (210 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+SHORT - break and retest, filter set SHORT (eligible)
+  r_gross                              n= 1823 win%= 53.3 avgR=+0.069 totalR=  +126.6 PF=1.15 maxDD=41.2
+  r_net                                n= 1823 win%= 53.3 avgR=-0.005 totalR=    -9.2 PF=0.99 maxDD=78.1
+  r_stress                             n= 1823 win%= 53.1 avgR=-0.083 totalR=  -151.1 PF=0.84 maxDD=170.2
+  first half (net)                     n=  910 win%= 53.2 avgR=-0.021 totalR=   -19.0 PF=0.96 maxDD=78.1
+  second half (net)                    n=  913 win%= 53.3 avgR=+0.011 totalR=    +9.8 PF=1.02 maxDD=52.1
+  LONG (net)                           n=0
+  SHORT (net)                          n= 1823 win%= 53.3 avgR=-0.005 totalR=    -9.2 PF=0.99 maxDD=78.1
+  year 2022 (net)                      n=   50 win%= 56.0 avgR=+0.153 totalR=    +7.7 PF=1.36 maxDD=6.1
+  year 2023 (net)                      n=  388 win%= 52.3 avgR=-0.100 totalR=   -38.8 PF=0.80 maxDD=51.9
+  year 2024 (net)                      n=  523 win%= 52.6 avgR=-0.001 totalR=    -0.7 PF=1.00 maxDD=28.4
+  year 2025 (net)                      n=  497 win%= 55.9 avgR=+0.089 totalR=   +44.4 PF=1.19 maxDD=31.8
+  year 2026 (net)                      n=  365 win%= 51.2 avgR=-0.059 totalR=   -21.7 PF=0.89 maxDD=52.1
+  days open per trade: mean 1.1 | median 0 | 90th pct 2 | max 5
+  trades per week: 8.73 | days with a new entry: 89%
+  open positions: mean 2.4 | max 12 | days with none open 21% | days at cap 4%
+  exits: SL=1276, TIME=55, TP=492
+  median risk 2.9% of price
+  longest time below equity peak (net): 819 days
+  profitable months (net, by exit): 23 of 48 | worst month -35.7R | best month +16.9R
+  at 0.5% risk per trade (not compounded): total -5% | max drawdown 39%
+  top 3 coins by net R: XRPUSDT +9, PEOPLEUSDT +8, 1000FLOKIUSDT +7 | total -9
+  avgR net without those 3 coins: -0.019 (n=1713)
+  share of positive-week profit from the best 5 weeks: 17%
+  weekly-block bootstrap of net avgR: 95% CI [-0.078, +0.069], P(avgR>0)=0.44 (206 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+
+GIVE-BACK ANALYSIS (taken trades, mfe = best unrealised profit in R before the exit)
+  touched +0.5R: 1288 of 1823 trades (71%) | of those ended in SL: 743 (58%) | avg final net R +0.437
+  touched +1.0R: 983 of 1823 trades (54%) | of those ended in SL: 460 (47%) | avg final net R +0.885
+  touched +1.5R: 670 of 1823 trades (37%) | of those ended in SL: 159 (24%) | avg final net R +1.140
+
+GIVE-BACK ANALYSIS (taken trades, mfe = best unrealised profit in R before the exit)
+  touched +0.5R: 2386 of 3489 trades (68%) | of those ended in SL: 1433 (60%) | avg final net R +0.384
+  touched +1.0R: 1774 of 3489 trades (51%) | of those ended in SL: 855 (48%) | avg final net R +0.871
+  touched +1.5R: 1196 of 3489 trades (34%) | of those ended in SL: 295 (25%) | avg final net R +1.128
+total run time: 136s
