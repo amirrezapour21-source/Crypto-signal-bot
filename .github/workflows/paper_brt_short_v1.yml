@@ -39,6 +39,10 @@ jobs:
             echo "TRAIL_STATE_MISSING_BUT_IN_HISTORY"
             exit 1
           fi
+          if [ -n "$(git log --oneline -1 -- brt_trail_long_state.json)" ] && [ ! -f brt_trail_long_state.json ]; then
+            echo "TRAIL_LONG_STATE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
 
       - name: Run BRT-S
         id: run
@@ -56,12 +60,21 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python brt_trail_short.py
 
+      - name: Run BRT-S TRAIL LONG (paper, bullish regime only, separate state)
+        id: trail_long
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python brt_trail_long.py
+
       - name: Save paper state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add brt_paper_state.json
           if [ -f brt_trail_state.json ]; then git add brt_trail_state.json; fi
+          if [ -f brt_trail_long_state.json ]; then git add brt_trail_long_state.json; fi
           if ! git diff --cached --quiet; then
             git commit -m "Update BRT-S paper state"
             ok=0
