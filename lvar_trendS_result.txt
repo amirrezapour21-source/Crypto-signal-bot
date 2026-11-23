@@ -1,0 +1,73 @@
+SHORT TREND-PULLBACK SCREEN - downtrend (close<EMA50<EMA200), bounce to EMA20, red close below EMA20, trailing stop 3 ATR, 4h bars, Binance USDT-M perpetuals, real funding
+run at: 2026-11-23 00:56 UTC | period: 2022-11-01 -> 2026-11-01
+symbols: 70 selected out of 875 from the download-site listing (TradFi names removed)
+selected: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, ZECUSDT, NOTUSDT, ADAUSDT, 1000PEPEUSDT, DOGEUSDT, RIVERUSDT, TRBUSDT, HYPEUSDT, IOUSDT, SUIUSDT, PEOPLEUSDT, BNBUSDT, TRUMPUSDT, GUNUSDT, NEARUSDT, WIFUSDT, ORDIUSDT, WLDUSDT, PARTIUSDT, AUCTIONUSDT, CYBERUSDT, UNIUSDT, MUBARAKUSDT, LISTAUSDT, PNUTUSDT, PERPUSDT, LTCUSDT, LINKUSDT, LSKUSDT, DASHUSDT, KAITOUSDT, NILUSDT, BCHUSDT, FARTCOINUSDT, ENAUSDT, AXSUSDT, HIFIUSDT, HIGHUSDT, AVAXUSDT, QNTUSDT, RAREUSDT, AKEUSDT, ARBUSDT, FRONTUSDT, TUTUSDT, 1000FLOKIUSDT, BLZUSDT, REDUSDT, MASKUSDT, MATICUSDT, ZKUSDT, JASMYUSDT, BBUSDT, ZROUSDT, AAVEUSDT, 1000RATSUSDT, UNFIUSDT, 1000SHIBUSDT, STORJUSDT, APEUSDT, PUMPUSDT, LAYERUSDT, FILUSDT, HBARUSDT, TAOUSDT, BMTUSDT
+costs: fee+slippage 0.20% round trip plus REAL funding while open; max 8 open positions
+rule (fixed in advance, mirror of the long rule): TREND close<EMA50<EMA200; DIP high of last 3 bars >= EMA20; TRIGGER red close below EMA20; stop = 5-bar high + 0.25 ATR (risk 1%-12%); TRAIL = lowest low + 3 ATR, 60 bars max; TP2R = fixed 2R variant
+Pass rule fixed before the run, applied to each variant: net avgR at least +0.10 AND PF at least 1.2 AND n at least 300 AND both halves net-positive.
+This is a SCREEN: two variants are tested, a pass of exactly one is weak evidence; the forward paper test stays the final judge.
+Known problems: top-70 liquid contracts, entry at the next bar open, 4h bars hide intrabar order (stop assumed hit first), short only, news not in data.
+files found/requested: 4h klines 2588/3430 | funding 2577/3430
+symbols with usable data: 70 | BTC regime bars: 8752 | signals before the position cap: 63665
+
+SUMMARY (net R after 0.20% costs + real funding, one position per coin, max 8 open)
+  TRAIL  n= 2827 avgR=+0.057 PF=1.10 halves=-0.002/+0.116 LONG=+nan SHORT=+0.057 FAIL
+  TP2R   n= 3241 avgR=+0.047 PF=1.08 halves=+0.034/+0.059 LONG=+nan SHORT=+0.047 FAIL
+
+============================================================
+TRAIL - SHORT trend pullback (eligible)
+  r_gross                              n= 2827 win%= 35.3 avgR=+0.118 totalR=  +333.3 PF=1.23 maxDD=86.9
+  r_net                                n= 2827 win%= 34.1 avgR=+0.057 totalR=  +162.5 PF=1.10 maxDD=98.6
+  r_stress                             n= 2827 win%= 33.1 avgR=-0.003 totalR=    -7.2 PF=1.00 maxDD=157.6
+  first half (net)                     n= 1411 win%= 32.3 avgR=-0.002 totalR=    -2.4 PF=1.00 maxDD=90.1
+  second half (net)                    n= 1416 win%= 35.9 avgR=+0.116 totalR=  +164.9 PF=1.21 maxDD=72.5
+  LONG (net)                           n=0
+  SHORT (net)                          n= 2827 win%= 34.1 avgR=+0.057 totalR=  +162.5 PF=1.10 maxDD=98.6
+  year 2022 (net)                      n=  124 win%= 37.9 avgR=+0.203 totalR=   +25.2 PF=1.37 maxDD=29.9
+  year 2023 (net)                      n=  636 win%= 32.4 avgR=-0.015 totalR=    -9.6 PF=0.97 maxDD=67.0
+  year 2024 (net)                      n=  711 win%= 30.8 avgR=-0.034 totalR=   -24.2 PF=0.94 maxDD=97.3
+  year 2025 (net)                      n=  762 win%= 36.7 avgR=+0.174 totalR=  +132.3 PF=1.32 maxDD=45.6
+  year 2026 (net)                      n=  594 win%= 35.9 avgR=+0.065 totalR=   +38.9 PF=1.12 maxDD=72.5
+  days open per trade: mean 2.7 | median 2 | 90th pct 6 | max 10
+  trades per week: 13.56 | days with a new entry: 111%
+  open positions: mean 7.0 | max 17 | days with none open 7% | days at cap 65%
+  exits: SL=2776, TIME=51
+  median risk 4.1% of price
+  longest time below equity peak (net): 430 days
+  profitable months (net, by exit): 22 of 48 | worst month -49.5R | best month +70.4R
+  at 0.5% risk per trade (not compounded): total +81% | max drawdown 49%
+  top 3 coins by net R: ARBUSDT +59, 1000PEPEUSDT +38, MATICUSDT +22 | total +163
+  avgR net without those 3 coins: +0.017 (n=2610)
+  share of positive-week profit from the best 5 weeks: 25%
+  weekly-block bootstrap of net avgR: 95% CI [-0.065, +0.181], P(avgR>0)=0.81 (202 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+============================================================
+TP2R - SHORT trend pullback (eligible)
+  r_gross                              n= 3241 win%= 42.5 avgR=+0.101 totalR=  +326.9 PF=1.19 maxDD=67.7
+  r_net                                n= 3241 win%= 41.8 avgR=+0.047 totalR=  +151.1 PF=1.08 maxDD=88.4
+  r_stress                             n= 3241 win%= 41.2 avgR=-0.008 totalR=   -25.9 PF=0.99 maxDD=121.8
+  first half (net)                     n= 1620 win%= 41.4 avgR=+0.034 totalR=   +55.3 PF=1.06 maxDD=68.5
+  second half (net)                    n= 1621 win%= 42.2 avgR=+0.059 totalR=   +95.8 PF=1.10 maxDD=88.4
+  LONG (net)                           n=0
+  SHORT (net)                          n= 3241 win%= 41.8 avgR=+0.047 totalR=  +151.1 PF=1.08 maxDD=88.4
+  year 2022 (net)                      n=  145 win%= 46.2 avgR=+0.110 totalR=   +16.0 PF=1.22 maxDD=32.2
+  year 2023 (net)                      n=  668 win%= 41.9 avgR=+0.041 totalR=   +27.3 PF=1.08 maxDD=56.0
+  year 2024 (net)                      n=  797 win%= 40.7 avgR=+0.028 totalR=   +22.4 PF=1.05 maxDD=68.5
+  year 2025 (net)                      n=  919 win%= 43.5 avgR=+0.111 totalR=  +102.3 PF=1.20 maxDD=48.2
+  year 2026 (net)                      n=  712 win%= 39.9 avgR=-0.024 totalR=   -16.9 PF=0.96 maxDD=88.4
+  days open per trade: mean 2.4 | median 1 | 90th pct 5 | max 5
+  trades per week: 15.55 | days with a new entry: 131%
+  open positions: mean 7.3 | max 20 | days with none open 7% | days at cap 64%
+  exits: SL=1664, TIME=708, TP=869
+  median risk 4.6% of price
+  longest time below equity peak (net): 262 days
+  profitable months (net, by exit): 27 of 48 | worst month -38.4R | best month +52.9R
+  at 0.5% risk per trade (not compounded): total +76% | max drawdown 44%
+  top 3 coins by net R: 1000FLOKIUSDT +28, HBARUSDT +23, ARBUSDT +22 | total +151
+  avgR net without those 3 coins: +0.026 (n=2947)
+  share of positive-week profit from the best 5 weeks: 17%
+  weekly-block bootstrap of net avgR: 95% CI [-0.040, +0.130], P(avgR>0)=0.86 (202 weeks)
+  VERDICT (pre-registered rule): FAIL - rejected
+
+total run time: 160s
