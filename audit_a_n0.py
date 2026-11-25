@@ -38,88 +38,39 @@ def compress(ms):  # list of 'YYYY-MM' -> ranges text
     out.append((a, b)); return ",".join(MONTHS[a] if a == b else f"{MONTHS[a]}..{MONTHS[b]}" for a, b in out)
 
 def coverage():
-    tasks = [(s, m, k) for s in SYMS for m in MONTHS for k in ("klines/1m", "aggTrades")]
-    def f(t):
-        s, m, k = t; n = "1m" if k == "klines/1m" else "aggTrades"
-        return t, head(f"{BASE}/monthly/{k}/{s}/{s}-{n}-{m}.zip")
+    """A1 (corrected path): monthly 1m klines presence. aggTrades coverage/A2 quality already reported in the first run."""
+    tasks = [(s, m) for s in SYMS for m in MONTHS]
+    f = lambda t: (t, head(f"{BASE}/monthly/klines/{t[0]}/1m/{t[0]}-1m-{t[1]}.zip"))
     with ThreadPoolExecutor(24) as ex: res = dict(ex.map(f, tasks))
-    print("\n== A1 monthly archive coverage (HEAD 200 = present), months 2022-11..2026-10 =", len(MONTHS))
-    print("symbol | kl1m present/N missing | aggTrades present/N missing")
-    bad = []
+    print("\n== A1b monthly 1m klines coverage (HEAD 200 = present), months 2022-11..2026-10 =", len(MONTHS))
     for s in SYMS:
-        row = []
-        for k in ("klines/1m", "aggTrades"):
-            ok = [m for m in MONTHS if res[(s, m, k)] == 200]; miss = [m for m in MONTHS if res[(s, m, k)] != 200]
-            other = {res[(s, m, k)] for m in miss} - {404}
-            row.append(f"{len(ok)}/{len(MONTHS)} miss {compress(miss)}" + (f" codes {other}" if other else ""))
-        print(s, "|", " | ".join(row))
-        if not any(res[(s, m, "klines/1m")] == 200 for m in MONTHS): bad.append(s)
-    print("symbols with no 1m klines at all:", bad or "none")
-    n200 = sum(v == 200 for v in res.values()); print(f"total files present {n200}/{len(res)}")
+        ok = [m for m in MONTHS if res[(s, m)] == 200]; miss = [m for m in MONTHS if res[(s, m)] != 200]
+        other = {res[(s, m)] for m in miss} - {404}
+        print(f"{s} | {len(ok)}/{len(MONTHS)} miss {compress(miss)}" + (f" codes {other}" if other else ""))
+    print(f"total 1m kline files present {sum(v == 200 for v in res.values())}/{len(res)}")
 
-def validate_klines(s, m):
-    rows, code = get_csv(f"{BASE}/monthly/klines/{s}/1m/{s}-1m-{m}.zip")
-    if rows is None: return f"{s} {m} 1m: HTTP {code}"
-    hdr = rows[0] if rows and not rows[0][0].isdigit() else None
-    data = rows[1:] if hdr else rows
-    ts = [int(r[0]) for r in data]; unit = "us" if ts[0] > 10**14 else "ms"; step = 60000 if unit == "ms" else 60_000_000
-    gaps = sum(1 for a, b in zip(ts, ts[1:]) if b - a != step); dup = len(ts) - len(set(ts))
-    y, mo = map(int, m.split("-")); nxt = date(y + (mo == 12), mo % 12 + 1, 1); exp = (nxt - date(y, mo, 1)).days * 1440
-    tb = [float(r[9]) for r in data]; vol = [float(r[5]) for r in data]
-    bad_tb = sum(1 for a, b in zip(tb, vol) if a < 0 or a > b * 1.0001)
-    return (f"{s} {m} 1m: header={'yes' if hdr else 'NO'} cols={len(data[0])} unit={unit} rows={len(data)}/{exp} gaps={gaps} dup={dup} "
-            f"taker_buy_col={'ok' if (hdr and len(hdr) > 9 and 'taker' in hdr[9]) else 'check '+str(hdr[9] if hdr and len(hdr)>9 else None)} "
-            f"taker_buy_all_zero={all(x == 0 for x in tb)} taker>vol rows={bad_tb}")
-
-def validate_agg(s, d):
-    rows, code = get_csv(f"{BASE}/daily/aggTrades/{s}/{s}-aggTrades-{d}.zip")
-    if rows is None: return f"{s} {d} aggTrades: HTTP {code}"
-    hdr = rows[0] if rows and not rows[0][0].isdigit() else None; data = rows[1:] if hdr else rows
-    tt = [int(r[5]) for r in data]; mono = all(b >= a for a, b in zip(tt, tt[1:]))
-    vals = {r[6].lower() for r in data}
-    return f"{s} {d} aggTrades: header={hdr} rows={len(data)} is_buyer_maker values={sorted(vals)} time_monotonic={mono} unit={'us' if tt[0] > 10**14 else 'ms'}"
-
-def quality():
-    print("\n== A2 schema/quality samples (3 symbols x 3 periods)")
-    for s in ("BTCUSDT", "SOLUSDT", "PENDLEUSDT"):
-        for m in ("2022-11", "2024-06", "2026-10"):
-            try: print(validate_klines(s, m))
-            except Exception as e: print(s, m, "1m ERROR", type(e).__name__, e)
-    for s in ("BTCUSDT", "SOLUSDT"):
-        for d in ("2022-11-15", "2024-06-15", "2026-10-15"):
-            try: print(validate_agg(s, d))
-            except Exception as e: print(s, d, "aggTrades ERROR", type(e).__name__, e)
-
-PROBES = [  # (name, method, url, note)
- ("FOMC calendar (federalreserve.gov)", "GET", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "official dates"),
- ("BLS CPI schedule", "GET", "https://www.bls.gov/schedule/news_release/cpi.htm", "official schedule (history limited)"),
- ("BLS public API v1 (no key)", "POST", "https://api.bls.gov/publicAPI/v1/timeseries/data/CUUR0000SA0", "latest revised values; no vintages"),
- ("FRED graph CSV (no key)", "GET", "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL", "current (revised) values"),
- ("ALFRED vintage CSV (no key)", "GET", "https://alfred.stlouisfed.org/graph/alfredgraph.csv?id=PAYEMS&vintage_date=2024-01-05", "first-release vintages"),
- ("FRED API vintagedates (needs key)", "GET", "https://api.stlouisfed.org/fred/series/vintagedates?series_id=CPIAUCSL&file_type=json", "expect 400 without key"),
- ("BEA release schedule", "GET", "https://www.bea.gov/news/schedule", "GDP/PCE dates"),
- ("Census retail sales", "GET", "https://www.census.gov/retail/index.html", "retail sales"),
- ("ISM PMI", "GET", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/", "PMI; licensed/restricted"),
- ("Consensus: forexfactory", "GET", "https://www.forexfactory.com/calendar", "ToS-restricted; no verified bulk history"),
- ("Consensus: investing.com", "GET", "https://www.investing.com/economic-calendar/", "ToS-restricted"),
- ("Consensus: tradingeconomics", "GET", "https://tradingeconomics.com/calendar", "paid API for history"),
- ("Unscheduled news: GDELT DOC API", "GET", "https://api.gdeltproject.org/api/v2/doc/doc?query=bitcoin&mode=artlist&maxrecords=3&format=json", "free, timestamped (15-min), 2017+ via API windows"),
+PROBES = [
+ ("BLS CPI schedule (browser UA)", "GET", "https://www.bls.gov/schedule/news_release/cpi.htm"),
+ ("FRED graph CSV (no key)", "GET", "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL"),
+ ("ALFRED vintage CSV (no key)", "GET", "https://alfred.stlouisfed.org/graph/alfredgraph.csv?id=PAYEMS&vintage_date=2024-01-05"),
+ ("ALFRED API-style (no key)", "GET", "https://api.stlouisfed.org/fred/series/observations?series_id=PAYEMS&realtime_start=2024-01-05&realtime_end=2024-01-05&file_type=json"),
+ ("ISM report page", "GET", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/"),
 ]
 
 def probes():
-    print("\n== N0 source reachability from this runner (status only; NO scraping, ToS not bypassed)")
-    for name, meth, url, note in PROBES:
-        try:
-            r = S.post(url, json={"startyear": "2024", "endyear": "2024"}, timeout=40) if meth == "POST" else S.get(url, timeout=40)
-            extra = ""
-            if "alfred" in url: extra = " first-lines=" + repr(r.text[:80])
-            if "gdelt" in url: extra = " body=" + repr(r.text[:80])
-            print(f"{r.status_code} | {name} | bytes={len(r.content)} | {note}{extra}")
-        except Exception as e: print(f"ERR | {name} | {type(e).__name__} | {note}")
+    print("\n== N0b retry of failed/ambiguous source probes (status only; no scraping)")
+    h = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36", "Accept": "text/html,text/csv,*/*"}
+    for name, meth, url in PROBES:
+        for a in range(2):
+            try:
+                r = requests.get(url, headers=h, timeout=90)
+                print(f"{r.status_code} | {name} | bytes={len(r.content)} | head={r.text[:90]!r}"); break
+            except Exception as e:
+                if a: print(f"ERR | {name} | {type(e).__name__}")
 
 if __name__ == "__main__":
-    print("audit_a_n0 read-only; symbols", len(SYMS), "months", len(MONTHS))
-    for f in (coverage, quality, probes):
+    print("audit_a_n0 v2 read-only (A1b klines coverage with corrected path + N0b probe retries); symbols", len(SYMS))
+    for f in (coverage, probes):
         try: f()
         except Exception as e: print(f.__name__, "FAILED", type(e).__name__, e)
     print("\nNothing was written to the repository.")
