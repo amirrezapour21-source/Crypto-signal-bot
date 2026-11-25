@@ -1,0 +1,45 @@
+name: Read-only Audits A3 N0b C2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readonly-audits-2
+  cancel-in-progress: false
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: A3 integrity scan (read-only)
+        env:
+          SHARD: ${{ matrix.shard }}
+          NSHARDS: "5"
+        run: python audit_a3_integrity.py
+
+  sources_and_conventions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: N0b and C2 (read-only)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python audit_n0b_c2.py
