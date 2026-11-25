@@ -1,0 +1,55 @@
+name: Read-only A4 C4 N1 FOMC dev
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readonly-audits-3
+  cancel-in-progress: false
+
+jobs:
+  scan46:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: A4 classify and scan (read-only)
+        env:
+          SHARD: ${{ matrix.shard }}
+          NSHARDS: "4"
+        run: python audit_a4_scan46.py
+
+  c4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: C4 signal-difference decomposition (read-only)
+        run: python audit_c4_decomp.py
+
+  n1dev:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: N1 FOMC pilot, development only (read-only)
+        run: python n1_fomc_dev.py
