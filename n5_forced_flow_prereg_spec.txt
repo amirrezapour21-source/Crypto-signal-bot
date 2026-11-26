@@ -1,0 +1,30 @@
+H-F FORCED-FLOW REVERSAL PILOT (Steps 0a and 0b) - PRE-REGISTRATION (version 1)
+
+QUESTION
+After a large 15-minute move on a liquid USDT-M perpetual, is the subsequent partial reversal larger when open interest fell during the move (forced flow) than when it did not (control), and large enough to matter against costs?
+
+1. SAMPLE AND DATA
+Pilot period only: event windows starting 2022-11-01 00:00 UTC, ending no later than 2023-12-31 19:00 UTC. No data after 2023-12-31 and none of the consumed holdouts (N1 2025-2026 events), the locked N2-E holdout or any development result of N2-N4 is used or consulted. Thresholds below are fixed here and come from no previous result.
+Symbols BTCUSDT ETHUSDT SOLUSDT (Binance USDT-M). 1m klines (monthly archive 2022-10 .. 2023-12; 2022-10 is warm-up) and 5-minute open interest sum_open_interest from the public daily "metrics" files (BASE/daily/metrics/SYM/SYM-metrics-YYYY-MM-DD.zip, days 2022-11-01 .. 2023-12-31). A metrics timestamp is treated as the snapshot time; the same convention is applied at both ends of every window.
+
+2. STEP 0a - AVAILABILITY GATE
+For each symbol: days present, missing days, 5-minute slots found versus 288 x days, longest gap. Gate PASS if for every symbol at most 5% of the 5-minute slots are missing; otherwise the pilot is NOT run and the line stops.
+
+3. STEP 0b - EVENTS (all times UTC)
+Windows are the 15-minute intervals starting at :00, :15, :30, :45. For the window starting at s (1m candle starts s .. s+14 min), the window end is e = s + 15 min and r = ln(close of the 1m candle starting at s+14 min / open of the 1m candle starting at s). direction d = sign(r).
+Volatility threshold: 4 x the median of |r| over the 672 windows (7 days) that END at or before s (the current window is excluded; at least 500 valid windows needed). An event is a window with |r| >= threshold.
+Exclusions and spacing: events with a scheduled CPI, NFP or FOMC release (calendar of the N2-E registration, SPEC sha256 05954b52b57df2e28a0952b91ac9fa4958bc2a68f5af33571b7e8f9f56d8ad1c) between s - 120 min and e + 120 min are excluded; of the remaining events per symbol in time order, an event is dropped if its start is less than 60 min after the end of the last accepted event of that symbol (spacing uses size only, never open interest).
+Open interest change: dOI = OI(e) / OI(s) - 1 using the 5-minute snapshots exactly at s and e (both required, positive). FORCED group: dOI <= -1.0%. CONTROL group: dOI >= 0. Events in between are counted and not analysed. Events with missing OI are counted and excluded.
+Clusters: accepted events of all symbols, sorted by window end, form one cluster while consecutive window ends are at most 60 min apart; clusters are the resampling unit and cover BTC-coincident altcoin events. The share of ETH/SOL events in a cluster that also contains a BTC event is reported.
+
+4. TRADES (reversal, against d; no stop)
+Entry: open of the 1m candle starting at e + D minutes, D = 15 and D = 30. Exit: close of the 1m candle starting at entry time + H - 1 minutes (H minutes after entry), H = 60 and H = 240. gross = -d x (exit / entry - 1). A trade with a missing 1m candle at entry or exit is excluded and counted. Costs are not in gross; implications are shown at 30 bps (base) and 60 bps (stress), deducted once per round trip.
+
+5. OUTPUT (fixed)
+Counts at every filter step per symbol; for FORCED and CONTROL and each (D, H): n, mean gross, median, 10th/90th percentile, sd, share with gross > 0, mean net at 30 and 60 bps, cluster-bootstrap 95% interval of the mean gross; forced-minus-control difference with its cluster-bootstrap 95% interval; FORCED per symbol (D15, H60). Bootstrap: 10,000 draws, numpy default_rng seed 20261126, resampling clusters.
+
+6. PREDECLARED STOP / CONTINUE (evaluated once, D = 15, H = 60, never changed after results)
+CONTINUE only if ALL hold: (a) FORCED n >= 60; (b) FORCED mean gross >= 45 bps (1.5 x base cost); (c) FORCED mean gross > 0 in at least 2 of 3 symbols; (d) the 2.5th percentile of the forced-minus-control difference in mean gross > 0. Otherwise STOP: the line is closed without re-tuning thresholds. H = 240 and D = 30 are descriptive. A CONTINUE leads only to a separate preregistration (a later step), never to a strategy.
+
+7. LIMITS
+Open interest drop is a proxy for liquidation (voluntary closing also lowers it); no liquidation, spread or depth data; 5-minute snapshots; pilot results are exploratory; pooled clusters are not fully independent; costs are assumptions (stress is shown separately).
