@@ -1,0 +1,24 @@
+name: Read-only N6 funding carry feasibility
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readonly-n6-funding
+  cancel-in-progress: false
+
+jobs:
+  funding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: N6 funding carry feasibility run (read-only)
+        run: python n6_funding_feasibility.py
