@@ -1,0 +1,62 @@
+name: BRT-S 1H Paper Trading
+
+on:
+  # No schedule trigger by design: external dispatch only (cron-job.org, every hour at minute 0 UTC).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: brt-1h-paper
+  cancel-in-progress: false
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests
+
+      - name: Guard state continuity
+        run: |
+          if [ -n "$(git log --oneline -1 -- brt_mom_1h_state.json)" ] && [ ! -f brt_mom_1h_state.json ]; then
+            echo "MOM_1H_STATE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
+
+      - name: Run BRT-S MOM 1H (paper, 1-hour momentum, separate state)
+        id: mom_1h
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python brt_mom_1h.py
+
+      - name: Save paper state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -f brt_mom_1h_state.json ]; then git add brt_mom_1h_state.json; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "Update BRT-S 1H paper state"
+            ok=0
+            for i in 1 2 3 4 5 6; do
+              if git pull --rebase origin main && git push; then ok=1; break; fi
+              git rebase --abort 2>/dev/null || true
+              sleep $(( 2 + RANDOM % 8 ))
+            done
+            [ "$ok" = "1" ] || { echo "PUSH_FAILED_AFTER_6_ATTEMPTS"; exit 1; }
+          fi
