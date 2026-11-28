@@ -64,6 +64,14 @@ jobs:
             echo "MOM_SHORT_P_STATE_MISSING_BUT_IN_HISTORY"
             exit 1
           fi
+          if [ -n "$(git log --oneline -1 -- brt_mom_long_t6_state.json)" ] && [ ! -f brt_mom_long_t6_state.json ]; then
+            echo "MOM_LONG_T6_STATE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
+          if [ -n "$(git log --oneline -1 -- brt_mom_short_t6_state.json)" ] && [ ! -f brt_mom_short_t6_state.json ]; then
+            echo "MOM_SHORT_T6_STATE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
 
       - name: Run BRT-S
         id: run
@@ -129,6 +137,22 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python brt_mom_short_p.py
 
+      - name: Run BRT-S MOM LONG T6 (paper, fixed +6% take-profit, separate state)
+        id: mom_long_t6
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python brt_mom_t6.py LONG
+
+      - name: Run BRT-S MOM SHORT T6 (paper, fixed +6% take-profit, separate state)
+        id: mom_short_t6
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python brt_mom_t6.py SHORT
+
       - name: Save paper state
         run: |
           git config user.name "github-actions[bot]"
@@ -141,6 +165,8 @@ jobs:
           if [ -f brt_mom_long_f_state.json ]; then git add brt_mom_long_f_state.json; fi
           if [ -f brt_mom_long_p_state.json ]; then git add brt_mom_long_p_state.json; fi
           if [ -f brt_mom_short_p_state.json ]; then git add brt_mom_short_p_state.json; fi
+          if [ -f brt_mom_long_t6_state.json ]; then git add brt_mom_long_t6_state.json; fi
+          if [ -f brt_mom_short_t6_state.json ]; then git add brt_mom_short_t6_state.json; fi
           if ! git diff --cached --quiet; then
             git commit -m "Update BRT-S paper state"
             ok=0
