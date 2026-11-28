@@ -30,6 +30,8 @@ def _fix(txt):
 
 
 E.msg_signal = lambda p: _fix(_sig0(p))
+_trail0 = T.msg_signal_trail
+T.msg_signal_trail = lambda p: _fix(_trail0(p))   # the signal message is built from this function
 E.msg_entry = lambda p: _fix(_entry0(p))
 
 
@@ -85,18 +87,4 @@ def monitor_bar_t6(state, symbol, row):
         closed = dict(pos)
         closed.update({"status": "CLOSED", "exit_ts": E.iso(ts), "exit_price": px, "exit_reason": reason,
                        "gross_r": gross_r, "net_r": gross_r - E.FEE_RT / rp, "net_r_s3": gross_r - s3 / rp,
-                       "stop_gap": bool(reason == "SL" and pos["bars"] > 1 and s * (o - sl) <= 0),
-                       "bars_held": bars, "fee_assumption_rt": E.FEE_RT})
-        state["closed"].append(closed)
-        E.OUTBOX.append(E.msg_close(closed))
-        if len(state["closed"]) > E.MAX_CLOSED:
-            del state["closed"][:-E.MAX_CLOSED]
-        del state["open"][pos_id]
-        return reason
-    return None
-
-
-E.monitor_bar = monitor_bar_t6
-
-if __name__ == "__main__":
-    E.main()
+                       "stop_gap": bool(reason == "SL" and pos["ba
