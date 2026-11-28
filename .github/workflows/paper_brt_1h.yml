@@ -36,6 +36,10 @@ jobs:
             echo "MOM_1H_STATE_MISSING_BUT_IN_HISTORY"
             exit 1
           fi
+          if [ -n "$(git log --oneline -1 -- brt_mom_1h_t6_state.json)" ] && [ ! -f brt_mom_1h_t6_state.json ]; then
+            echo "MOM_1H_T6_STATE_MISSING_BUT_IN_HISTORY"
+            exit 1
+          fi
 
       - name: Run BRT-S MOM 1H (paper, 1-hour momentum, separate state)
         id: mom_1h
@@ -44,12 +48,22 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python brt_mom_1h.py
 
+      - name: Run BRT-S MOM 1H T6 (paper, fixed +6% take-profit, separate state)
+        id: mom_1h_t6
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python brt_mom_1h_t6.py
+
       - name: Save paper state
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -f brt_mom_1h_state.json ]; then git add brt_mom_1h_state.json; fi
+          if [ -f brt_mom_1h_t6_state.json ]; then git add brt_mom_1h_t6_state.json; fi
           if ! git diff --cached --quiet; then
             git commit -m "Update BRT-S 1H paper state"
             ok=0
