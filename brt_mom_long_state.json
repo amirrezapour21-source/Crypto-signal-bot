@@ -187,43 +187,85 @@
       "reason": "SYMBOL_ALREADY_OPEN",
       "signal_ts": "2026-11-27T08:00:00+00:00",
       "symbol": "FETUSDTM"
+    },
+    {
+      "entry_ts": "2026-11-28T00:00:00+00:00",
+      "reason": "SYMBOL_ALREADY_OPEN",
+      "signal_ts": "2026-11-27T20:00:00+00:00",
+      "symbol": "LTCUSDTM"
     }
   ],
   "open": {
+    "AEVOUSDTM|2026-11-27T20:00:00+00:00": {
+      "atr": 0.00037971927387447306,
+      "bars": 0,
+      "entry": 0.0169,
+      "entry_ts": "2026-11-28T00:00:00+00:00",
+      "id": "AEVOUSDTM|2026-11-27T20:00:00+00:00",
+      "last_bar_ts": null,
+      "level": 0.01646,
+      "risk": 0.0007594385477489461,
+      "risk_pct": 0.04493719217449386,
+      "side": "LONG",
+      "signal_ts": "2026-11-27T20:00:00+00:00",
+      "sl": 0.016140561452251054,
+      "source": "next_candle_open",
+      "status": "OPEN",
+      "symbol": "AEVOUSDTM",
+      "tp": 0.01841887709549789
+    },
     "FETUSDTM|2026-11-26T16:00:00+00:00": {
       "atr": 0.004307482821208995,
-      "bars": 6,
+      "bars": 7,
       "best": 0.1312,
       "entry": 0.1206,
       "entry_ts": "2026-11-26T20:00:00+00:00",
       "id": "FETUSDTM|2026-11-26T16:00:00+00:00",
-      "last_bar_ts": "2026-11-27T16:00:00+00:00",
+      "last_bar_ts": "2026-11-27T20:00:00+00:00",
       "level": 0.1149,
       "risk": 0.00861496564241799,
       "risk_pct": 0.07143420930694852,
       "side": "LONG",
       "signal_ts": "2026-11-26T16:00:00+00:00",
-      "sl": 0.11783507531589318,
+      "sl": 0.11818971279332939,
       "sl0": 0.111985034357582,
       "source": "next_candle_open",
       "status": "OPEN",
       "symbol": "FETUSDTM",
       "tp": 0.13782993128483598
     },
+    "GALAUSDTM|2026-11-27T20:00:00+00:00": {
+      "atr": 3.695915919688256e-05,
+      "bars": 0,
+      "entry": 0.001436,
+      "entry_ts": "2026-11-28T00:00:00+00:00",
+      "id": "GALAUSDTM|2026-11-27T20:00:00+00:00",
+      "last_bar_ts": null,
+      "level": 0.001387,
+      "risk": 7.391831839376512e-05,
+      "risk_pct": 0.051475152084794654,
+      "side": "LONG",
+      "signal_ts": "2026-11-27T20:00:00+00:00",
+      "sl": 0.0013620816816062348,
+      "source": "next_candle_open",
+      "status": "OPEN",
+      "symbol": "GALAUSDTM",
+      "tp": 0.0015838366367875302
+    },
     "LTCUSDTM|2026-11-26T00:00:00+00:00": {
       "atr": 1.0620226216748974,
-      "bars": 10,
-      "best": 44.84,
+      "bars": 11,
+      "best": 45.2,
       "entry": 43.77,
       "entry_ts": "2026-11-26T04:00:00+00:00",
       "id": "LTCUSDTM|2026-11-26T00:00:00+00:00",
-      "last_bar_ts": "2026-11-27T16:00:00+00:00",
+      "last_bar_ts": "2026-11-27T20:00:00+00:00",
       "level": 42.71,
       "risk": 2.1240452433497947,
       "risk_pct": 0.04852742159812188,
       "side": "LONG",
       "signal_ts": "2026-11-26T00:00:00+00:00",
-      "sl": 42.137627742273,
+      "sl": 42.30808606041319,
       "sl0": 41.645954756650205,
       "source": "next_candle_open",
       "status": "OPEN",
@@ -232,12 +274,12 @@
     },
     "RUNEUSDTM|2026-11-25T20:00:00+00:00": {
       "atr": 0.01499259570292899,
-      "bars": 11,
+      "bars": 12,
       "best": 0.599,
       "entry": 0.5502,
       "entry_ts": "2026-11-26T00:00:00+00:00",
       "id": "RUNEUSDTM|2026-11-25T20:00:00+00:00",
-      "last_bar_ts": "2026-11-27T16:00:00+00:00",
+      "last_bar_ts": "2026-11-27T20:00:00+00:00",
       "level": 0.5282,
       "risk": 0.02998519140585798,
       "risk_pct": 0.054498712115336204,
@@ -252,18 +294,18 @@
     },
     "WIFUSDTM|2026-11-26T16:00:00+00:00": {
       "atr": 0.004310877037857194,
-      "bars": 6,
-      "best": 0.1421,
+      "bars": 7,
+      "best": 0.1438,
       "entry": 0.1392,
       "entry_ts": "2026-11-26T20:00:00+00:00",
       "id": "WIFUSDTM|2026-11-26T16:00:00+00:00",
-      "last_bar_ts": "2026-11-27T16:00:00+00:00",
+      "last_bar_ts": "2026-11-27T20:00:00+00:00",
       "level": 0.1337,
       "risk": 0.008621754075714388,
       "risk_pct": 0.06193788847495969,
       "side": "LONG",
       "signal_ts": "2026-11-26T16:00:00+00:00",
-      "sl": 0.1305782459242856,
+      "sl": 0.13081474020458828,
       "sl0": 0.1305782459242856,
       "source": "next_candle_open",
       "status": "OPEN",
@@ -375,6 +417,32 @@
       "source": "next_candle_open",
       "symbol": "WUSDTM",
       "tp": 0.010635389824032202
+    },
+    {
+      "atr": 3.695915919688256e-05,
+      "entry": 0.001436,
+      "entry_ts": "2026-11-28T00:00:00+00:00",
+      "id": "GALAUSDTM|2026-11-27T20:00:00+00:00",
+      "risk": 7.391831839376512e-05,
+      "side": "LONG",
+      "signal_ts": "2026-11-27T20:00:00+00:00",
+      "sl": 0.0013620816816062348,
+      "source": "next_candle_open",
+      "symbol": "GALAUSDTM",
+      "tp": 0.0015838366367875302
+    },
+    {
+      "atr": 0.00037971927387447306,
+      "entry": 0.0169,
+      "entry_ts": "2026-11-28T00:00:00+00:00",
+      "id": "AEVOUSDTM|2026-11-27T20:00:00+00:00",
+      "risk": 0.0007594385477489461,
+      "side": "LONG",
+      "signal_ts": "2026-11-27T20:00:00+00:00",
+      "sl": 0.016140561452251054,
+      "source": "next_candle_open",
+      "symbol": "AEVOUSDTM",
+      "tp": 0.01841887709549789
     }
   ],
   "state_version": 1,
@@ -383,82 +451,82 @@
     "1INCHUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "AAVEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ADAUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "AEVOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "AIXBTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ALGOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "APEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "APTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ARBUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ATOMUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "AVAXUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "AXSUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "BCHUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "BLURUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "BNBUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "BOMEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "BONKUSDTM": {
       "baseline_done": false,
@@ -468,57 +536,57 @@
     "CAKEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "CFXUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "CHZUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "COMPUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "CRVUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "DOGEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "DOTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "DYDXUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "EGLDUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ENAUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ENJUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "EOSUSDTM": {
       "baseline_done": false,
@@ -528,47 +596,47 @@
     "ETCUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ETHFIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ETHUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "FARTCOINUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "FETUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "FILUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "FLOKIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "GALAUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "GMTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "GOATUSDTM": {
       "baseline_done": false,
@@ -578,27 +646,27 @@
     "GRAMUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "GRTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "HBARUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "HYPEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ICPUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "IMXUSDTM": {
       "baseline_done": false,
@@ -608,17 +676,17 @@
     "INJUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "IOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "JASMYUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "JTOUSDTM": {
       "baseline_done": false,
@@ -628,32 +696,32 @@
     "JUPUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "KASUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "KAVAUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "LDOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "LINKUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "LTCUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "MANAUSDTM": {
       "baseline_done": false,
@@ -673,147 +741,147 @@
     "MOODENGUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "NEARUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "NEOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "NOTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ONDOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "OPUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ORDIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "PENGUUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "PEPEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "PNUTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "POPCATUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "PYTHUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "QNTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "RENDERUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ROSEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "RUNEUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SANDUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SEIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SHIBUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SNXUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SOLUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "STRKUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "STXUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SUIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "SUSHIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "TAOUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "THETAUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "TIAUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "TONUSDTM": {
       "baseline_done": false,
@@ -823,77 +891,77 @@
     "TRBUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "TRUMPUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "TRXUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "UNIUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "VETUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "VIRTUALUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "WIFUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "WLDUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "WUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "XBTUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "XLMUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "XRPUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ZECUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ZILUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     },
     "ZROUSDTM": {
       "baseline_done": true,
       "last_status": "OK",
-      "last_ts": "2026-11-27T16:00:00+00:00"
+      "last_ts": "2026-11-27T20:00:00+00:00"
     }
   }
 }
