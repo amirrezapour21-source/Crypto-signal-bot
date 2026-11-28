@@ -24,6 +24,8 @@ def _fix(txt):
 
 
 E.msg_signal = lambda p: _fix(_sig0(p))
+_trail0 = T.msg_signal_trail
+T.msg_signal_trail = lambda p: _fix(_trail0(p))   # the signal message is built from this function
 E.msg_entry = lambda p: _fix(_entry0(p))
 
 
